@@ -5,6 +5,7 @@ export interface ChatMessage {
   details: string;
   error?: string;
 }
+export interface ThreadChoice { id: string; title: string; updatedAt: string }
 export interface ModelChoice { provider: string; id: string }
 export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {
@@ -18,12 +19,17 @@ export interface Snapshot {
   modelSource: ModelSource;
   modelChanging: boolean;
   notice: string;
+  threadId: string;
+  threads: ThreadChoice[];
+  threadChanging: boolean;
 }
 export type ClientCommand =
   | { type: 'auth'; token: string }
-  | { type: 'prompt'; id: string; text: string }
-  | { type: 'stop'; id: string }
-  | { type: 'set_model'; id: string; provider: string; modelId: string };
+  | { type: 'prompt'; id: string; text: string; threadId: string }
+  | { type: 'stop'; id: string; threadId: string }
+  | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
+  | { type: 'new_thread'; id: string; threadId: string }
+  | { type: 'switch_thread'; id: string; threadId: string; targetId: string };
 export type TerminalEvent =
   | { type: 'terminal_ready' }
   | { type: 'terminal_data'; data: string }

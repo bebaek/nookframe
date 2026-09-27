@@ -27,10 +27,12 @@ ACCESS_TOKEN_FILE="$PWD/.local/access-token" npm start
 ```
 
 Open **http://localhost:3000**, then paste the token from `.local/access-token`.
-The token is sent as the first WebSocket message, never in a URL, and remains only
-in browser memory. Refreshing the page requires signing in again. Transient
-network disconnects reconnect automatically. Use your editor/password manager to
-read/store the token; don't commit it or put it into logs.
+The token is submitted once to the same-origin login endpoint, never in a URL.
+A separate opaque HttpOnly cookie keeps this browser signed in for 30 days,
+including across page reloads and server/container replacements. The app does not
+store the access token in localStorage or sessionStorage. Transient disconnects
+reconnect automatically. Use your editor/password manager to read/store the token;
+don't commit it or put it into logs.
 
 Try: **“Create hello.txt in the current workspace containing hello from pi.”**
 The default workspace is `.local/workspace`, not this application's source tree.
@@ -40,24 +42,73 @@ TypeScript backend against already-built frontend assets.
 Local execution is **not sandboxed**: pi runs as your host user. Prefer the
 container before enabling integrations or handling untrusted content.
 
+## Browser sign-in
+
+- Sign in once per browser with the existing access token. An upgrade from the
+  old memory-only login needs one final sign-in to establish the cookie.
+- Cookie: HttpOnly, SameSite=Strict, fixed 30-day expiry, host-only and Secure on
+  HTTPS (`__Host-` prefix). HTTP localhost development uses a non-Secure cookie.
+- Only hashes of randomly generated browser credentials are persisted, atomically,
+  in `$STATE_DIR/browser-sessions.json` (`/data/state` in the container). Keep this
+  directory persistent. Up to 64 logins are retained; the oldest is evicted beyond
+  that limit. Never log cookie values or login request bodies.
+- **Sign out** revokes this browser login server-side, clears its cookie, and closes
+  associated chat/terminal connections across tabs. Other browsers remain signed
+  in. Agent tasks and the shared shell continue running; signing out is not Stop.
+- Rotating the web access token and restarting the server invalidates all browser
+  logins. Removing the session-store file while the server is stopped also revokes
+  them. A backup restore can restore previously revoked entries; rotate the access
+  token after a security-related restore.
+- Login/logout require the exact configured Origin; WebSockets retain the same
+  origin check and authorize before sending data or opening a shell. Browsers send
+  an auth frame without the token; trusted CLI clients can still use token frames.
+- Use only trusted devices. Cookies confer shell-equivalent access even though
+  JavaScript cannot read them. Private browsing, clearing cookies, expiry, or token
+  rotation requires signing in again.
+
+## Chat threads
+
+Use **Thread** to resume a conversation or **New thread** for a blank one.
+Each thread has its own pi JSONL history; all threads share workspace files,
+credentials, and one agent process. Thread titles come from the first user message
+(or an existing pi session name). Switching itself makes no model request.
+
+- Only one web thread is active at a time, shared across browsers. Finish or stop
+  a task before switching; model/thread changes and prompts are serialized.
+- Commands carry the expected thread ID. A stale browser cannot accidentally send
+  a prompt into a thread selected by another browser.
+- Drafts are kept separately per thread in that browser's memory; refreshing clears
+  drafts. Switching does not move an unsent draft into a different conversation.
+- The last selection is saved atomically in `$STATE_DIR/active-thread.json`.
+  Empty threads get a header-only JSONL file, so they survive restart without
+  synthetic messages or an initial model call.
+- The existing `workspace` conversation is selected on first upgrade; its file is
+  retained. Subsequent starts restore the saved selection. Missing/corrupt saved
+  selections fail closed rather than silently opening another conversation.
+- The web's saved model/environment override remains in effect when resuming old
+  threads. Without a configured choice, pi's normal session model behavior applies.
+- The picker only includes the server-owned `workspace-sessions` directory, not
+  independent terminal pi sessions. No delete, fork, or in-thread branch UI yet.
+- Include these sessions and the active-selection file in your private backups.
+
 ## Terminal tab
 
 After signing in, select **Terminal**. This opens one shared Bash PTY in the
 workspace, independent of chat/RPC. Run `pi` for the interactive TUI and `/login`.
 Pi uses the same provider credentials, but a normal new CLI session rather than
-the chat's fixed `workspace` session. Do not explicitly open/resume the chat
+the chat's selected web session. Do not explicitly open/resume the chat
 session in another pi process. There is no maintenance mode or automatic restart;
 concurrent commands/agents can edit the same files or refresh credentials.
 
 - The shell starts lazily, survives tab switches and browser disconnects, and is
   shared by all authenticated terminal connections (not separate user sessions).
-- Refreshing requires the web token again, then reattaches to the running shell.
+- Refreshing restores the browser login, then reattaches to the running shell.
   There is **no server-side terminal replay**: disconnected output is discarded.
   A forced resize requests a TUI redraw on attachment; Ctrl+L redraws a shell.
   This is not a terminal multiplexer: programs may not reconstruct earlier output.
 - `exit` ends the shell; **New shell** starts another. Container restarts, deploys,
   and any maintenance shutdown end all terminal processes.
-- Terminal transport uses the same token/origin checks as chat, a separate
+- Terminal transport uses the same browser session/origin checks as chat, a separate
   WebSocket path, heartbeat, payload limits, and bounded socket buffering.
 - The app neither logs terminal input/output nor sends it into chat/model context.
   Bash startup files are skipped and shell history is disabled. Programs launched
@@ -191,7 +242,8 @@ repository; the application does not apply cluster resources.
 
 ## Behavior and scope
 
-- One fixed session ID, `workspace`, with normal read/bash/edit/write tools.
+- One active web thread with normal read/bash/edit/write tools; multiple persisted
+  conversations can be selected without spawning extra agent processes.
 - Pi's JSONL session is authoritative; the bridge only keeps a bounded live view.
 - Reconnects receive a replacement snapshot, including current streaming text
   and tool activity. Commands are **never automatically retried** after disconnect.
@@ -220,7 +272,7 @@ repository; the application does not apply cluster resources.
   not replace an existing saved web preference. To reset a stale preference, stop
   the server and back up/remove only `$STATE_DIR/model.json`, then restart.
 - Extensions are disabled and project-local trust-gated resources are ignored.
-  In web chat, slash commands, extension dialogs, uploads, session switching,
+  In web chat, slash commands, extension dialogs, uploads, in-session branching,
   steering/follow-up controls, and file browsing are intentionally deferred.
   Interactive terminal pi is independent and uses its normal CLI behavior.
 - Plain text rendering only: model output and tool results are never injected as HTML.
@@ -272,3 +324,12 @@ resize validation, exit/restart, and separation from chat snapshots. The browser
 smoke also runs a real Bash PTY and offline pi TUI at phone size; its screenshot is
 `.local/terminal-mobile-smoke.png`. No real provider credentials are used in tests.
 Run container smoke tests and verify persistence before production rollout.
+Thread tests cover legacy migration, empty-thread persistence, separate histories,
+model precedence, unsafe paths, concurrent switches, stale clients, and failed
+switch/save recovery. The real RPC smoke restarts into an empty selected thread;
+the two-browser mobile test exercises shared selection and isolated drafts. Its
+screenshot is `.local/threads-mobile-smoke.png`.
+Browser-auth tests cover cookie flags, no JavaScript/localStorage credential access,
+page reload and server replacement without another login, cross-tab sign-out,
+persisted revocation, expiry, access-token rotation, CSRF rejection, and failed
+session-store writes.

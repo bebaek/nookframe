@@ -7,6 +7,7 @@ import { Workspace } from './workspace.js';
 import { createApp } from './http.js';
 import { resolveModelSelection } from './models.js';
 import { TerminalSession } from './terminal.js';
+import { ThreadStore } from './threads.js';
 
 const root = process.cwd();
 const workspaceDir = resolve(process.env.WORKSPACE_DIR ?? join(root, '.local/workspace'));
@@ -22,14 +23,16 @@ const releaseLock = await lockfile.lock(agentDir, { stale: 30000, update: 10000,
 const selection = resolveModelSelection(stateDir, agentDir, process.env);
 // The published CLI lives beside the exported bundled RPC entry, not dist/cli.js.
 const cliPath = join(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent/rpc-entry'))), 'cli.js');
+const threads = new ThreadStore(join(agentDir, 'workspace-sessions'), workspaceDir, stateDir);
+const initialThread = await threads.initial();
 const client = new RpcClient({
   cliPath, cwd: workspaceDir,
   env: { PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0' },
   provider: selection.model?.provider,
   model: selection.model?.id,
-  args: ['--session-id', 'workspace', '--session-dir', join(agentDir, 'workspace-sessions'), '--no-extensions', '--no-approve'],
+  args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve'],
 });
-const workspace = new Workspace(client, stateDir, selection);
+const workspace = new Workspace(client, stateDir, selection, threads);
 try {
   await client.start();
   await workspace.initialize();
@@ -41,7 +44,7 @@ try {
 const port = Number(process.env.PORT ?? 3000);
 const app = createApp(workspace, {
   token, origin: process.env.PUBLIC_ORIGIN ?? `http://localhost:${port}`,
-  webDir: resolve(root, 'dist/web'),
+  webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     PI_CODING_AGENT_DIR: agentDir,

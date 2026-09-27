@@ -13,7 +13,7 @@
     "dev": "tsx server/main.ts",
     "test": "tsx --test test/*.test.ts",
     "test:rpc": "tsx --test test/rpc.smoke.ts",
-    "test:browser": "tsx --test test/browser.smoke.ts",
+    "test:browser": "tsx --test test/browser.smoke.ts test/threads.browser.smoke.ts test/auth.browser.smoke.ts",
     "test:container": "tsx --test test/container.smoke.ts"
   },
   "dependencies": {

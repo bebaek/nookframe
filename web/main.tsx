@@ -6,35 +6,75 @@ const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ defau
 
 function App() {
   const [token, setToken] = useState('');
-  const [credential, setCredential] = useState('');
+  const [signedIn, setSignedIn] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authPending, setAuthPending] = useState(false);
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<Snapshot>();
-  const [draft, setDraft] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draft = drafts[state?.threadId ?? ''] ?? '';
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [tab, setTab] = useState<'chat' | 'terminal'>('chat');
   const [terminalOpened, setTerminalOpened] = useState(false);
   const socket = useRef<WebSocket | null>(null);
-  const sent = useRef<{ id: string; text?: string } | null>(null);
+  const sent = useRef<{ id: string; text?: string; threadId: string } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
 
+  function lock() {
+    setSignedIn(false); setConnected(false); setState(undefined); setDrafts({});
+    setTerminalOpened(false); setTab('chat'); setToken('');
+    sent.current = null; setPending(false);
+  }
+
   useEffect(() => {
-    if (!credential) return;
+    let disposed = false;
+    let retry: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    async function check() {
+      try {
+        const response = await fetch('/auth/session', { signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const session = await response.json();
+        if (!disposed) { setSignedIn(session.authenticated === true); setCheckingAuth(false); setError(''); }
+      } catch {
+        if (!disposed) { setError('Waiting for the workspace to reconnect…'); retry = setTimeout(check, 2000); }
+      }
+    }
+    void check();
+    return () => { disposed = true; controller.abort(); clearTimeout(retry); };
+  }, []);
+
+  async function authenticate(action: 'login' | 'logout') {
+    setAuthPending(true); setError('');
+    try {
+      const response = await fetch(`/auth/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action === 'login' ? { token } : {}) });
+      if (!response.ok) throw new Error(response.status === 401 ? 'Invalid access token' : 'Sign-in service unavailable; try again');
+      setToken('');
+      if (action === 'login') setSignedIn(true);
+      else lock();
+    } catch (error) { setError(error instanceof Error ? error.message : 'Authentication failed'); }
+    finally { setAuthPending(false); }
+  }
+
+  useEffect(() => {
+    if (!signedIn) return;
     let disposed = false;
     let retry: ReturnType<typeof setTimeout>;
     let delay = 1000;
     function connect() {
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
       socket.current = ws;
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: credential }));
+      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth' })); };
       ws.onmessage = event => {
+        if (disposed) return;
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'snapshot') {
           setConnected(true); delay = 1000; setState(message.state);
         } else if (message.type === 'ack' && message.id === sent.current?.id) {
-          const acknowledgedText = sent.current.text;
-          if (acknowledgedText !== undefined) setDraft(current => current === acknowledgedText ? '' : current);
+          const { text: acknowledgedText, threadId } = sent.current;
+          if (acknowledgedText !== undefined) setDrafts(current => current[threadId] === acknowledgedText ? { ...current, [threadId]: '' } : current);
           sent.current = null; setPending(false);
         } else if (message.type === 'error') {
           setError(message.message);
@@ -48,7 +88,7 @@ function App() {
           setError('Connection lost before acknowledgement. Check history and the active model before retrying; any draft was kept.');
           sent.current = null; setPending(false);
         }
-        if (event.code === 1008) { setError(event.reason || 'Authentication failed'); setCredential(''); return; }
+        if (event.code === 1008) { setError(event.reason || 'Authentication failed'); lock(); return; }
         retry = setTimeout(connect, delay);
         delay = Math.min(delay * 2, 15000);
       };
@@ -56,29 +96,38 @@ function App() {
     }
     connect();
     return () => { disposed = true; clearTimeout(retry); socket.current?.close(); };
-  }, [credential]);
+  }, [signedIn]);
 
   useEffect(() => {
     if (follow.current) bottom.current?.scrollIntoView({ behavior: 'instant' });
   }, [state]);
 
-  function command(type: 'prompt' | 'stop' | 'set_model', model?: ModelChoice) {
+  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread', model?: ModelChoice, targetId?: string) {
     if (!connected || pending || !socket.current) return;
     const id = crypto.randomUUID();
-    sent.current = { id, text: type === 'prompt' ? draft : undefined };
+    const threadId = state?.threadId ?? '';
+    sent.current = { id, threadId, text: type === 'prompt' ? draft : undefined };
     setPending(true); setError('');
-    socket.current.send(JSON.stringify({ type, id, ...(type === 'prompt' ? { text: draft } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
+    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
   }
 
   return <div className="app">
-    <header><div><h1>Pi <span>Workspace</span></h1><small>{state?.model || 'Your personal computer, through chat'}</small></div><span className={connected ? 'badge online' : 'badge'}>{connected ? state?.busy ? 'Working' : 'Ready' : credential ? 'Connecting…' : 'Locked'}</span></header>
-    {!credential ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); setError(''); setCredential(token); setToken(''); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button>Connect</button></form><small>The token stays in memory only. Refreshing requires signing in again.</small>{error && <p role="alert">{error}</p>}</main> : <>
+    <header><div><h1>Pi <span>Workspace</span></h1><small>{state?.model || 'Your personal computer, through chat'}</small></div><span className={connected ? 'badge online' : 'badge'}>{connected ? state?.busy ? 'Working' : 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>{signedIn && <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>}</header>
+    {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
       <nav className="tabs" role="tablist" aria-label="Workspace views">
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
         <button type="button" role="tab" aria-selected={tab === 'terminal'} onClick={() => { setTerminalOpened(true); setTab('terminal'); }}>Terminal</button>
       </nav>
       <section className="chat-pane" hidden={tab !== 'chat'}>
-      {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || state.modelChanging || pending || state.modelSource === 'environment'} onChange={e => {
+      {state?.threadId && <section className="thread-picker">
+        <label htmlFor="thread">Thread</label>
+        <select id="thread" value={state.threadId} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending} onChange={e => command('switch_thread', undefined, e.target.value)}>
+          {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
+        </select>
+        <button type="button" disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending} onClick={() => command('new_thread')}>New thread</button>
+        <small>{state.threadChanging ? 'Switching…' : 'Shared active thread across browsers · separate histories, same files'}</small>
+      </section>}
+      {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending || state.modelSource === 'environment'} onChange={e => {
         const choice = state.models.find(m => `${m.provider}/${m.id}` === e.target.value);
         if (choice) command('set_model', choice);
       }}>
@@ -92,9 +141,9 @@ function App() {
         {Object.entries(state?.tools ?? {}).map(([id, tool]) => <article className="message" key={id}><details open><summary>{tool.name} · running</summary><pre>{tool.output}</pre></details></article>)}
         <div ref={bottom} />
       </main>
-      <footer>{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); command('prompt'); }}><textarea aria-label="Message" placeholder="Ask pi to work in your workspace…" value={draft} maxLength={32000} onChange={e => setDraft(e.target.value)} rows={3} /><div className="actions"><small>{connected ? 'One persistent workspace · last 200 messages' : 'Disconnected — reconnecting; tasks continue'}</small><button type="button" className="secondary" disabled={!connected || !state?.busy || pending} onClick={() => command('stop')}>Stop</button><button disabled={!connected || !state?.available || state.busy || state.modelChanging || pending || !draft.trim()}>Send</button></div></form></footer>
+      <footer>{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); command('prompt'); }}><textarea aria-label="Message" placeholder="Ask pi to work in your workspace…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={3} /><div className="actions"><small>{connected ? 'One workspace · last 200 messages in this thread' : 'Disconnected — reconnecting; tasks continue'}</small><button type="button" className="secondary" disabled={!connected || !state?.busy || pending} onClick={() => command('stop')}>Stop</button><button disabled={!connected || !state?.available || state.busy || state.modelChanging || state.threadChanging || pending || !draft.trim()}>Send</button></div></form></footer>
       </section>
-      {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane credential={credential} visible={tab === 'terminal'} /></Suspense>}
+      {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}
   </div>;
 }

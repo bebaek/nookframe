@@ -68,8 +68,6 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement).value === '');
     assert.equal(prompts, 1);
     await page.reload();
-    await page.getByLabel('Access token').fill(token);
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByText('Working', { exact: true }).waitFor();
     await page.getByText('Creating your first workspace file…', { exact: true }).waitFor();
     assert.equal(prompts, 1);
@@ -109,8 +107,6 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     await page.getByText('Ready', { exact: true }).waitFor();
     await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
     await page.reload();
-    await page.getByLabel('Access token').fill(token);
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
     await page.getByText('Connected', { exact: true }).waitFor();
     await page.locator('.xterm-helper-textarea').focus();
@@ -123,8 +119,6 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: '.local/terminal-mobile-smoke.png', fullPage: false });
     await page.reload();
-    await page.getByLabel('Access token').fill(token);
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
     await page.getByText('Connected', { exact: true }).waitFor();
     await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('(auto)'));

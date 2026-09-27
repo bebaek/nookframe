@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { ServerMessage } from '../shared/protocol';
 
-export function TerminalPane({ credential, visible }: { credential: string; visible: boolean }) {
+export function TerminalPane({ visible }: { visible: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
@@ -43,7 +43,7 @@ export function TerminalPane({ credential, visible }: { credential: string; visi
       let connectionReady = false;
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/terminal`);
       socket.current = ws;
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: credential }));
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth' }));
       ws.onmessage = event => {
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'terminal_ready') {
@@ -81,7 +81,7 @@ export function TerminalPane({ credential, visible }: { credential: string; visi
       disposed = true; clearTimeout(retry); ready.current = false;
       socket.current?.close(); observer.disconnect(); input.dispose(); resize.dispose(); term.dispose();
     };
-  }, [credential]);
+  }, []);
   useEffect(() => {
     if (visible) requestAnimationFrame(() => { fit.current?.fit(); terminal.current?.focus(); });
   }, [visible]);

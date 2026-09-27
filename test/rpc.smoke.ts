@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RpcClient, SessionManager } from '@earendil-works/pi-coding-agent';
+import { ThreadStore } from '../server/threads.js';
+import { Workspace } from '../server/workspace.js';
 
 test('real pi RPC writes a file and restores persisted session after replacement (no LLM)', { timeout: 45000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pi-workspace-rpc-'));
@@ -38,5 +40,22 @@ test('real pi RPC writes a file and restores persisted session after replacement
     await client.start();
     const restored = await client.getMessages();
     assert.ok(restored.some(m => m.role === 'bashExecution' && m.output.includes('hello from pi')));
+    const store = new ThreadStore(join(dir, 'sessions'), cwd, join(dir, 'state'));
+    const workspace = new Workspace(client, join(dir, 'state'), undefined, store);
+    try {
+      await workspace.initialize();
+      const originalId = workspace.state.threadId;
+      await workspace.switchThread();
+      const emptyId = workspace.state.threadId;
+      assert.equal(workspace.state.messages.length, 0);
+      await workspace.switchThread(originalId);
+      assert.ok(workspace.state.messages.some(m => m.text.includes('hello from pi')));
+      await workspace.switchThread(emptyId);
+    } finally { await workspace.close(); }
+    const selected = await store.initial();
+    client = new RpcClient({ ...options, args: ['--session', selected, '--session-dir', store.directory, '--no-extensions', '--no-approve'] });
+    await client.start();
+    assert.equal((await client.getState()).sessionFile, selected);
+    assert.equal((await client.getMessages()).length, 0, 'Empty selected thread survives a real RPC restart');
   } finally { await client.stop(); await rm(dir, { recursive: true, force: true }); }
 });

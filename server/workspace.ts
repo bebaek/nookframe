@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import type { RpcClient, JsonAgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { ChatMessage, Snapshot } from '../shared/protocol.js';
 import { saveModelSelection, type ModelSelection } from './models.js';
+import type { ThreadStore } from './threads.js';
 
-export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel'>;
+export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
 const clip = (text: string) => text.length > 24000 ? text.slice(0, 24000) + '\n[display truncated]' : text;
 function contentText(content: unknown): string {
   if (typeof content === 'string') return clip(content);
@@ -26,7 +27,7 @@ export function displayMessage(message: unknown, id: number): ChatMessage | unde
 
 // One controller owns one pi session. Browser connections never own the agent.
 export class Workspace {
-  state: Snapshot = { messages: [], liveText: '', tools: {}, busy: false, available: true, model: '', models: [], modelSource: 'pi', modelChanging: false, notice: '' };
+  state: Snapshot = { messages: [], liveText: '', tools: {}, busy: false, available: true, model: '', models: [], modelSource: 'pi', modelChanging: false, notice: '', threadId: '', threads: [], threadChanging: false };
   private listeners = new Set<() => void>();
   private nextId = 0;
   private blocks = new Map<number, string>();
@@ -35,7 +36,7 @@ export class Workspace {
   private stopping = false;
   private heartbeat?: ReturnType<typeof setInterval>;
 
-  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }) {
+  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     this.marker = join(stateDir, 'run-active');
     if (existsSync(this.marker)) this.state.notice = 'The previous run was interrupted. Inspect files before retrying; nothing was automatically resubmitted.';
@@ -60,24 +61,88 @@ export class Workspace {
       if (state.model?.provider !== desired.provider || state.model?.id !== desired.id) throw new Error('Pi did not activate the selected model');
     }
     this.state.model = state.model ? `${state.model.provider}/${state.model.id}` : 'No model configured';
+    if (this.threads) {
+      if (!state.sessionFile) throw new Error('Pi has no persistent session');
+      this.threads.remember(state.sessionFile);
+      this.state.threadId = this.threads.id(state.sessionFile);
+      this.state.threads = await this.threads.list();
+    }
+    await this.loadHistory();
+    this.heartbeat = setInterval(() => {
+      void this.agent.getState().catch(() => this.fail());
+    }, 5000);
+    this.heartbeat.unref();
+  }
+
+  private async loadHistory() {
     // Follow the active branch, retaining pre-compaction messages for display.
     const { entries, leafId } = await this.agent.getEntries();
     const byId = new Map(entries.map(e => [e.id, e]));
     const branch = [];
     let cursor = leafId;
+    const visited = new Set<string>();
     while (cursor) {
+      if (visited.has(cursor)) throw new Error('Invalid cyclic session history');
+      visited.add(cursor);
       const entry = byId.get(cursor);
       if (!entry) break;
       branch.push(entry);
       cursor = entry.parentId;
     }
+    this.state.messages = [];
+    this.state.liveText = '';
+    this.state.tools = {};
+    this.blocks.clear();
     for (const entry of branch.reverse()) {
       if (entry.type === 'message') this.append(entry.message);
     }
-    this.heartbeat = setInterval(() => {
-      void this.agent.getState().catch(() => this.fail());
-    }, 5000);
-    this.heartbeat.unref();
+  }
+
+  assertThread(id: unknown) {
+    if (this.threads && id !== this.state.threadId) throw new Error('The active thread changed. Review the selected thread before retrying.');
+  }
+
+  async switchThread(targetId?: string) {
+    if (!this.threads) throw new Error('Thread switching is unavailable');
+    if (!this.state.available) throw new Error('Pi is unavailable');
+    if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('Wait until the current operation finishes before switching threads');
+    // Validate client filenames before issuing any RPC; never accept arbitrary paths.
+    let target: string | undefined;
+    try { target = targetId === undefined ? undefined : this.threads.path(targetId); }
+    catch { throw new Error('Thread is unavailable'); }
+    if (targetId === this.state.threadId) return;
+    this.state.threadChanging = true;
+    this.changed();
+    try {
+      target ??= this.threads.create();
+      const result = await this.agent.switchSession(target);
+      if (result.cancelled) throw new Error('Thread switch was cancelled');
+      let state = await this.agent.getState();
+      if (state.sessionFile !== target) throw new Error('Thread switch was not confirmed');
+      // A saved/environment model is workspace-wide, not silently overridden by
+      // the older model recorded inside a resumed session.
+      if (this.selection.model) {
+        const { provider, id } = this.selection.model;
+        if (state.model?.provider !== provider || state.model?.id !== id) {
+          await this.agent.setModel(provider, id);
+          state = await this.agent.getState();
+        }
+        if (state.model?.provider !== provider || state.model?.id !== id) throw new Error('Model was not restored');
+      }
+      await this.loadHistory();
+      const catalog = await this.threads.list();
+      this.threads.remember(target);
+      this.state.threadId = this.threads.id(target);
+      this.state.threads = catalog;
+      this.state.model = state.model ? `${state.model.provider}/${state.model.id}` : 'No model configured';
+    } catch {
+      this.fail();
+      this.state.messages = [];
+      this.state.liveText = '';
+      this.state.tools = {};
+      this.state.notice = 'Could not confirm and save the thread switch. Restart the service before sending another prompt.';
+      throw new Error(this.state.notice);
+    } finally { this.state.threadChanging = false; this.changed(); }
   }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -94,6 +159,7 @@ export class Workspace {
     this.changed();
   }
   private event(event: JsonAgentSessionEvent) {
+    if (this.state.threadChanging) return;
     switch (event.type) {
       case 'agent_start': this.state.busy = true; break;
       case 'message_start':
@@ -107,6 +173,13 @@ export class Workspace {
         break;
       }
       case 'message_end':
+        if (event.message.role === 'user') {
+          const title = contentText(event.message.content).replace(/\s+/g, ' ').slice(0, 100) || 'New thread';
+          this.state.threads = this.state.threads.map(thread => thread.id !== this.state.threadId ? thread : {
+            ...thread, updatedAt: new Date().toISOString(),
+            title: thread.title === 'New thread' ? title : thread.title,
+          });
+        }
         this.append(event.message);
         if (event.message.role === 'assistant') { this.state.liveText = ''; this.blocks.clear(); }
         break;
@@ -131,7 +204,7 @@ export class Workspace {
   async setModel(provider: string, modelId: string) {
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.modelSource === 'environment') throw new Error('Model is locked by AGENT_PROVIDER/AGENT_MODEL; remove the environment override to select it here');
-    if (this.state.busy || this.stopping || this.state.modelChanging) throw new Error('Wait until the current operation finishes before switching models');
+    if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('Wait until the current operation finishes before switching models');
     if (!this.state.models.some(m => m.provider === provider && m.id === modelId)) throw new Error('Model is not in the available catalog');
     // Global guard covers all tabs: a prompt cannot race a model change.
     this.state.modelChanging = true;
@@ -143,6 +216,7 @@ export class Workspace {
       saveModelSelection(this.stateDir, { provider, id: modelId });
       this.state.model = `${provider}/${modelId}`;
       this.state.modelSource = 'saved';
+      this.selection = { source: 'saved', model: { provider, id: modelId } };
     } catch {
       // Switching may have succeeded even if RPC or the persistence write failed.
       // Do not allow a prompt under an uncertain model or silently lose the choice.
@@ -157,7 +231,7 @@ export class Workspace {
 
   async prompt(text: string) {
     if (!this.state.available) throw new Error('Pi is unavailable');
-    if (this.state.busy || this.stopping || this.state.modelChanging) throw new Error('A run or model change is already active');
+    if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('A run, model change, or thread change is already active');
     // Slash commands / extensions need additional UI semantics; not exposed in v1.
     if (text.trimStart().startsWith('/')) throw new Error('Slash commands are not supported in this first version');
     writeFileSync(this.marker, new Date().toISOString(), { mode: 0o600 });
@@ -174,6 +248,7 @@ export class Workspace {
 
   async abort() {
     if (this.stopping) throw new Error('Stop is already pending');
+    if (this.state.threadChanging || this.state.modelChanging) throw new Error('Wait until switching finishes');
     this.stopping = true;
     try { await this.agent.clearQueue(); await this.agent.abort(); }
     catch { this.fail(); throw new Error('Could not confirm cancellation'); }
