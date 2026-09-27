@@ -6,8 +6,10 @@ import type { Workspace } from './workspace.js';
 import type { TerminalSession } from './terminal.js';
 import type { ServerMessage } from '../shared/protocol.js';
 import { BrowserSessions, SESSION_SECONDS } from './browser-sessions.js';
+import type { MailOAuth } from '../mail/oauth.js';
+import { MailError } from '../mail/store.js';
 
-export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string; terminal?: TerminalSession; stateDir?: string }) {
+export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const origin = new URL(config.origin).origin;
   const secure = new URL(origin).protocol === 'https:';
@@ -20,6 +22,23 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    if (config.mail && req.method === 'GET' && (req.url === '/mail/oauth/callback' || req.url?.startsWith('/mail/oauth/callback?'))) {
+      // OAuth returns via a cross-site navigation, so SameSite=Strict login cookies
+      // are intentionally not required here. Single-use state + PKCE authenticate
+      // the exchange. Never log this request URL: it contains an authorization code.
+      let status = 'connected';
+      try {
+        if (req.url.length > 8192) throw new MailError('INVALID_OR_EXPIRED_AUTHORIZATION');
+        await config.mail.callback(new URL(req.url, origin));
+      } catch (error) { status = error instanceof MailError ? error.code : 'AUTHORIZATION_FAILED'; }
+      res.writeHead(303, { Location: `/mail/oauth/result?status=${encodeURIComponent(status)}` }).end(); return;
+    }
+    if (config.mail && req.method === 'GET' && req.url?.startsWith('/mail/oauth/result?')) {
+      const status = new URL(req.url, origin).searchParams.get('status');
+      const known = new Set(['connected', 'INVALID_OR_EXPIRED_AUTHORIZATION', 'AUTHORIZATION_DENIED', 'OAUTH_CLIENT_CHANGED_RETRY', 'OAUTH_CALLBACK_CHANGED_RECONFIGURE', 'OAUTH_CLIENT_NOT_CONFIGURED', 'OAUTH_REQUEST_FAILED', 'INVALID_TOKEN_RESPONSE', 'GMAIL_IMAP_SCOPE_REQUIRED', 'VERIFIED_EMAIL_REQUIRED', 'WRONG_ACCOUNT_FOR_ALIAS', 'ACCOUNT_ALREADY_CONNECTED', 'REFRESH_TOKEN_REQUIRED_REAUTHORIZE', 'MAIL_BUSY', 'RECONNECT_ACCOUNT']);
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end(status === 'connected' ? 'Account connected. Return to chat and ask pi to check mail account status. No sync or mailbox changes have been started.' : `Authorization not completed (${known.has(status ?? '') ? status : 'AUTHORIZATION_FAILED'}). Return to chat to check setup and request a fresh authorization link. Do not paste callback URLs or codes into chat.`); return;
+    }
     if (req.url === '/auth/session' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ authenticated: !!sessions.identify(req.headers.cookie, cookieName) })); return;

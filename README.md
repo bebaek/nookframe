@@ -2,7 +2,8 @@
 
 A single-user, persistent pi workspace with mobile web chat and a private terminal tab. One Node server owns
 one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
-No mail integration yet. 
+Includes an optional read-only Gmail/IMAP CLI and chat-discoverable mail skill.
+
 ## First run without containers
 
 Requires Node.js 24+, Bash, Python 3, make, and a C++ compiler (for node-pty).
@@ -125,6 +126,34 @@ concurrent commands/agents can edit the same files or refresh credentials.
 Credential changes may need a manual server restart to refresh the RPC model
 catalog. Terminal pi model selection does not update the web's saved selection.
 
+## Read-only mail
+
+The image includes `mailctl`, mbsync, notmuch, and a Gmail XOAUTH2 helper. A bundled
+pi skill guides account connection through chat: a Google authorization link goes
+to the user; the callback exchanges/stores credentials without exposing them in
+chat. Enter the one-time Google web OAuth client configuration privately with
+`mailctl oauth configure` in Terminal. Nothing connects or syncs by default.
+
+Start with one account, then opt into persistent retry jobs with
+`mailctl jobs enable ALIAS`; inspect or pause them with `jobs status` / `jobs pause`.
+Jobs use error-specific cooldowns and index local mail after failed downloads too.
+`mailctl index ALIAS` makes existing downloads searchable without contacting Google.
+Search and read commands return bounded, explicitly untrusted email data with
+freshness and partial-index markers. No sending, remote flag updates,
+remote deletes, or expunge. Gmail's OAuth scope is nevertheless broad, and the
+shared agent filesystem is not a credential sandbox.
+
+See [mail setup, Google consent requirements, limits, and trust model](mail/README.md).
+The first account has completed real Google consent and begun IMAP downloading.
+Its initial chat-driven sync timed out; use `mailctl sync ALIAS` in private Terminal
+for future large first downloads, not raw mbsync. Terminal avoids the chat timeout
+but not the wrapper's 15-minute download/5-minute indexing limits.
+See the [known gaps and acceptance checklist](mail/README.md#known-gaps-and-acceptance-checklist)
+for remaining liveness reconciliation, cancellation/progress work, and real-mail validation.
+Mail content, credentials, and indexes persist in `/data/mail`; include that
+location in your private backups. Review storage/staging capacity before
+downloading a large Inbox.
+
 ## Rootless Podman
 
 Podman is not required by the application itself. No Docker/Podman socket is mounted.
@@ -231,6 +260,7 @@ namespace. Don't use `chmod 777` as a workaround.
 | `WORKSPACE_DIR` | `.local/workspace`; `/workspace` in image |
 | `PI_CODING_AGENT_DIR` | `.local/agent`; `/data/agent` in image |
 | `STATE_DIR` | `.local/state`; `/data/state` in image |
+| `MAIL_DIR` | Sibling `mail` directory beside `STATE_DIR`; `/data/mail` in image |
 | `AGENT_PROVIDER`, `AGENT_MODEL` | Optional paired override: provider plus exact model ID; locks the web selector |
 
 Use an HTTPS reverse proxy with WebSocket upgrade support before remote access.
@@ -272,6 +302,7 @@ repository; the application does not apply cluster resources.
   not replace an existing saved web preference. To reset a stale preference, stop
   the server and back up/remove only `$STATE_DIR/model.json`, then restart.
 - Extensions are disabled and project-local trust-gated resources are ignored.
+  The bundled mail skill is explicitly loaded despite those restrictions.
   In web chat, slash commands, extension dialogs, uploads, in-session branching,
   steering/follow-up controls, and file browsing are intentionally deferred.
   Interactive terminal pi is independent and uses its normal CLI behavior.
@@ -307,6 +338,7 @@ npm run test:browser
 npm audit
 # Build the image first, then test it with disposable scratch mounts and no credentials:
 TEST_IMAGE=localhost/pi-workspace:dev BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome npm run test:container
+TEST_IMAGE=localhost/pi-workspace:dev npm run test:mail-container
 ```
 
 Unit/integration tests cover token/origin validation, reconnects during an active
@@ -333,3 +365,9 @@ Browser-auth tests cover cookie flags, no JavaScript/localStorage credential acc
 page reload and server replacement without another login, cross-tab sign-out,
 persisted revocation, expiry, access-token rotation, CSRF rejection, and failed
 session-store writes.
+Mail tests cover state/PKCE, callback privacy, credential permissions, masked TTY
+entry, refresh and revoked grants, scope checks, account identity, safe status,
+locks, and bounded untrusted message projection. The offline mail-container test
+runs real TLS/XOAUTH2 mbsync against a disposable IMAP server, rejects write commands,
+checks BODY.PEEK, and verifies real notmuch searches/read output with duplicate
+messages and independent unread state across two accounts. No Gmail access occurs.

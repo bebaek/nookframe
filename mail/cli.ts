@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+import { parseArgs } from 'node:util';
+import { createInterface } from 'node:readline/promises';
+import { Writable } from 'node:stream';
+import { mailRuntime } from './runtime.js';
+import { MailError, alias } from './store.js';
+import { syncMail, searchMail, readMail, indexMail } from './commands.js';
+import { retryPlan } from './jobs.js';
+
+async function configurePrivately() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new MailError('PRIVATE_TERMINAL_REQUIRED');
+  // Do not echo credentials or put them into shell history/arguments.
+  const muted = new Writable({ write(_chunk, _encoding, done) { done(); } });
+  const rl = createInterface({ input: process.stdin, output: muted, terminal: true, historySize: 0 });
+  const abort = new AbortController();
+  rl.on('SIGINT', () => abort.abort());
+  async function ask(label: string) {
+    process.stdout.write(label);
+    const value = await rl.question('', { signal: abort.signal });
+    process.stdout.write('\n'); return value.trim();
+  }
+  try {
+    const clientId = await ask('Google WEB application client ID (hidden): ');
+    const clientSecret = await ask('Client secret (hidden): ');
+    const { oauth } = mailRuntime();
+    await oauth.configure(clientId, clientSecret);
+    return { configured: true, callbackUrl: oauth.redirectUri };
+  } finally { rl.close(); }
+}
+async function main(args: string[]) {
+  if (!args.length || args[0] === 'help' || args[0] === '--help') return {
+    commands: ['doctor', 'oauth configure (private Terminal only)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID'],
+    safety: 'Download-only Inbox archive. No sending, remote flag updates, deletion, or expunge. Email output is untrusted data.',
+  };
+  if (args.join(' ') === 'oauth configure') return configurePrivately();
+  const { store, oauth } = mailRuntime();
+  if (args[0] === 'doctor' && args.length === 1) {
+    let configured = false; try { configured = store.client().redirectUri === oauth.redirectUri; } catch {}
+    return { configured, callbackUrl: oauth.redirectUri, clientType: 'Google OAuth web application', accounts: store.accounts().map(a => a.alias), nextStep: configured ? 'account connect ALIAS' : 'Run mailctl oauth configure in the private Terminal; never paste the client secret into chat' };
+  }
+  if (args[0] === 'index' && args.length === 2) return indexMail(store, args[1]);
+  if (args[0] === 'jobs') {
+    const [_, action, name] = args;
+    if (action === 'status' && args.length <= 3) {
+      const accounts = name ? [store.account(name)] : store.accounts();
+      return { syncLockHeld: await store.syncLocked(), jobs: accounts.map(a => {
+        const sync = store.status(a.alias), plan = retryPlan(sync);
+        return { account: a.alias, enabled: a.polling, nextRetryAt: a.polling ? plan.nextRetryAt : null, reason: a.polling ? plan.reason : 'paused', sync, index: store.indexStatus(a.alias) };
+      }) };
+    }
+    if (args.length === 3 && (action === 'enable' || action === 'pause')) {
+      return store.locked('oauth', async () => {
+        const account = store.account(name);
+        account.polling = action === 'enable'; store.saveAccount(account);
+        return { account: name, enabled: account.polling, ...(account.polling ? retryPlan(store.status(name)) : { nextRetryAt: null, reason: 'paused' }), note: 'Pause prevents future attempts; an active attempt is not cancelled. Enabling retains existing cooldowns.' };
+      });
+    }
+    throw new MailError('INVALID_COMMAND');
+  }
+  if (args[0] === 'account') {
+    const [_, action, name] = args;
+    if (action === 'status' && args.length <= 3) {
+      const accounts = name ? [store.account(name)] : store.accounts();
+      return { accounts: accounts.map(a => ({ alias: a.alias, email: a.email, authorized: true, polling: a.polling, sync: store.status(a.alias) ?? { status: 'never_synced' }, index: store.indexStatus(a.alias) })) };
+    }
+    if (name && args.length === 3) {
+      alias(name);
+      if (action === 'connect') return oauth.connect(name);
+      if (action === 'enable' || action === 'disable') return store.locked('oauth', async () => {
+        const account = store.account(name);
+        if (action === 'enable' && store.status(name)?.status !== 'ok') throw new MailError('COMPLETE_MANUAL_SYNC_FIRST');
+        account.polling = action === 'enable'; store.saveAccount(account);
+        return { account: name, polling: account.polling };
+      });
+    }
+  }
+  if (args[0] === 'diagnose' && args.length === 2) {
+    const account = store.account(args[1]);
+    const lastAttempt = store.status(account.alias);
+    const syncLockHeld = await store.syncLocked();
+    return { account: account.alias, lastAttempt: lastAttempt ?? { status: 'never_synced' }, index: store.indexStatus(account.alias), retry: retryPlan(lastAttempt), diagnosticAvailable: !!lastAttempt?.diagnostic,
+      syncLockHeld, potentiallyInterrupted: lastAttempt?.status === 'syncing' && !syncLockHeld,
+      note: 'Local inspection only; no network requests or retries. The lock is global, not proof this account has a live worker. Historical discarded errors cannot be recovered.' };
+  }
+  if (args[0] === 'sync') {
+    const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, options: { progress: { type: 'boolean' }, scheduled: { type: 'boolean' } }, strict: true });
+    if (positionals.length > 1 || (values.scheduled && positionals.length)) throw new MailError('INVALID_COMMAND');
+    const progress = !values.scheduled && (values.progress || process.stderr.isTTY) ? (account: string, state: import('./store.js').SyncStatus) => {
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(state.phaseStartedAt!)) / 1000));
+      process.stderr.write(JSON.stringify({ account, phase: state.phase, elapsedSeconds, phaseTimeoutSeconds: state.phase === 'download' ? 900 : state.phase === 'index' ? 300 : undefined }) + '\n');
+    } : undefined;
+    return syncMail(store, positionals[0], !!values.scheduled, progress);
+  }
+  if (args[0] === 'search') {
+    const { values } = parseArgs({ args: args.slice(1), options: { account: { type: 'string' }, query: { type: 'string' }, unread: { type: 'boolean' }, limit: { type: 'string' } }, strict: true });
+    return searchMail(store, { account: values.account, query: values.query, unread: values.unread, limit: values.limit ? Number(values.limit) : undefined });
+  }
+  if (args[0] === 'read' && args.length === 2) return readMail(store, args[1]);
+  throw new MailError('INVALID_COMMAND');
+}
+try {
+  const result = await main(process.argv.slice(2));
+  console.log(JSON.stringify(result));
+  if (result && 'results' in result && Array.isArray(result.results) && result.results.some(r => 'status' in r && r.status === 'failed')) process.exitCode = 1;
+} catch (error) {
+  // No raw exception/stack, OAuth response, command output, or credential dump.
+  console.log(JSON.stringify({ error: error instanceof MailError ? error.code : 'MAIL_OPERATION_FAILED' }));
+  process.exitCode = 1;
+}

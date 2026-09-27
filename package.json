@@ -14,7 +14,9 @@
     "test": "tsx --test test/*.test.ts",
     "test:rpc": "tsx --test test/rpc.smoke.ts",
     "test:browser": "tsx --test test/browser.smoke.ts test/threads.browser.smoke.ts test/auth.browser.smoke.ts",
-    "test:container": "tsx --test test/container.smoke.ts"
+    "test:container": "tsx --test test/container.smoke.ts",
+    "mail": "tsx mail/cli.ts",
+    "test:mail-container": "tsx --test test/mail.container.smoke.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.87.1",
