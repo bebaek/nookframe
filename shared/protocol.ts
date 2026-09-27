@@ -24,7 +24,12 @@ export type ClientCommand =
   | { type: 'prompt'; id: string; text: string }
   | { type: 'stop'; id: string }
   | { type: 'set_model'; id: string; provider: string; modelId: string };
+export type TerminalEvent =
+  | { type: 'terminal_ready' }
+  | { type: 'terminal_data'; data: string }
+  | { type: 'terminal_exit'; code: number };
 export type ServerMessage =
+  | TerminalEvent
   | { type: 'snapshot'; state: Snapshot }
   | { type: 'ack'; id: string }
   | { type: 'error'; id?: string; message: string };

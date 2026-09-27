@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Workspace } from './workspace.js';
+import type { TerminalSession } from './terminal.js';
 import type { ServerMessage } from '../shared/protocol.js';
 
-export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string }) {
+export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string; terminal?: TerminalSession }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const expected = createHash('sha256').update(config.token).digest();
   const origin = new URL(config.origin).origin;
@@ -14,7 +15,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     if (req.method !== 'GET') { res.writeHead(405).end(); return; }
     if (req.url === '/healthz') { res.writeHead(workspace.state.available ? 200 : 503).end(workspace.state.available ? 'ok' : 'unavailable'); return; }
     const path = req.url === '/' ? '/index.html' : req.url ?? '';
@@ -29,10 +30,10 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
   server.on('upgrade', (req, socket, head) => {
-    if (req.url !== '/ws' || req.headers.origin !== origin || wss.clients.size >= 16) {
+    if ((req.url !== '/ws' && !(req.url === '/terminal' && config.terminal)) || req.headers.origin !== origin || wss.clients.size >= 16) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
-    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws));
+    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   });
   const authenticated = new Set<WebSocket>();
   function send(ws: WebSocket, message: ServerMessage) {
@@ -48,27 +49,41 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
       for (const ws of authenticated) send(ws, { type: 'snapshot', state: workspace.state });
     }, 50);
   });
-  wss.on('connection', ws => {
+  wss.on('connection', (ws, request) => {
+    const isTerminal = request.url === '/terminal';
+    let authorized = false;
+    let detachTerminal: (() => void) | undefined;
     const timeout = setTimeout(() => ws.close(1008, 'Authentication required'), 5000);
     let commandPending = false;
     let alive = true;
     ws.on('pong', () => { alive = true; });
     const heartbeat = setInterval(() => { if (!alive) ws.terminate(); else { alive = false; ws.ping(); } }, 30000);
     ws.on('error', () => { /* Socket close cleans up; never stop the agent. */ });
-    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); });
+    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); detachTerminal?.(); });
     ws.on('message', async (raw, binary) => {
       let id: string | undefined;
       try {
         if (binary) throw new Error('Text JSON required');
         const command = JSON.parse(raw.toString());
         if (!command || typeof command !== 'object') throw new Error('Invalid command');
-        if (!authenticated.has(ws)) {
+        if (!authorized) {
           if (command.type !== 'auth' || typeof command.token !== 'string' || !timingSafeEqual(expected, createHash('sha256').update(command.token).digest())) {
             ws.close(1008, 'Invalid access token'); return;
           }
-          authenticated.add(ws);
+          authorized = true;
           clearTimeout(timeout);
-          send(ws, { type: 'snapshot', state: workspace.state });
+          if (isTerminal) detachTerminal = config.terminal!.attach(event => send(ws, event));
+          else {
+            authenticated.add(ws);
+            send(ws, { type: 'snapshot', state: workspace.state });
+          }
+          return;
+        }
+        if (isTerminal) {
+          if (command.type === 'terminal_input' && typeof command.data === 'string' && command.data.length <= 16000) config.terminal!.input(command.data);
+          else if (command.type === 'terminal_resize') config.terminal!.resize(command.cols, command.rows);
+          else if (command.type === 'terminal_start') config.terminal!.start();
+          else throw new Error('Invalid terminal command');
           return;
         }
         if (typeof command.id !== 'string' || command.id.length > 100) throw new Error('Request ID required');
@@ -86,7 +101,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
           send(ws, { type: 'ack', id: command.id });
         } finally { commandPending = false; }
       } catch (error) {
-        send(ws, { type: 'error', id, message: error instanceof Error ? error.message : 'Command failed' });
+        send(ws, { type: 'error', id, message: isTerminal ? 'Terminal request failed' : error instanceof Error ? error.message : 'Command failed' });
       }
     });
   });
@@ -94,6 +109,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     server,
     async close() {
       unsubscribe();
+      config.terminal?.close();
       if (timer) clearTimeout(timer);
       for (const ws of wss.clients) ws.terminate();
       wss.close();

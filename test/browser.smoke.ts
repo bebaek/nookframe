@@ -7,8 +7,9 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { createApp } from '../server/http.js';
+import { TerminalSession } from '../server/terminal.js';
 
-test('mobile browser: authenticate, send, reload/reconnect during run, stop', { timeout: 30000 }, async () => {
+test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', { timeout: 30000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pi-workspace-browser-'));
   let event: (value: unknown) => void = () => {};
   let prompts = 0;
@@ -43,7 +44,10 @@ test('mobile browser: authenticate, send, reload/reconnect during run, stop', { 
   const port = address.port;
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${port}`;
-  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web') });
+  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web'),
+    terminal: new TerminalSession(dir, { PATH: `${resolve('node_modules/.bin')}:${process.env.PATH}`, HOME: dir,
+      PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_OFFLINE: '1', PI_TELEMETRY: '0' }),
+  });
   app.server.listen(port, '127.0.0.1');
   await once(app.server, 'listening');
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
@@ -74,8 +78,57 @@ test('mobile browser: authenticate, send, reload/reconnect during run, stop', { 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await mkdir('.local', { recursive: true });
     await page.screenshot({ path: '.local/mobile-smoke.png', fullPage: false });
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await page.getByText('Connected', { exact: true }).waitFor();
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type('export TUI_TEST=terminal_survived; printf "terminal_%s\\n" ready');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('terminal_ready'));
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.evaluate(() => navigator.clipboard.writeText('printf "paste_%s\\n" works'));
+    await page.getByRole('button', { name: 'Paste', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('paste_%s'));
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('paste_works'));
+    // Capture actual PTY input in both normal and application-cursor mode.
+    for (const mode of ['normal', 'application']) {
+      const script = `process.stdin.setRawMode(true);process.stdout.write(String.fromCharCode(27)+"[?1${mode === 'application' ? 'h' : 'l'}"+"KEY_"+"READY_${mode}");let s="";process.stdin.on("data",b=>{s+=b;if(s.length>=12){process.stdout.write(String.fromCharCode(27)+"[?1l"+"KEY_"+"RESULT="+Buffer.from(s).toString("hex"));process.exit();}})`;
+      await page.keyboard.type(`node -e '${script}'`);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(marker => document.querySelector('.xterm-screen')?.textContent?.includes(marker), `KEY_READY_${mode}`);
+      for (const direction of ['up', 'down', 'left', 'right']) await page.getByRole('button', { name: `Arrow ${direction}`, exact: true }).click();
+      const prefix = mode === 'application' ? '1b4f' : '1b5b';
+      const expected = 'KEY_RESULT=' + ['41', '42', '44', '43'].map(suffix => prefix + suffix).join('');
+      await page.waitForFunction(marker => document.querySelector('.xterm-screen')?.textContent?.includes(marker), expected);
+    }
+    await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+    assert.equal(workspace.state.messages.length, 1, 'Terminal commands never become chat messages');
+    assert.equal((await page.locator('.transcript').textContent())?.includes('terminal_ready'), false);
+    assert.equal(workspace.state.busy, true, 'Opening the terminal must not stop chat work');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await page.getByText('Ready', { exact: true }).waitFor();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await page.reload();
+    await page.getByLabel('Access token').fill(token);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await page.getByText('Connected', { exact: true }).waitFor();
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type('printf "%s\\n" "$TUI_TEST"');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('terminal_survived'));
+    await page.keyboard.type('pi --no-session --no-extensions --no-approve');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('No models available'));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({ path: '.local/terminal-mobile-smoke.png', fullPage: false });
+    await page.reload();
+    await page.getByLabel('Access token').fill(token);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await page.getByText('Connected', { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('(auto)'));
+    await page.getByRole('button', { name: 'Ctrl+D', exact: true }).click();
     assert.deepEqual(errors, []);
   } finally {
     await browser.close(); await app.close(); await workspace.close(); await rm(dir, { recursive: true, force: true });

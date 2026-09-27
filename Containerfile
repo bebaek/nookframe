@@ -1,7 +1,10 @@
 FROM docker.io/library/node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm ci --ignore-scripts \
+    && npm rebuild node-pty --foreground-scripts
 COPY tsconfig*.json vite.config.ts ./
 COPY server ./server
 COPY shared ./shared

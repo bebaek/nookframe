@@ -1,14 +1,16 @@
 # Pi Workspace
 
-A single-user, persistent pi workspace with a mobile web chat. One Node server owns
+A single-user, persistent pi workspace with mobile web chat and a private terminal tab. One Node server owns
 one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
 No mail integration yet. 
 ## First run without containers
 
-Requires Node.js 24+. Run these commands from this directory:
+Requires Node.js 24+, Bash, Python 3, make, and a C++ compiler (for node-pty).
+Run these commands from this directory:
 
 ```bash
 npm ci --ignore-scripts
+npm rebuild node-pty --foreground-scripts
 npm run build
 mkdir -p .local
 node --input-type=module -e 'import { randomBytes } from "node:crypto"; import { writeFileSync } from "node:fs"; writeFileSync(".local/access-token", randomBytes(32).toString("hex"), { mode: 0o600, flag: "wx" })'
@@ -37,6 +39,40 @@ TypeScript backend against already-built frontend assets.
 
 Local execution is **not sandboxed**: pi runs as your host user. Prefer the
 container before enabling integrations or handling untrusted content.
+
+## Terminal tab
+
+After signing in, select **Terminal**. This opens one shared Bash PTY in the
+workspace, independent of chat/RPC. Run `pi` for the interactive TUI and `/login`.
+Pi uses the same provider credentials, but a normal new CLI session rather than
+the chat's fixed `workspace` session. Do not explicitly open/resume the chat
+session in another pi process. There is no maintenance mode or automatic restart;
+concurrent commands/agents can edit the same files or refresh credentials.
+
+- The shell starts lazily, survives tab switches and browser disconnects, and is
+  shared by all authenticated terminal connections (not separate user sessions).
+- Refreshing requires the web token again, then reattaches to the running shell.
+  There is **no server-side terminal replay**: disconnected output is discarded.
+  A forced resize requests a TUI redraw on attachment; Ctrl+L redraws a shell.
+  This is not a terminal multiplexer: programs may not reconstruct earlier output.
+- `exit` ends the shell; **New shell** starts another. Container restarts, deploys,
+  and any maintenance shutdown end all terminal processes.
+- Terminal transport uses the same token/origin checks as chat, a separate
+  WebSocket path, heartbeat, payload limits, and bounded socket buffering.
+- The app neither logs terminal input/output nor sends it into chat/model context.
+  Bash startup files are skipped and shell history is disabled. Programs launched
+  inside it can still save their own history, sessions, or logs. Use `/login` or
+  masked credential prompts, not a pi chat prompt, for secret entry.
+- The browser holds terminal scrollback only in memory. **Clear screen** clears
+  its visible scrollback, not data retained by terminal programs or other clients.
+- This is private entry, **not credential isolation**: the agent still has the
+  same filesystem permissions and can read saved credentials.
+- Mobile buttons provide arrow keys (including application-cursor mode for TUIs),
+  Esc, Tab, Ctrl+C/D/L, and Paste (requires browser
+  clipboard permission). Pasting more than 16000 characters is rejected.
+
+Credential changes may need a manual server restart to refresh the RPC model
+catalog. Terminal pi model selection does not update the web's saved selection.
 
 ## Rootless Podman
 
@@ -184,8 +220,9 @@ repository; the application does not apply cluster resources.
   not replace an existing saved web preference. To reset a stale preference, stop
   the server and back up/remove only `$STATE_DIR/model.json`, then restart.
 - Extensions are disabled and project-local trust-gated resources are ignored.
-  Slash commands, extension dialogs, uploads, terminal emulation, session switching,
+  In web chat, slash commands, extension dialogs, uploads, session switching,
   steering/follow-up controls, and file browsing are intentionally deferred.
+  Interactive terminal pi is independent and uses its normal CLI behavior.
 - Plain text rendering only: model output and tool results are never injected as HTML.
 
 ## Trust model
@@ -216,6 +253,8 @@ npx playwright install chromium
 npm run test:browser
 # Alternative: BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome npm run test:browser
 npm audit
+# Build the image first, then test it with disposable scratch mounts and no credentials:
+TEST_IMAGE=localhost/pi-workspace:dev BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome npm run test:container
 ```
 
 Unit/integration tests cover token/origin validation, reconnects during an active
@@ -228,5 +267,8 @@ a 390×844 mobile viewport, model selection, sending, draft acknowledgement,
 reload/reconnect while working, and stop. Model tests cover persistence across
 controllers, precedence, environment locking, concurrent-operation rejection,
 unavailable choices, RPC failures, and persistence failures; its screenshot goes to ignored `.local/mobile-smoke.png`.
-A successful real-model task and Podman volume
-replacement test are still required before calling this deployment validated.
+Terminal tests cover authentication/origin rejection, shell state across reconnects,
+resize validation, exit/restart, and separation from chat snapshots. The browser
+smoke also runs a real Bash PTY and offline pi TUI at phone size; its screenshot is
+`.local/terminal-mobile-smoke.png`. No real provider credentials are used in tests.
+Run container smoke tests and verify persistence before production rollout.

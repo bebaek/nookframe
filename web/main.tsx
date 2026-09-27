@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Snapshot, ServerMessage, ModelChoice } from '../shared/protocol';
 import './style.css';
+const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ default: module.TerminalPane })));
 
 function App() {
   const [token, setToken] = useState('');
@@ -11,6 +12,8 @@ function App() {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
+  const [tab, setTab] = useState<'chat' | 'terminal'>('chat');
+  const [terminalOpened, setTerminalOpened] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const sent = useRef<{ id: string; text?: string } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
@@ -70,6 +73,11 @@ function App() {
   return <div className="app">
     <header><div><h1>Pi <span>Workspace</span></h1><small>{state?.model || 'Your personal computer, through chat'}</small></div><span className={connected ? 'badge online' : 'badge'}>{connected ? state?.busy ? 'Working' : 'Ready' : credential ? 'Connecting…' : 'Locked'}</span></header>
     {!credential ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); setError(''); setCredential(token); setToken(''); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button>Connect</button></form><small>The token stays in memory only. Refreshing requires signing in again.</small>{error && <p role="alert">{error}</p>}</main> : <>
+      <nav className="tabs" role="tablist" aria-label="Workspace views">
+        <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
+        <button type="button" role="tab" aria-selected={tab === 'terminal'} onClick={() => { setTerminalOpened(true); setTab('terminal'); }}>Terminal</button>
+      </nav>
+      <section className="chat-pane" hidden={tab !== 'chat'}>
       {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || state.modelChanging || pending || state.modelSource === 'environment'} onChange={e => {
         const choice = state.models.find(m => `${m.provider}/${m.id}` === e.target.value);
         if (choice) command('set_model', choice);
@@ -85,6 +93,8 @@ function App() {
         <div ref={bottom} />
       </main>
       <footer>{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); command('prompt'); }}><textarea aria-label="Message" placeholder="Ask pi to work in your workspace…" value={draft} maxLength={32000} onChange={e => setDraft(e.target.value)} rows={3} /><div className="actions"><small>{connected ? 'One persistent workspace · last 200 messages' : 'Disconnected — reconnecting; tasks continue'}</small><button type="button" className="secondary" disabled={!connected || !state?.busy || pending} onClick={() => command('stop')}>Stop</button><button disabled={!connected || !state?.available || state.busy || state.modelChanging || pending || !draft.trim()}>Send</button></div></form></footer>
+      </section>
+      {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane credential={credential} visible={tab === 'terminal'} /></Suspense>}
     </>}
   </div>;
 }

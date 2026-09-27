@@ -6,6 +6,7 @@ import lockfile from 'proper-lockfile';
 import { Workspace } from './workspace.js';
 import { createApp } from './http.js';
 import { resolveModelSelection } from './models.js';
+import { TerminalSession } from './terminal.js';
 
 const root = process.cwd();
 const workspaceDir = resolve(process.env.WORKSPACE_DIR ?? join(root, '.local/workspace'));
@@ -41,6 +42,11 @@ const port = Number(process.env.PORT ?? 3000);
 const app = createApp(workspace, {
   token, origin: process.env.PUBLIC_ORIGIN ?? `http://localhost:${port}`,
   webDir: resolve(root, 'dist/web'),
+  terminal: new TerminalSession(workspaceDir, {
+    ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+    PI_CODING_AGENT_DIR: agentDir,
+    PATH: `${join(root, 'node_modules/.bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+  }),
 });
 app.server.listen(port, process.env.HOST ?? '127.0.0.1', () => {
   console.log(`Pi workspace listening on port ${port}; workspace: ${workspaceDir}`);
