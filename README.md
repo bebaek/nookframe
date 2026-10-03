@@ -53,7 +53,7 @@ container before enabling integrations or handling untrusted content.
   in `$STATE_DIR/browser-sessions.json` (`/data/state` in the container). Keep this
   directory persistent. Up to 64 logins are retained; the oldest is evicted beyond
   that limit. Never log cookie values or login request bodies.
-- **Sign out** revokes this browser login server-side, clears its cookie, and closes
+- **Sign out**, inside **⋯ Workspace controls**, revokes this browser login server-side, clears its cookie, and closes
   associated chat/terminal connections across tabs. Other browsers remain signed
   in. Agent tasks and the shared shell continue running; signing out is not Stop.
 - Rotating the web access token and restarting the server invalidates all browser
@@ -67,9 +67,18 @@ container before enabling integrations or handling untrusted content.
   JavaScript cannot read them. Private browsing, clearing cookies, expiry, or token
   rotation requires signing in again.
 
-## Chat threads
+## Chat layout and threads
 
-Use **Thread** to resume a conversation or **New thread** for a blank one.
+Chat uses one compact header for Chat/Terminal tabs, connection status, and the
+**⋯ Workspace controls** menu. Open that menu for Thread, New thread, Model, and
+Sign out; it overlays the transcript rather than shrinking it. Close with its
+close button, Escape, or a click outside. A small context line identifies the
+active thread/model. The composer starts at one line, grows up to 144px, and keeps
+Send alongside it; Stop appears while working. Tool output starts collapsed,
+including running tools, and reading earlier messages prevents auto-scroll.
+The layout uses the browser's native Popover API (current Chrome/Safari/Firefox).
+
+Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
 Each thread has its own pi JSONL history; all threads share workspace files,
 credentials, and one agent process. Thread titles come from the first user message
 (or an existing pi session name). Switching itself makes no model request.
@@ -286,7 +295,7 @@ repository; the application does not apply cluster resources.
   before that point can leave no transcript; the interruption warning still works.
 - An RPC failure makes the bridge unavailable; inspect/restart rather than silently
   resubmitting possibly accepted work. `/healthz` then reports 503.
-- The web **Model** selector uses pi's available model catalog. Changes are allowed
+- The **Model** selector in **⋯ Workspace controls** uses pi's available model catalog. Changes are allowed
   only while idle, applied through RPC, and atomically saved in
   `$STATE_DIR/model.json` (container: `/data/state/model.json`). The active model is
   shown in the header and shared across browser tabs. Switching does not send a

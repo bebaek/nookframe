@@ -41,6 +41,7 @@ test('browser login survives page reload and server replacement; logout locks al
     await a.reload(); await a.getByText('Ready', { exact: true }).waitFor();
     assert.equal(await a.getByLabel('Access token').count(), 0, 'No repeated login after server replacement');
     const b = await context.newPage(); await b.goto(origin); await b.getByText('Ready', { exact: true }).waitFor();
+    await a.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await a.getByRole('button', { name: 'Sign out', exact: true }).click();
     await a.getByLabel('Access token').waitFor(); await b.getByLabel('Access token').waitFor();
     assert.equal((await context.cookies()).length, 0);

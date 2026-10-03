@@ -20,6 +20,7 @@ function App() {
   const socket = useRef<WebSocket | null>(null);
   const sent = useRef<{ id: string; text?: string; threadId: string } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const follow = useRef(true);
 
   function lock() {
@@ -102,6 +103,13 @@ function App() {
     if (follow.current) bottom.current?.scrollIntoView({ behavior: 'instant' });
   }, [state]);
 
+  useEffect(() => {
+    if (tab !== 'chat' || !composer.current) return;
+    composer.current.style.height = '0px';
+    composer.current.style.height = `${Math.min(144, Math.max(44, composer.current.scrollHeight + 2))}px`;
+    if (follow.current) bottom.current?.scrollIntoView({ behavior: 'instant' });
+  }, [draft, tab, signedIn]);
+
   const canSend = connected && state?.available && !state.busy &&
     !state.modelChanging && !state.threadChanging && !pending && !!draft.trim();
 
@@ -115,13 +123,17 @@ function App() {
   }
 
   return <div className="app">
-    <header><div><h1>Pi <span>Workspace</span></h1><small>{state?.model || 'Your personal computer, through chat'}</small></div><span className={connected ? 'badge online' : 'badge'}>{connected ? state?.busy ? 'Working' : 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>{signedIn && <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>}</header>
-    {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
-      <nav className="tabs" role="tablist" aria-label="Workspace views">
+    <header><h1>Pi <span>Workspace</span></h1>
+      {signedIn && <nav className="tabs" role="tablist" aria-label="Workspace views">
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
         <button type="button" role="tab" aria-selected={tab === 'terminal'} onClick={() => { setTerminalOpened(true); setTab('terminal'); }}>Terminal</button>
-      </nav>
-      <section className="chat-pane" hidden={tab !== 'chat'}>
+      </nav>}
+      <span role="status" className={connected ? 'badge online' : 'badge'}>{connected ? state?.busy ? 'Working' : 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>
+      {signedIn && <button type="button" className="secondary controls-toggle" aria-label="Workspace controls" popoverTarget="workspace-controls">⋯</button>}
+    </header>
+    {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
+      <section id="workspace-controls" popover="auto" aria-label="Workspace controls" className="workspace-controls">
+      <div className="controls-heading"><h2>Workspace controls</h2><button type="button" className="secondary" aria-label="Close controls" popoverTarget="workspace-controls" popoverTargetAction="hide">×</button></div>
       {state?.threadId && <section className="thread-picker">
         <label htmlFor="thread">Thread</label>
         <select id="thread" value={state.threadId} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending} onChange={e => command('switch_thread', undefined, e.target.value)}>
@@ -137,21 +149,26 @@ function App() {
         {!state.models.some(m => `${m.provider}/${m.id}` === state.model) && <option value={state.model}>{state.model}</option>}
         {state.models.map(m => <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.provider}/{m.id}</option>)}
       </select><small>{state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for future sessions and restarts' : 'Pi default · select a model to save your preference'}</small></section>}
+      <p className="controls-note">One workspace · last 200 messages in this thread</p>
+      <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>
+      </section>
+      <section className="chat-pane" hidden={tab !== 'chat'}>
+      <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
       <main className="transcript" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2><p>Try: “Create a hello.txt file in the workspace.”</p></div>}
         {state?.messages.map(message => <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : <div className="text">{message.text}</div>}{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><div className="text">{state.liveText}</div></article>}
-        {Object.entries(state?.tools ?? {}).map(([id, tool]) => <article className="message" key={id}><details open><summary>{tool.name} · running</summary><pre>{tool.output}</pre></details></article>)}
+        {Object.entries(state?.tools ?? {}).map(([id, tool]) => <article className="message" key={id}><details><summary>{tool.name} · running</summary><pre>{tool.output}</pre></details></article>)}
         <div ref={bottom} />
       </main>
-      <footer>{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onKeyDown={e => {
+      <footer>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea ref={composer} onKeyDown={e => {
         // Keep mobile Enter and IME confirmation native (229 covers Safari IME).
         if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches ||
           e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey ||
           e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         e.preventDefault();
         if (!e.repeat && canSend) e.currentTarget.form?.requestSubmit();
-      }} aria-label="Message" placeholder="Ask pi to work in your workspace…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={3} /><div className="actions"><small>{connected ? 'One workspace · last 200 messages in this thread' : 'Disconnected — reconnecting; tasks continue'}</small><button type="button" className="secondary" disabled={!connected || !state?.busy || pending} onClick={() => command('stop')}>Stop</button><button disabled={!canSend}>Send</button></div></form></footer>
+      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={1} /><div className="actions">{state?.busy && <button type="button" className="secondary" disabled={!connected || pending} onClick={() => command('stop')}>Stop</button>}<button disabled={!canSend}>Send</button></div></form></footer>
       </section>
       {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}

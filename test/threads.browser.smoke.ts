@@ -46,12 +46,12 @@ test('mobile threads: real RPC histories, new/reload, shared selection, per-thre
     for (const page of [a, b]) page.on('pageerror', error => errors.push(error.message));
     async function login(page: Page) {
       await page.goto(origin);
-      await page.getByLabel('Access token').or(page.getByLabel('Thread', { exact: true })).first().waitFor();
+      await page.getByLabel('Access token').or(page.getByRole('button', { name: 'Workspace controls', exact: true })).first().waitFor();
       if (await page.getByLabel('Access token').isVisible()) {
         await page.getByLabel('Access token').fill(token);
         await page.getByRole('button', { name: 'Connect', exact: true }).click();
       }
-      await page.getByLabel('Thread', { exact: true }).waitFor();
+      await page.getByLabel('Thread', { exact: true }).waitFor({ state: 'attached' });
     }
     async function selected(page: Page, id: string) {
       await page.waitForFunction(id => (document.querySelector('#thread') as HTMLSelectElement)?.value === id, id);
@@ -59,6 +59,7 @@ test('mobile threads: real RPC histories, new/reload, shared selection, per-thre
     await login(a); await login(b); await selected(a, first);
     await a.getByText('Reply to First conversation', { exact: true }).waitFor();
     await a.getByLabel('Message', { exact: true }).fill('Draft for first');
+    await b.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await b.getByLabel('Thread', { exact: true }).selectOption(second);
     await selected(a, second);
     await a.getByText('Reply to Second conversation', { exact: true }).waitFor();
@@ -67,7 +68,9 @@ test('mobile threads: real RPC histories, new/reload, shared selection, per-thre
     await b.getByLabel('Thread', { exact: true }).selectOption(first);
     await selected(a, first);
     assert.equal(await a.getByLabel('Message', { exact: true }).inputValue(), 'Draft for first');
+    await a.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await a.getByRole('button', { name: 'New thread', exact: true }).click();
+    await a.getByRole('button', { name: 'Close controls', exact: true }).click();
     await a.waitForFunction(first => (document.querySelector('#thread') as HTMLSelectElement)?.value !== first, first);
     const empty = await a.getByLabel('Thread', { exact: true }).inputValue();
     await selected(b, empty);
@@ -87,7 +90,9 @@ test('mobile threads: real RPC histories, new/reload, shared selection, per-thre
     }), { token, first });
     assert.match(stale, /active thread changed/);
     assert.equal(workspace.state.threadId, empty);
+    await a.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await a.getByLabel('Thread', { exact: true }).selectOption(second);
+    await a.getByRole('button', { name: 'Close controls', exact: true }).click();
     await selected(a, second);
     await a.getByText('Reply to Second conversation', { exact: true }).waitFor();
     assert.equal(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
