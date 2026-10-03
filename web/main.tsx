@@ -102,8 +102,11 @@ function App() {
     if (follow.current) bottom.current?.scrollIntoView({ behavior: 'instant' });
   }, [state]);
 
+  const canSend = connected && state?.available && !state.busy &&
+    !state.modelChanging && !state.threadChanging && !pending && !!draft.trim();
+
   function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread', model?: ModelChoice, targetId?: string) {
-    if (!connected || pending || !socket.current) return;
+    if (!connected || pending || sent.current || !socket.current) return;
     const id = crypto.randomUUID();
     const threadId = state?.threadId ?? '';
     sent.current = { id, threadId, text: type === 'prompt' ? draft : undefined };
@@ -141,7 +144,14 @@ function App() {
         {Object.entries(state?.tools ?? {}).map(([id, tool]) => <article className="message" key={id}><details open><summary>{tool.name} · running</summary><pre>{tool.output}</pre></details></article>)}
         <div ref={bottom} />
       </main>
-      <footer>{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); command('prompt'); }}><textarea aria-label="Message" placeholder="Ask pi to work in your workspace…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={3} /><div className="actions"><small>{connected ? 'One workspace · last 200 messages in this thread' : 'Disconnected — reconnecting; tasks continue'}</small><button type="button" className="secondary" disabled={!connected || !state?.busy || pending} onClick={() => command('stop')}>Stop</button><button disabled={!connected || !state?.available || state.busy || state.modelChanging || state.threadChanging || pending || !draft.trim()}>Send</button></div></form></footer>
+      <footer>{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onKeyDown={e => {
+        // Keep mobile Enter and IME confirmation native (229 covers Safari IME).
+        if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches ||
+          e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey ||
+          e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+        e.preventDefault();
+        if (!e.repeat && canSend) e.currentTarget.form?.requestSubmit();
+      }} aria-label="Message" placeholder="Ask pi to work in your workspace…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={3} /><div className="actions"><small>{connected ? 'One workspace · last 200 messages in this thread' : 'Disconnected — reconnecting; tasks continue'}</small><button type="button" className="secondary" disabled={!connected || !state?.busy || pending} onClick={() => command('stop')}>Stop</button><button disabled={!canSend}>Send</button></div></form></footer>
       </section>
       {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}
