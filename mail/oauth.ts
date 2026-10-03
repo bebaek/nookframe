@@ -22,6 +22,19 @@ export class MailOAuth {
     if (!/^[a-zA-Z0-9-]+\.apps\.googleusercontent\.com$/.test(clientId) || !secret(clientSecret)) throw new MailError('INVALID_OAUTH_CLIENT');
     await this.store.locked('oauth', async () => this.store.write(this.store.path('oauth-client.json'), { clientId, clientSecret, redirectUri: this.redirectUri } satisfies OAuthClient));
   }
+  // Explicit local migration after registering PUBLIC_ORIGIN's callback with
+  // Google. Preserve client credentials/account tokens; invalidate in-flight consent.
+  async migrateCallback() {
+    return this.store.locked('oauth', async () => {
+      const client = this.store.client();
+      if (client.redirectUri === this.redirectUri) return { updated: false, callbackUrl: this.redirectUri };
+      for (const file of readdirSync(this.store.path('pending'))) {
+        if (/^[a-f0-9]{64}\.json$/.test(file)) unlinkSync(this.store.path('pending', file));
+      }
+      this.store.write(this.store.path('oauth-client.json'), { ...client, redirectUri: this.redirectUri });
+      return { updated: true, callbackUrl: this.redirectUri };
+    });
+  }
   private client() {
     const client = this.store.client();
     if (client.redirectUri !== this.redirectUri) throw new MailError('OAUTH_CALLBACK_CHANGED_RECONFIGURE');

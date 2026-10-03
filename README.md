@@ -4,6 +4,14 @@ A single-user, persistent personal workspace with mobile web chat and a private 
 one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
 Includes an optional read-only Gmail/IMAP CLI and chat-discoverable mail skill.
 
+The agent engine is Pi; its package, CLI, and `PI_*` settings retain their names.
+Browser cookies and local Podman examples retain legacy `pi-workspace` names for
+compatibility. Preserve existing data volumes when upgrading, and never run two
+instances against the same persistent state.
+
+Keep deployment URLs, account identities, operational logs, and private runbooks
+outside this repository. Documentation examples use placeholders, not live setup
+details.
 
 ## First run without containers
 

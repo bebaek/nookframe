@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { MailStore, MailError } from '../mail/store.js';
@@ -106,6 +106,32 @@ test('OAuth client entry is a hidden TTY prompt, never echoed or passed as argum
     assert.ok(!output.includes('fixture-client-secret') && !output.includes('fixture.apps.googleusercontent.com'));
     assert.equal(f.store.client().clientSecret, 'fixture-client-secret');
   } finally { clearTimeout(timeout); terminal.kill(); f.clean(); }
+});
+
+test('explicit callback migration preserves credentials/accounts, invalidates pending consent, and is idempotent', async () => {
+  const f = fixture();
+  try {
+    await f.oauth.configure('fixture.apps.googleusercontent.com', 'fixture-client-secret');
+    await authorize(f.oauth);
+    const accountBefore = readFileSync(f.store.path('accounts', 'personal.json'), 'utf8');
+    const clientBefore = f.store.client();
+    await f.oauth.connect('personal');
+    assert.ok(readdirSync(f.store.path('pending')).length > 0);
+    const migrated = new MailOAuth(f.store, 'https://nookframe.example.test', async () => { throw new Error('No network allowed'); });
+    await assert.rejects(migrated.connect('personal'), /OAUTH_CALLBACK_CHANGED_RECONFIGURE/);
+    const result = await migrated.migrateCallback();
+    assert.deepEqual(result, { updated: true, callbackUrl: 'https://nookframe.example.test/mail/oauth/callback' });
+    assert.deepEqual(f.store.client(), { ...clientBefore, redirectUri: result.callbackUrl });
+    assert.equal(readFileSync(f.store.path('accounts', 'personal.json'), 'utf8'), accountBefore);
+    assert.equal(readdirSync(f.store.path('pending')).length, 0);
+    const link = await migrated.connect('personal');
+    assert.equal(new URL(link.authorizationUrl).searchParams.get('redirect_uri'), result.callbackUrl);
+    assert.equal((await migrated.migrateCallback()).updated, false);
+    assert.equal(readdirSync(f.store.path('pending')).length, 1, 'No-op migration preserves new pending consent');
+    await assert.rejects(f.oauth.connect('personal'), /OAUTH_CALLBACK_CHANGED_RECONFIGURE/);
+    assert.equal((await f.oauth.migrateCallback()).updated, true, 'Rollback uses the old runtime origin');
+    assert.deepEqual(f.store.client(), clientBefore);
+  } finally { f.clean(); }
 });
 
 test('all-folder indexing does not automatically tag new messages as inbox', async () => {

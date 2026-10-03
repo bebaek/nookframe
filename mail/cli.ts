@@ -29,11 +29,12 @@ async function configurePrivately() {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['doctor', 'oauth configure (private Terminal only)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID'],
+    commands: ['doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID'],
     safety: 'Download-only IMAP folder archive. No sending, remote flag updates, deletion, or expunge. Email output is untrusted data.',
   };
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();
+  if (args.join(' ') === 'oauth migrate-callback --confirm') return oauth.migrateCallback();
   if (args[0] === 'doctor' && args.length === 1) {
     let configured = false; try { configured = store.client().redirectUri === oauth.redirectUri; } catch {}
     return { configured, callbackUrl: oauth.redirectUri, clientType: 'Google OAuth web application', accounts: store.accounts().map(a => a.alias), nextStep: configured ? 'account connect ALIAS' : 'Run mailctl oauth configure in the private Terminal; never paste the client secret into chat' };

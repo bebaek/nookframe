@@ -15,10 +15,11 @@ storage/search layer, but only Gmail OAuth is implemented in this version.
    callback-hostname problem. Do not reuse Thunderbird's or another application's
    OAuth credentials.
 2. Create an OAuth **Web application** client, not a desktop client. Set the exact
-   authorized redirect URI returned by `mailctl doctor`. For the current deployment:
+   authorized redirect URI returned by `mailctl doctor`, for example:
    `https://workspace.example.com/mail/oauth/callback`.
-   The browser completing consent must be on your Tailnet. Google's token endpoint
-   is contacted by the container; the callback need not be publicly reachable.
+   The browser completing consent must be able to reach your configured origin.
+   Google's token endpoint is contacted by the container; a callback served on a
+   private network requires browser access to that network.
 3. Requested scopes: `https://mail.google.com/`, `openid`, and `email`. Gmail IMAP
    requires the broad mail scope; it is **not a read-only OAuth permission**.
    Account identity is verified through Google's OpenID userinfo endpoint.
@@ -86,6 +87,27 @@ are not an independent per-folder view. Flag updates only cover
 messages still available remotely. Separate indexes prevent one account's duplicate
 Message-ID or unread state from contaminating another's results. Notmuch can adjust
 local Maildir flags; these are never pushed to the server.
+
+## Explicit callback-origin migration
+
+When changing the deployment's `PUBLIC_ORIGIN`, first register the new exact
+`/mail/oauth/callback` URI on the existing Google OAuth web client. Keep the old
+URI for rollback. Pause/drain mail workers before rollout; mismatched runtime and
+saved callback origins intentionally block token refresh and new consent.
+After deploying the new origin, run:
+
+```sh
+mailctl oauth migrate-callback --confirm
+mailctl doctor
+```
+
+This local-only command derives the new callback from `PUBLIC_ORIGIN`, updates
+only the saved OAuth client's redirect URI, preserves credentials/account tokens,
+and invalidates pending consent links. No secrets are printed and no Google
+requests are made. Repeating it with the same origin is a no-op. If OAuth was never
+configured, use private `oauth configure` instead. To roll back, restore the old
+runtime origin and run the migration command again. A hostname change requires
+browser login again. Re-enable jobs only after callback configuration is verified.
 
 ## Persistent retry jobs and partial indexes
 
