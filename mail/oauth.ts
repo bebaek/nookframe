@@ -20,12 +20,12 @@ export class MailOAuth {
   }
   async configure(clientId: string, clientSecret: string) {
     if (!/^[a-zA-Z0-9-]+\.apps\.googleusercontent\.com$/.test(clientId) || !secret(clientSecret)) throw new MailError('INVALID_OAUTH_CLIENT');
-    await this.store.locked('oauth', async () => this.store.write(this.store.path('oauth-client.json'), { clientId, clientSecret, redirectUri: this.redirectUri } satisfies OAuthClient));
+    await this.store.withOAuthConfigurationLock(async () => this.store.write(this.store.path('oauth-client.json'), { clientId, clientSecret, redirectUri: this.redirectUri } satisfies OAuthClient));
   }
   // Explicit local migration after registering PUBLIC_ORIGIN's callback with
   // Google. Preserve client credentials/account tokens; invalidate in-flight consent.
   async migrateCallback() {
-    return this.store.locked('oauth', async () => {
+    return this.store.withOAuthConfigurationLock(async () => {
       const client = this.store.client();
       if (client.redirectUri === this.redirectUri) return { updated: false, callbackUrl: this.redirectUri };
       for (const file of readdirSync(this.store.path('pending'))) {
@@ -33,7 +33,8 @@ export class MailOAuth {
       }
       this.store.write(this.store.path('oauth-client.json'), { ...client, redirectUri: this.redirectUri });
       return { updated: true, callbackUrl: this.redirectUri };
-    });
+    }, () => this.store.client().redirectUri === this.redirectUri
+      ? { updated: false, callbackUrl: this.redirectUri } : undefined);
   }
   private client() {
     const client = this.store.client();
@@ -86,24 +87,26 @@ export class MailOAuth {
       if (url.searchParams.has('error')) throw new MailError('AUTHORIZATION_DENIED');
       const code = url.searchParams.get('code');
       if (!code || code.length > 4096 || url.searchParams.getAll('code').length !== 1) throw new MailError('INVALID_OR_EXPIRED_AUTHORIZATION');
-      const client = this.client();
-      if (pending.clientId !== client.clientId) throw new MailError('OAUTH_CLIENT_CHANGED_RETRY');
-      const data = await this.exchange(client, { grant_type: 'authorization_code', code, redirect_uri: this.redirectUri, code_verifier: pending.verifier });
-      if (typeof data.scope !== 'string' || !data.scope.split(' ').includes(MAIL_SCOPE)) throw new MailError('GMAIL_IMAP_SCOPE_REQUIRED');
-      const identity = await this.json(INFO_URL, { headers: { Authorization: `Bearer ${data.access_token}` } });
-      if (!validEmail(identity.email) || identity.email_verified !== true) throw new MailError('VERIFIED_EMAIL_REQUIRED');
-      const existing = existsSync(this.store.path('accounts', pending.alias + '.json')) ? this.store.account(pending.alias) : undefined;
-      if (existing && existing.email.toLowerCase() !== identity.email.toLowerCase()) throw new MailError('WRONG_ACCOUNT_FOR_ALIAS');
-      if (this.store.accounts().some(a => a.alias !== pending.alias && a.email.toLowerCase() === identity.email.toLowerCase())) throw new MailError('ACCOUNT_ALREADY_CONNECTED');
-      const refreshToken = data.refresh_token ?? (existing?.oauth.clientId === client.clientId ? existing.oauth.refreshToken : undefined);
-      if (!secret(refreshToken)) throw new MailError('REFRESH_TOKEN_REQUIRED_REAUTHORIZE');
-      this.store.saveAccount({ alias: pending.alias, provider: 'gmail', email: identity.email, polling: existing?.polling ?? false,
-        oauth: { clientId: client.clientId, refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 } });
+      await this.store.withAccountCredentialLock(pending.alias, async () => {
+        const client = this.client();
+        if (pending.clientId !== client.clientId) throw new MailError('OAUTH_CLIENT_CHANGED_RETRY');
+        const data = await this.exchange(client, { grant_type: 'authorization_code', code, redirect_uri: this.redirectUri, code_verifier: pending.verifier });
+        if (typeof data.scope !== 'string' || !data.scope.split(' ').includes(MAIL_SCOPE)) throw new MailError('GMAIL_IMAP_SCOPE_REQUIRED');
+        const identity = await this.json(INFO_URL, { headers: { Authorization: `Bearer ${data.access_token}` } });
+        if (!validEmail(identity.email) || identity.email_verified !== true) throw new MailError('VERIFIED_EMAIL_REQUIRED');
+        const existing = existsSync(this.store.path('accounts', pending.alias + '.json')) ? this.store.account(pending.alias) : undefined;
+        if (existing && existing.email.toLowerCase() !== identity.email.toLowerCase()) throw new MailError('WRONG_ACCOUNT_FOR_ALIAS');
+        if (this.store.accounts().some(a => a.alias !== pending.alias && a.email.toLowerCase() === identity.email.toLowerCase())) throw new MailError('ACCOUNT_ALREADY_CONNECTED');
+        const refreshToken = data.refresh_token ?? (existing?.oauth.clientId === client.clientId ? existing.oauth.refreshToken : undefined);
+        if (!secret(refreshToken)) throw new MailError('REFRESH_TOKEN_REQUIRED_REAUTHORIZE');
+        this.store.saveAccount({ alias: pending.alias, provider: 'gmail', email: identity.email, polling: existing?.polling ?? false,
+          oauth: { clientId: client.clientId, refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 } });
+      }, true);
     });
   }
   // Called only by the mbsync password helper, never by public CLI commands.
   async accessToken(name: string): Promise<string> {
-    return this.store.withTokenRefreshLock(async () => {
+    return this.store.withAccountCredentialLock(name, async () => {
       const account = this.store.account(name), client = this.client();
       if (account.oauth.clientId !== client.clientId) throw new MailError('RECONNECT_ACCOUNT');
       if (account.oauth.expiresAt > this.now() + 120000 && secret(account.oauth.accessToken)) return account.oauth.accessToken;
@@ -112,6 +115,6 @@ export class MailOAuth {
       account.oauth = { clientId: client.clientId, refreshToken: data.refresh_token ?? account.oauth.refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 };
       this.store.saveAccount(account);
       return account.oauth.accessToken;
-    });
+    }, true);
   }
 }

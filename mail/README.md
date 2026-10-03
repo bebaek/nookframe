@@ -176,12 +176,28 @@ local index, with `freshness` metadata and a conservative `partial` marker. Part
 results are not a complete mailbox audit, and even a completed sync is a local
 folder archive, not live membership. Previously successful syncs remain searchable.
 `MAIL_BUSY` means another operation owns that account's lock; wait rather than bypassing it.
-OAuth refresh shares the cross-process OAuth writer lock with configuration,
-consent, and account-setting changes. Token helpers retry that lock for up to
-30 seconds of retry delays (500 ms intervals), then return sanitized `MAIL_BUSY`;
-other OAuth writers remain fail-fast. Token/cache state is re-read only after
-acquiring the lock, preventing duplicate refresh rotation or lost setting updates.
-Downloads remain concurrent after this short serialized credential step.
+OAuth refresh and account enable/pause updates use per-account credential locks
+at `.locks/credentials/ALIAS`. Different accounts can refresh concurrently, without
+acquiring the global OAuth control lock. Same-account token helpers and consent
+callbacks retry the credential lock for up to 30 seconds of retry delays (500 ms
+intervals); ordinary account-setting writers remain fail-fast. Exhausted waits
+return sanitized `MAIL_BUSY`. Account/token state is re-read after acquiring the
+lock, preventing duplicate refresh rotation and lost polling-setting updates.
+
+Shared OAuth configuration uses atomic file replacement. `oauth configure` and
+callback migrations that change the saved URI require **all accounts paused and
+all workers drained**. An already-matching `oauth migrate-callback` returns
+`updated: false` under the configuration lock without requiring paused accounts.
+For actual changes:
+`PAUSE_MAIL_JOBS_FIRST` means polling is enabled; `MAIL_BUSY` means a sync/index or
+credential operation is still active. They hold the global OAuth control lock
+(excluding consent/account creation) and all existing account sync/credential
+locks while changing configuration. This avoids a configuration-change race
+without adding a global lock to routine refreshes. Consent callbacks remain
+serialized globally for duplicate-account checks and also lock their target account.
+
+When upgrading from global OAuth locking, pause/drain old workers before rollout;
+old and new credential-lock schemes do not protect against each other.
 `account status` exposes last attempt,
 last success, and safe error codes. `RECONNECT_ACCOUNT` requires a fresh consent
 flow. Subprocess/provider diagnostics are intentionally suppressed, not dumped into

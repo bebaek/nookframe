@@ -51,7 +51,7 @@ async function main(args: string[]) {
       return { syncLockHeld: jobs.some(job => job.syncLockHeld), jobs };
     }
     if (args.length === 3 && (action === 'enable' || action === 'pause')) {
-      return store.locked('oauth', async () => {
+      return store.withAccountCredentialLock(name, async () => {
         const account = store.account(name);
         account.polling = action === 'enable'; store.saveAccount(account);
         return { account: name, enabled: account.polling, ...(account.polling ? retryPlan(store.status(name)) : { nextRetryAt: null, reason: 'paused' }), note: 'Pause prevents future attempts; an active attempt is not cancelled. Enabling retains existing cooldowns.' };
@@ -68,7 +68,7 @@ async function main(args: string[]) {
     if (name && args.length === 3) {
       alias(name);
       if (action === 'connect') return oauth.connect(name);
-      if (action === 'enable' || action === 'disable') return store.locked('oauth', async () => {
+      if (action === 'enable' || action === 'disable') return store.withAccountCredentialLock(name, async () => {
         const account = store.account(name);
         if (action === 'enable' && store.status(name)?.status !== 'ok') throw new MailError('COMPLETE_MANUAL_SYNC_FIRST');
         account.polling = action === 'enable'; store.saveAccount(account);

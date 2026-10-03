@@ -25,7 +25,7 @@ export class MailStore {
   readonly root: string;
   constructor(root: string) {
     this.root = resolve(root);
-    for (const part of ['', 'accounts', 'pending', 'maildir', 'index', 'state', '.locks/oauth', '.locks/sync']) mkdirSync(join(this.root, part), { recursive: true, mode: 0o700 });
+    for (const part of ['', 'accounts', 'pending', 'maildir', 'index', 'state', '.locks/oauth', '.locks/sync', '.locks/credentials']) mkdirSync(join(this.root, part), { recursive: true, mode: 0o700 });
   }
   path(...parts: string[]) { return join(this.root, ...parts); }
   write(path: string, value: unknown) { this.writeText(path, JSON.stringify(value) + '\n'); }
@@ -53,20 +53,43 @@ export class MailStore {
   accounts(): Account[] {
     return readdirSync(this.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => this.account(f.slice(0, -5)));
   }
-  private async lock<T>(target: string, action: () => Promise<T>, waitForOAuth = false): Promise<T> {
+  private async lock<T>(target: string, action: () => Promise<T>, waitForCredentials = false): Promise<T> {
     let release: () => Promise<void>;
     try { release = await lockfile.lock(target, { stale: 60000, update: 10000,
-      retries: waitForOAuth ? { retries: 60, factor: 1, minTimeout: 500, maxTimeout: 500, randomize: false } : 0 }); }
+      retries: waitForCredentials ? { retries: 60, factor: 1, minTimeout: 500, maxTimeout: 500, randomize: false } : 0 }); }
     catch { throw new MailError('MAIL_BUSY'); }
     try { return await action(); } finally { await release(); }
   }
   async locked<T>(kind: 'oauth', action: () => Promise<T>): Promise<T> {
     return this.lock(this.path('.locks', kind), action);
   }
-  async withTokenRefreshLock<T>(action: () => Promise<T>): Promise<T> {
-    // Share the OAuth writer lock, but tolerate short contention from concurrent
-    // mbsync helpers. At most 30 seconds of retry delays; no secret output.
-    return this.lock(this.path('.locks', 'oauth'), action, true);
+  async withAccountCredentialLock<T>(name: string, action: () => Promise<T>, wait = false): Promise<T> {
+    const target = this.path('.locks', 'credentials', alias(name));
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    return this.lock(target, action, wait);
+  }
+  async withOAuthConfigurationLock<T>(action: () => Promise<T>, ifUnchanged?: () => T | undefined): Promise<T> {
+    // The global control-plane lock prevents concurrent consent/account creation.
+    // Routine workers never take it. Acquire sync before credentials, matching
+    // workers, and fail fast rather than waiting for active jobs to drain.
+    return this.locked('oauth', async () => {
+      // A read-only no-op check still excludes other configuration writers, but
+      // need not disturb active jobs or acquire every account lock.
+      const unchanged = ifUnchanged?.();
+      if (unchanged !== undefined) return unchanged;
+      const accounts = this.accounts().sort((a, b) => a.alias.localeCompare(b.alias));
+      if (accounts.some(a => a.polling)) throw new MailError('PAUSE_MAIL_JOBS_FIRST');
+      const acquire = async (index: number): Promise<T> => {
+        if (index === accounts.length) return action();
+        const name = accounts[index].alias;
+        return this.withAccountSyncLock(name, () => this.withAccountCredentialLock(name, async () => {
+          // Recheck under the credential lock: jobs enable/pause use this lock too.
+          if (this.account(name).polling) throw new MailError('PAUSE_MAIL_JOBS_FIRST');
+          return acquire(index + 1);
+        }));
+      };
+      return acquire(0);
+    });
   }
   private syncTarget(name: string) {
     const target = this.path('.locks', 'sync', alias(name));
