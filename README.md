@@ -1,8 +1,9 @@
-# Pi Workspace
+# Nookframe
 
-A single-user, persistent pi workspace with mobile web chat and a private terminal tab. One Node server owns
+A single-user, persistent personal workspace with mobile web chat and a private terminal tab. One Node server owns
 one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
 Includes an optional read-only Gmail/IMAP CLI and chat-discoverable mail skill.
+
 
 ## First run without containers
 
@@ -216,7 +217,7 @@ needs a separately reviewed, coordinated downgrade of the container packages.
 Do not run `apt autoremove` or downgrade a live container stack blindly.
 
 ```bash
-podman build -t localhost/pi-workspace:dev -f Containerfile .
+podman build -t localhost/nookframe:dev -f Containerfile .
 podman volume create pi-workspace-files
 podman volume create pi-workspace-data
 podman secret create pi-workspace-token .local/access-token
@@ -229,7 +230,7 @@ volume is the same one used by the server; select your model and use `/login`:
 podman run --rm -it \
   -v pi-workspace-data:/data \
   --entrypoint /app/node_modules/.bin/pi \
-  localhost/pi-workspace:dev
+  localhost/nookframe:dev
 ```
 
 Run the web workspace:
@@ -244,7 +245,7 @@ podman run --name pi-workspace --rm \
   --secret pi-workspace-token,target=access-token,uid=1000,mode=0400 \
   -e ACCESS_TOKEN_FILE=/run/secrets/access-token \
   -e PUBLIC_ORIGIN=http://localhost:3000 \
-  localhost/pi-workspace:dev
+  localhost/nookframe:dev
 ```
 
 Use `podman stop pi-workspace` to shut down. Start the same command again to
@@ -346,8 +347,8 @@ npm run test:browser
 # Alternative: BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome npm run test:browser
 npm audit
 # Build the image first, then test it with disposable scratch mounts and no credentials:
-TEST_IMAGE=localhost/pi-workspace:dev BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome npm run test:container
-TEST_IMAGE=localhost/pi-workspace:dev npm run test:mail-container
+TEST_IMAGE=localhost/nookframe:dev BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome npm run test:container
+TEST_IMAGE=localhost/nookframe:dev npm run test:mail-container
 ```
 
 Unit/integration tests cover token/origin validation, reconnects during an active

@@ -123,7 +123,7 @@ function App() {
   }
 
   return <div className="app">
-    <header><h1>Pi <span>Workspace</span></h1>
+    <header><h1><span>Nookframe</span></h1>
       {signedIn && <nav className="tabs" role="tablist" aria-label="Workspace views">
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
         <button type="button" role="tab" aria-selected={tab === 'terminal'} onClick={() => { setTerminalOpened(true); setTab('terminal'); }}>Terminal</button>

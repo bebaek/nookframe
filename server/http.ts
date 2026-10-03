@@ -13,6 +13,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const origin = new URL(config.origin).origin;
   const secure = new URL(origin).protocol === 'https:';
+  // Legacy cookie name intentionally survives the Nookframe branding migration.
   const cookieName = secure ? '__Host-pi-workspace-session' : 'pi-workspace-session';
   const cookie = (value: string, seconds: number) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${seconds}${secure ? '; Secure' : ''}`;
   const sessions = new BrowserSessions(config.token, config.stateDir);

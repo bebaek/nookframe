@@ -10,7 +10,7 @@ import { createApp } from '../server/http.js';
 import { TerminalSession } from '../server/terminal.js';
 
 test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', { timeout: 30000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pi-workspace-browser-'));
+  const dir = await mkdtemp(join(tmpdir(), 'nookframe-browser-'));
   let event: (value: unknown) => void = () => {};
   let prompts = 0;
   let model = { provider: 'test', id: 'first' };
@@ -56,6 +56,8 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin);
+    assert.equal(await page.title(), 'Nookframe');
+    assert.equal(await page.locator('h1').innerText(), 'Nookframe');
     await page.getByLabel('Access token').fill(token);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByText('Ready', { exact: true }).waitFor();
