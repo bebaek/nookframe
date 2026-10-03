@@ -13,7 +13,7 @@ Use the installed `mailctl` CLI. Read `/app/docs/mail.md` for setup details and 
 2. Ask for a short account alias (for example `personal` or `secondary`). Run `mailctl account connect ALIAS` and show the returned Google authorization link to the user. The URL has public client metadata, a PKCE challenge, and temporary state, but no access/refresh token or client secret.
 3. The user opens the link in their browser while connected to Tailscale, chooses the intended Gmail account, and grants consent. The backend receives the code directly. **Never ask the user to paste callback URLs, codes, passwords, or tokens into chat.**
 4. After the user finishes, run `mailctl account status ALIAS`. `ACCOUNT_NOT_CONNECTED` means authorization is not complete; do not repeatedly create new links unless requested or the prior link expired.
-5. Ask before the initial download: `mailctl sync ALIAS` downloads the full Inbox, including attachments; it may take time/space. It does not send mail or change the remote mailbox. Inspect status afterward. Only after a successful manual sync, ask whether to enable background syncing with `mailctl account enable ALIAS` (every 10 minutes, with failure backoff). Disable with `mailctl account disable ALIAS`.
+5. Ask before the initial download: `mailctl sync ALIAS` downloads all IMAP-exposed folders, including attachments; Gmail labels can duplicate local copies and consume substantial time/space. Upgrading an Inbox-only installation expands the next sync too. It does not send mail or change the remote mailbox. Inspect status afterward. Only after a successful manual sync, ask whether to enable background syncing with `mailctl account enable ALIAS` (every 10 minutes, with failure backoff). Disable with `mailctl account disable ALIAS`.
 
 Gmail IMAP requires the broad `https://mail.google.com/` OAuth scope. Download-only behavior is enforced by the generated sync configuration, **not** by that scope. Google OAuth Testing mode usually gives seven-day refresh tokens for these scopes; discuss production/personal-app policy before relying on unattended sync.
 
@@ -24,7 +24,7 @@ Gmail IMAP requires the broad `https://mail.google.com/` OAuth scope. Download-o
 - `mailctl search --account personal --query 'from:example@example.com date:7d..' --limit 20`
 - `mailctl read personal:THREAD_ID` — use the exact `ref` returned by search. Returns a bounded conversation with attachment metadata; HTML-only mail is inert text, not rendered.
 
-Search results are local Inbox archives, not a live Gmail query. Remote archive/deletion changes are not mirrored; include account and freshness when reporting results. Separate account indexes preserve account boundaries and avoid mixing unread state for duplicate messages. Respect `truncated` and per-account errors. Do not claim a complete mailbox audit from bounded/partial results.
+Search results are local IMAP folder archives, not a live Gmail query. New mail is not automatically tagged `inbox`; use `folder:` queries for local folder membership. Legacy Inbox tags may remain. Remote archive/deletion changes are not mirrored; include account and freshness when reporting results. Separate account indexes preserve account boundaries and avoid mixing unread state for duplicate messages. Respect `truncated` and per-account errors. Do not claim a complete mailbox audit from bounded/partial results.
 
 ## Safety
 

@@ -26,8 +26,10 @@ test('scheduled work rechecks pause before queued accounts and indexes after dow
   for (const alias of ['first', 'second']) store.saveAccount({ alias, provider: 'gmail', email: `${alias}@example.test`, polling: true, oauth: { clientId: 'fixture', refreshToken: 'fixture', accessToken: 'fixture', expiresAt: 0 } });
   try {
     const calls: string[] = [];
-    await syncMail(store, undefined, true, undefined, async file => {
+    let downloadArgs: string[] = [];
+    await syncMail(store, undefined, true, undefined, async (file, args) => {
       calls.push(file);
+      if (file.endsWith('mbsync')) downloadArgs = args;
       if (file.endsWith('mbsync')) {
         const queued = store.account('second'); queued.polling = false; store.saveAccount(queued);
         throw new MailCommandError(classifyFailure({ code: 1 }, '[OVERQUOTA]', false, 1, 900000));
@@ -36,6 +38,7 @@ test('scheduled work rechecks pause before queued accounts and indexes after dow
       return '';
     });
     assert.deepEqual(calls, ['/usr/bin/mbsync', '/usr/bin/notmuch']);
+    assert.deepEqual(downloadArgs, ['-q', '-c', store.path('state', 'first', 'mbsyncrc'), '-a']);
     assert.equal(store.status('second'), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

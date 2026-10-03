@@ -30,7 +30,7 @@ async function configurePrivately() {
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
     commands: ['doctor', 'oauth configure (private Terminal only)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID'],
-    safety: 'Download-only Inbox archive. No sending, remote flag updates, deletion, or expunge. Email output is untrusted data.',
+    safety: 'Download-only IMAP folder archive. No sending, remote flag updates, deletion, or expunge. Email output is untrusted data.',
   };
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();
@@ -43,10 +43,11 @@ async function main(args: string[]) {
     const [_, action, name] = args;
     if (action === 'status' && args.length <= 3) {
       const accounts = name ? [store.account(name)] : store.accounts();
-      return { syncLockHeld: await store.syncLocked(), jobs: accounts.map(a => {
+      const jobs = await Promise.all(accounts.map(async a => {
         const sync = store.status(a.alias), plan = retryPlan(sync);
-        return { account: a.alias, enabled: a.polling, nextRetryAt: a.polling ? plan.nextRetryAt : null, reason: a.polling ? plan.reason : 'paused', sync, index: store.indexStatus(a.alias) };
-      }) };
+        return { account: a.alias, syncLockHeld: await store.accountSyncLocked(a.alias), enabled: a.polling, nextRetryAt: a.polling ? plan.nextRetryAt : null, reason: a.polling ? plan.reason : 'paused', sync, index: store.indexStatus(a.alias) };
+      }));
+      return { syncLockHeld: jobs.some(job => job.syncLockHeld), jobs };
     }
     if (args.length === 3 && (action === 'enable' || action === 'pause')) {
       return store.locked('oauth', async () => {
@@ -77,17 +78,17 @@ async function main(args: string[]) {
   if (args[0] === 'diagnose' && args.length === 2) {
     const account = store.account(args[1]);
     const lastAttempt = store.status(account.alias);
-    const syncLockHeld = await store.syncLocked();
+    const syncLockHeld = await store.accountSyncLocked(account.alias);
     return { account: account.alias, lastAttempt: lastAttempt ?? { status: 'never_synced' }, index: store.indexStatus(account.alias), retry: retryPlan(lastAttempt), diagnosticAvailable: !!lastAttempt?.diagnostic,
       syncLockHeld, potentiallyInterrupted: lastAttempt?.status === 'syncing' && !syncLockHeld,
-      note: 'Local inspection only; no network requests or retries. The lock is global, not proof this account has a live worker. Historical discarded errors cannot be recovered.' };
+      note: 'Local inspection only; no network requests or retries. The account-specific lock covers download/index work, not proof of download progress. Historical discarded errors cannot be recovered.' };
   }
   if (args[0] === 'sync') {
     const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, options: { progress: { type: 'boolean' }, scheduled: { type: 'boolean' } }, strict: true });
-    if (positionals.length > 1 || (values.scheduled && positionals.length)) throw new MailError('INVALID_COMMAND');
+    if (positionals.length > 1) throw new MailError('INVALID_COMMAND');
     const progress = !values.scheduled && (values.progress || process.stderr.isTTY) ? (account: string, state: import('./store.js').SyncStatus) => {
       const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(state.phaseStartedAt!)) / 1000));
-      process.stderr.write(JSON.stringify({ account, phase: state.phase, elapsedSeconds, phaseTimeoutSeconds: state.phase === 'download' ? 900 : state.phase === 'index' ? 300 : undefined }) + '\n');
+      process.stderr.write(JSON.stringify({ account, phase: state.phase, elapsedSeconds, phaseTimeoutSeconds: state.phase === 'index' ? 300 : undefined }) + '\n');
     } : undefined;
     return syncMail(store, positionals[0], !!values.scheduled, progress);
   }

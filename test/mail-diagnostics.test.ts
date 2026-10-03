@@ -59,7 +59,7 @@ test('sync persists failing phase/diagnostic and diagnose reads it without retry
       const report = JSON.parse(raw);
       assert.equal(report.diagnosticAvailable, true); assert.equal(report.syncLockHeld, false);
     }
-    await store.locked('sync', async () => assert.equal(await store.syncLocked(), true));
+    await store.withAccountSyncLock('fixture', async () => assert.equal(await store.accountSyncLocked('fixture'), true));
     store.write(store.path('state/fixture.json'), { status: 'syncing', attemptedAt: new Date().toISOString() });
     assert.equal(store.status('fixture')?.diagnostic, undefined);
   } finally { rmSync(dir, { recursive: true, force: true }); }

@@ -1,6 +1,12 @@
 import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { alias, validEmail, MailError, type Account, type MailStore } from './store.js';
+
+// Keep folder selection and its persisted completion identity coupled. Changes
+// here automatically make existing accounts backfills again (credentials excluded).
+const folderSelection = 'Far :remote:\nNear :local:\nPatterns *';
+export const DOWNLOAD_SCOPE = 'sha256:' + createHash('sha256').update('gmail-imap-v1\n' + folderSelection).digest('hex');
 
 function quote(value: string) {
   if (/[\r\n\0]/.test(value)) throw new MailError('INVALID_MAIL_CONFIG');
@@ -30,9 +36,8 @@ Path ${quote(join(root, 'maildir', account.alias) + '/')}
 Inbox ${quote(join(root, 'maildir', account.alias, 'INBOX'))}
 SubFolders Verbatim
 
-Channel inbox
-Far :remote:INBOX
-Near :local:INBOX
+Channel gmail
+${folderSelection}
 Sync Pull New Flags
 Create Near
 Remove None
@@ -48,6 +53,6 @@ export function prepareConfig(store: MailStore, account: Account) {
   const mbsync = store.path('state', name, 'mbsyncrc');
   const notmuch = store.path('state', name, 'notmuch-config');
   store.writeText(mbsync, renderMbsync(store.root, account));
-  store.writeText(notmuch, `[database]\npath=${store.path('index', name)}\nmail_root=${store.path('maildir', name)}\n[user]\nname=Pi Mail\nprimary_email=${account.email}\n[new]\ntags=unread;inbox;\n[maildir]\nsynchronize_flags=true\n`);
+  store.writeText(notmuch, `[database]\npath=${store.path('index', name)}\nmail_root=${store.path('maildir', name)}\n[user]\nname=Pi Mail\nprimary_email=${account.email}\n[new]\ntags=unread;\n[maildir]\nsynchronize_flags=true\n`);
   return { mbsync, notmuch };
 }

@@ -20,7 +20,7 @@ export interface Account {
   oauth: { clientId: string; refreshToken: string; accessToken: string; expiresAt: number };
 }
 export interface IndexStatus { status: 'indexing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; completeThrough?: string; diagnostic?: Diagnostic }
-export interface SyncStatus { failures?: number; downloadCompletedAt?: string; status: 'syncing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; error?: string; phase?: 'preparing' | 'download' | 'index' | 'complete'; phaseStartedAt?: string; diagnostic?: Diagnostic }
+export interface SyncStatus { completedDownloadScope?: string; failures?: number; downloadCompletedAt?: string; status: 'syncing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; error?: string; phase?: 'preparing' | 'download' | 'index' | 'complete'; phaseStartedAt?: string; diagnostic?: Diagnostic }
 export class MailStore {
   readonly root: string;
   constructor(root: string) {
@@ -53,13 +53,26 @@ export class MailStore {
   accounts(): Account[] {
     return readdirSync(this.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => this.account(f.slice(0, -5)));
   }
-  async locked<T>(kind: 'oauth' | 'sync', action: () => Promise<T>): Promise<T> {
+  private async lock<T>(target: string, action: () => Promise<T>): Promise<T> {
     let release: () => Promise<void>;
-    try { release = await lockfile.lock(this.path('.locks', kind), { stale: 60000, update: 10000, retries: 0 }); }
+    try { release = await lockfile.lock(target, { stale: 60000, update: 10000, retries: 0 }); }
     catch { throw new MailError('MAIL_BUSY'); }
     try { return await action(); } finally { await release(); }
   }
-  async syncLocked() { return lockfile.check(this.path('.locks', 'sync'), { stale: 60000 }); }
+  async locked<T>(kind: 'oauth', action: () => Promise<T>): Promise<T> {
+    return this.lock(this.path('.locks', kind), action);
+  }
+  private syncTarget(name: string) {
+    const target = this.path('.locks', 'sync', alias(name));
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    return target;
+  }
+  async withAccountSyncLock<T>(name: string, action: () => Promise<T>): Promise<T> {
+    return this.lock(this.syncTarget(name), action);
+  }
+  async accountSyncLocked(name: string) {
+    return lockfile.check(this.syncTarget(name), { stale: 60000 });
+  }
   indexStatus(name: string): IndexStatus | undefined {
     try {
       const value = JSON.parse(readFileSync(this.path('state', alias(name), 'index-status.json'), 'utf8'));
@@ -76,7 +89,7 @@ export class MailStore {
       const attemptedAt = time(value.attemptedAt);
       if (!['syncing', 'ok', 'failed'].includes(value.status) || !attemptedAt) return undefined;
       const errors = new Set(['RECONNECT_ACCOUNT', 'MAIL_COMMAND_FAILED', 'SYNC_FAILED', 'INVALID_MAIL_CONFIG', 'INVALID_EMAIL', ...diagnosticErrorCodes]);
-      return { status: value.status, failures: Number.isSafeInteger(value.failures) && value.failures >= 0 ? Math.min(value.failures, 1000) : undefined, downloadCompletedAt: time(value.downloadCompletedAt), attemptedAt, completedAt: time(value.completedAt), lastSuccess: time(value.lastSuccess), phase: ['preparing', 'download', 'index', 'complete'].includes(value.phase) ? value.phase : undefined, phaseStartedAt: time(value.phaseStartedAt), diagnostic: value.status === 'failed' ? sanitizeDiagnostic(value.diagnostic) : undefined, error: value.status === 'failed' ? (errors.has(value.error) ? value.error : 'SYNC_FAILED') : undefined };
+      return { status: value.status, completedDownloadScope: typeof value.completedDownloadScope === 'string' && /^sha256:[0-9a-f]{64}$/.test(value.completedDownloadScope) ? value.completedDownloadScope : undefined, failures: Number.isSafeInteger(value.failures) && value.failures >= 0 ? Math.min(value.failures, 1000) : undefined, downloadCompletedAt: time(value.downloadCompletedAt), attemptedAt, completedAt: time(value.completedAt), lastSuccess: time(value.lastSuccess), phase: ['preparing', 'download', 'index', 'complete'].includes(value.phase) ? value.phase : undefined, phaseStartedAt: time(value.phaseStartedAt), diagnostic: value.status === 'failed' ? sanitizeDiagnostic(value.diagnostic) : undefined, error: value.status === 'failed' ? (errors.has(value.error) ? value.error : 'SYNC_FAILED') : undefined };
     } catch { return undefined; }
   }
 }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { MailStore, MailError } from '../mail/store.js';
 import { MailOAuth, MAIL_SCOPE } from '../mail/oauth.js';
-import { renderMbsync } from '../mail/config.js';
+import { prepareConfig, renderMbsync } from '../mail/config.js';
 import { privateCommand, projectThread } from '../mail/commands.js';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { createApp } from '../server/http.js';
@@ -79,8 +79,8 @@ test('mail OAuth rejects insufficient scopes/revoked grants; status projection a
       assert.equal(f.store.accounts().length, 0);
       f.store.write(f.store.path('state/personal.json'), { status: 'failed', attemptedAt: new Date().toISOString(), error: 'private-fixture-token', extra: 'private-fixture-token' });
       assert.ok(!JSON.stringify(f.store.status('personal')).includes('private-fixture-token'));
-      await f.store.locked('sync', async () => {
-        await assert.rejects(f.store.locked('sync', async () => {}), /MAIL_BUSY/);
+      await f.store.withAccountSyncLock('personal', async () => {
+        await assert.rejects(f.store.withAccountSyncLock('personal', async () => {}), /MAIL_BUSY/);
         await f.store.locked('oauth', async () => {});
       });
     } finally { f.clean(); }
@@ -108,9 +108,24 @@ test('OAuth client entry is a hidden TTY prompt, never echoed or passed as argum
   } finally { clearTimeout(timeout); terminal.kill(); f.clean(); }
 });
 
+test('all-folder indexing does not automatically tag new messages as inbox', async () => {
+  const f = fixture();
+  try {
+    await f.oauth.configure('fixture.apps.googleusercontent.com', 'fixture-client-secret');
+    await authorize(f.oauth);
+    const files = prepareConfig(f.store, f.store.account('personal'));
+    const config = readFileSync(files.notmuch, 'utf8');
+    assert.ok(config.includes('tags=unread;\n'));
+    assert.ok(!config.includes('inbox;'));
+  } finally { f.clean(); }
+});
+
 test('mail configuration is pull-only and never embeds OAuth credentials; untrusted mail is bounded', async () => {
   const config = renderMbsync('/tmp/mail dir', { alias: 'personal', email: 'fixture@gmail.com' });
   for (const line of ['Sync Pull New Flags', 'Create Near', 'Remove None', 'Expunge None', 'AuthMechs XOAUTH2', 'SSLType IMAPS']) assert.ok(config.includes(line));
+  assert.ok(config.includes('Channel gmail\nFar :remote:\nNear :local:\nPatterns *\n'));
+  assert.ok(config.includes('SubFolders Verbatim'));
+  assert.ok(!config.includes('Far :remote:INBOX'));
   assert.ok(!/^(Pass |.*Push|.*Expunge (Both|Far))/m.test(config));
   assert.throws(() => renderMbsync('/tmp/mail', { alias: 'personal', email: 'bad\nExpunge Both' }), /INVALID_EMAIL/);
   assert.throws(() => renderMbsync('/tmp/mail\nCreate Far', { alias: 'personal', email: 'fixture@gmail.com' }), /INVALID_MAIL_CONFIG/);

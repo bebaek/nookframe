@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='pi-mail-native-') as temp:
                             assert base64.b64decode(payload) == b'user=fixture@gmail.com\x01auth=Bearer fixture-access-token\x01\x01'
                             authenticated.append(True); send(tag + ' OK authenticated\r\n')
                         elif verb == 'LIST':
-                            send('* LIST (\\HasNoChildren) "/" "INBOX"\r\n' + tag + ' OK list\r\n')
+                            send('* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\HasNoChildren) "/" "[Gmail]/All Mail"\r\n* LIST (\\HasNoChildren) "/" "[Gmail]/Spam"\r\n* LIST (\\HasNoChildren) "/" "[Gmail]/Trash"\r\n' + tag + ' OK list\r\n')
                         elif verb in ('SELECT', 'EXAMINE'):
                             send('* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n* 1 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] uidvalidity\r\n* OK [UIDNEXT 2] uidnext\r\n' + tag + ' OK [READ-ONLY] selected\r\n')
                         elif upper.startswith('UID FETCH '):
@@ -93,7 +93,7 @@ store.saveAccount(account);console.log(JSON.stringify(prepareConfig(store,accoun
     try:
         cur = root / 'mail/maildir/personal/INBOX/cur'
         for iteration in range(2):
-            sync = subprocess.run(['mbsync', '-q', '-c', paths['mbsync'], 'inbox'], text=True, capture_output=True, timeout=25)
+            sync = subprocess.run(['mbsync', '-q', '-c', paths['mbsync'], '-a'], text=True, capture_output=True, timeout=25)
             assert sync.returncode == 0, (sync.stderr, failures, trace)
             if iteration == 0:
                 # Local seen/deleted flags and a locally created message must not
@@ -101,6 +101,9 @@ store.saveAccount(account);console.log(JSON.stringify(prepareConfig(store,accoun
                 local = (list(cur.iterdir()) + list((cur.parent / 'new').iterdir()))[0]
                 local.rename(cur / (local.name.split(':2,')[0] + ':2,ST'))
                 (cur / 'local-only:2,').write_bytes(message.replace(b'native-fixture@example.test', b'local-only@example.test'))
+        for folder in ['INBOX', '[Gmail]/All Mail', '[Gmail]/Spam', '[Gmail]/Trash']:
+            maildir = root / 'mail/maildir/personal' / folder
+            assert list((maildir / 'cur').iterdir()) or list((maildir / 'new').iterdir()), folder
         for local in cur.iterdir():
             if local.name.startswith('local-only'): local.unlink()
             elif ':2,' in local.name: local.rename(local.with_name(local.name.split(':2,')[0] + ':2,'))

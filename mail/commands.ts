@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { MailError, MailStore, alias, type Account, type SyncStatus, type IndexStatus } from './store.js';
-import { prepareConfig } from './config.js';
+import { prepareConfig, DOWNLOAD_SCOPE } from './config.js';
+import { downloadTimeout } from './download-policy.js';
 import { jobDue } from './jobs.js';
 import { classifyFailure, diagnosticErrorCode, type Diagnostic } from './diagnostics.js';
 
@@ -29,15 +30,17 @@ export function privateCommand(file: string, args: string[], env: NodeJS.Process
 }
 export async function syncMail(store: MailStore, name?: string, scheduled = false, progress?: (account: string, state: SyncStatus) => void, run: typeof privateCommand = privateCommand) {
   if (name) alias(name);
-  return store.locked('sync', async () => {
-    const accounts = name ? [store.account(name)] : store.accounts();
-    const results = [];
-    for (const account of accounts) {
+  const accounts = name ? [store.account(name)] : store.accounts();
+  const results: Array<({ account: string } & SyncStatus) | { account: string; status: 'busy'; error: string }> = [];
+  for (const selected of accounts) {
+    try {
+      await store.withAccountSyncLock(selected.alias, async () => {
+      const account = store.account(selected.alias);
       const previous = store.status(account.alias);
       // Re-read opt-in state immediately before each account: pausing a queued
       // account does not wait for the currently running account to finish.
-      if (scheduled && (!store.account(account.alias).polling || !jobDue(previous))) continue;
-      const state: SyncStatus = { status: 'syncing', attemptedAt: new Date().toISOString(), lastSuccess: previous?.lastSuccess };
+      if (scheduled && (!account.polling || !jobDue(previous))) return;
+      const state: SyncStatus = { status: 'syncing', attemptedAt: new Date().toISOString(), lastSuccess: previous?.lastSuccess, completedDownloadScope: previous?.completedDownloadScope };
       const phase = (next: SyncStatus['phase']) => {
         state.phase = next; state.phaseStartedAt = new Date().toISOString();
         store.write(store.path('state', account.alias + '.json'), state);
@@ -47,13 +50,15 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
       const heartbeat = progress ? setInterval(() => progress(account.alias, { ...state }), 30000) : undefined;
       heartbeat?.unref();
       try {
+        const timeout = downloadTimeout(previous);
         const files = prepareConfig(store, account);
         phase('download');
         const downloadStartedAt = state.phaseStartedAt;
         let downloadError: unknown;
         try {
-          await run('/usr/bin/mbsync', ['-q', '-c', files.mbsync, 'inbox'], { ...process.env, MAIL_DIR: store.root }, 15 * 60000);
+          await run('/usr/bin/mbsync', ['-q', '-c', files.mbsync, '-a'], { ...process.env, MAIL_DIR: store.root }, timeout);
           state.downloadCompletedAt = new Date().toISOString();
+          state.completedDownloadScope = DOWNLOAD_SCOPE;
         } catch (error) {
           downloadError = error;
           state.status = 'failed'; state.error = error instanceof MailError ? error.code : 'SYNC_FAILED';
@@ -76,9 +81,15 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
       state.completedAt = new Date().toISOString();
       store.write(store.path('state', account.alias + '.json'), state);
       results.push({ account: account.alias, ...state });
+      });
+    } catch (error) {
+      if (!(error instanceof MailError) || error.code !== 'MAIL_BUSY') throw error;
+      if (name && !scheduled) throw error;
+      // Busy accounts do not block other accounts or overwrite active status.
+      results.push({ account: selected.alias, status: 'busy' as const, error: 'MAIL_BUSY' });
     }
-    return { results };
-  });
+  }
+  return { results };
 }
 async function indexUnlocked(store: MailStore, account: Account, run: typeof privateCommand, completeThrough?: string) {
   const files = prepareConfig(store, account), previous = store.indexStatus(account.alias);
@@ -96,7 +107,7 @@ async function indexUnlocked(store: MailStore, account: Account, run: typeof pri
   return state;
 }
 export async function indexMail(store: MailStore, name: string, run: typeof privateCommand = privateCommand) {
-  return store.locked('sync', async () => {
+  return store.withAccountSyncLock(name, async () => {
     const account = store.account(name);
     const state = await indexUnlocked(store, account, run, store.status(name)?.downloadCompletedAt);
     return { account: name, index: state, partial: !state.completeThrough };
@@ -133,7 +144,7 @@ export async function searchMail(store: MailStore, options: { account?: string; 
       }
     } catch (error) { errors.push({ account: account.alias, error: error instanceof MailError ? error.code : 'SEARCH_FAILED' }); }
   }
-  return { untrustedEmail: true, scope: 'Downloaded Inbox archive; remote removals are not mirrored', freshness: accounts.map(a => freshness(store, a.alias)), results: results.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit), errors };
+  return { untrustedEmail: true, scope: 'Downloaded IMAP folder archive; remote removals are not mirrored', freshness: accounts.map(a => freshness(store, a.alias)), results: results.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit), errors };
 }
 export function projectThread(tree: unknown) {
   const messages: Array<Record<string, unknown>> = [];

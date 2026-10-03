@@ -66,12 +66,23 @@ preferred; HTML-only bodies are inert text, never rendered, and remote resources
 are never loaded. Encrypted mail is not decrypted. Attachments are downloaded as
 part of the original MIME message but are never extracted or executed.
 
-The first sync downloads the **whole Inbox**, including attachments. There is no
-message-count cap or claim of a small initial download; review mailbox size/free
-space before running it. No other Gmail label/folder is selected. `Sync Pull New
-Flags`, `Create Near`, `Remove None`, and `Expunge None` prevent remote writes.
-Remote archival/removal is not mirrored: local messages remain an Inbox archive,
-not a perfectly current view of Gmail's Inbox membership. Flag updates only cover
+Sync downloads **all IMAP-exposed folders**, including attachments, using
+`Patterns *` in the generated mbsync configuration and `mbsync -a`. This includes
+Inbox, All Mail, Sent, Spam, Trash, Drafts, and custom labels when exposed by Gmail.
+There is no message-count cap; review free space and provider bandwidth limits.
+Gmail labels can produce duplicate local messages and attachments across folders.
+`Sync Pull New Flags`, `Create Near`, `Remove None`, and `Expunge None` prevent
+remote writes. Remote archival/removal is not mirrored: this is a local archive,
+not a perfectly current view of remote folder membership.
+
+Upgrading from Inbox-only expands the next manual or scheduled sync automatically;
+pause jobs before deployment if you do not want this download yet. Existing Inbox
+Maildir/state is retained. Configuration is regenerated on every sync; edit
+`mail/config.ts`, not the generated `mbsyncrc`, to change folder selection.
+New messages are no longer automatically tagged `inbox`; legacy Inbox tags remain.
+Use notmuch `folder:` queries for local folder membership (also archival, not live).
+Notmuch deduplicates Message-IDs within each account; unread flags on label copies
+are not an independent per-folder view. Flag updates only cover
 messages still available remotely. Separate indexes prevent one account's duplicate
 Message-ID or unread state from contaminating another's results. Notmuch can adjust
 local Maildir flags; these are never pushed to the server.
@@ -98,8 +109,18 @@ sync, so use `jobs enable` for initial-download retries.
 
 The existing server checks eligibility once a minute and spawns a private worker
 only when an enabled account is due. Configuration, failure counters, and timing
-survive redeployment. A global sync lock prevents manual/index/scheduled overlap;
-accounts run sequentially. Retry policy:
+survive redeployment. Per-account cross-process locks prevent overlapping sync or
+index work for the same account, while different accounts can run concurrently.
+The scheduler starts one worker per account, with **2 concurrent workers** by
+default. Set `MAIL_SYNC_CONCURRENCY` in the server environment to an integer 1–8.
+This bounds scheduled workers only; manual commands obey account locks but do not
+consume scheduler slots. A manual `mailctl sync` without an alias visits accounts
+sequentially, reporting busy accounts and continuing with the others.
+
+**Migration from global locking:** pause all jobs and drain active sync/index
+workers before deploying. Old global-lock workers and new account-lock workers
+do not exclude each other. Lock targets are now `.locks/sync/ALIAS` under the mail
+root. Do not delete locks to bypass active work. Retry policy:
 
 - Successful sync: every 10 minutes.
 - `MAIL_QUOTA`: wait 24 hours after completion (a conservative policy, not a
@@ -112,24 +133,27 @@ accounts run sequentially. Retry policy:
   the sync lock before retrying. A held lock still prevents another worker.
 
 `jobs status` shows enablement, next eligibility time/reason, last attempt/phase,
-and separate index status. An eligibility time is not a guarantee of immediate
-execution: another account or manual operation can hold the global lock. Server
-shutdown terminates its worker group; jobs resume eligibility checks after restart.
+and separate index status. Each job includes its own `syncLockHeld`; the top-level
+field means any of the listed accounts is locked. An eligibility time is not a
+guarantee of immediate execution: scheduler capacity or same-account manual work
+can delay it. Server shutdown terminates all its worker groups; jobs resume
+eligibility checks after restart.
 This is a persistent retry policy, not a durable execution queue with job IDs.
 
 After each mbsync attempt has exited, the worker runs local indexing, **even after
 quota errors or timeouts**. Download failures/cooldowns remain recorded separately
 from successful indexing. If indexing also fails, inspect its separate diagnostic.
 An abrupt kill can prevent this follow-up; a later attempt or `mailctl index` can
-recover it. Limits remain 15 minutes for download and 5 minutes for indexing.
+recover it. Download limits are scope-aware (6 hours for backfill, 15 minutes for
+routine downloads); indexing remains limited to 5 minutes.
 
-`mailctl index ALIAS` runs only notmuch under the global lock and records index
+`mailctl index ALIAS` runs only notmuch under that account's lock and records index
 freshness without clearing download failures or cooldowns. Use it to register
 previously manually indexed mail too. Search/read now work after a successful
 local index, with `freshness` metadata and a conservative `partial` marker. Partial
-results are not a complete Inbox audit, and even a completed sync is a local Inbox
-archive, not live membership. Previously successful syncs remain searchable.
-`MAIL_BUSY` means another operation owns the lock; wait rather than bypassing it.
+results are not a complete mailbox audit, and even a completed sync is a local
+folder archive, not live membership. Previously successful syncs remain searchable.
+`MAIL_BUSY` means another operation owns that account's lock; wait rather than bypassing it.
 OAuth refresh uses its own cross-process lock. `account status` exposes last attempt,
 last success, and safe error codes. `RECONNECT_ACCOUNT` requires a fresh consent
 flow. Subprocess/provider diagnostics are intentionally suppressed, not dumped into
@@ -146,9 +170,8 @@ mailctl sync personal --progress
 ```
 
 `diagnose` is **local inspection only**: it makes no provider requests and starts
-no sync. It returns the last recorded phase/failure and checks the global sync lock.
-A held lock may belong to another account; it is not proof this account has a live
-worker. `potentiallyInterrupted` flags a saved `syncing` record with no fresh lock,
+no sync. It returns the last recorded phase/failure and checks that account's
+sync/index lock. A held lock is not proof that a download is making progress. `potentiallyInterrupted` flags a saved `syncing` record with no fresh lock,
 not a guarantee that every old child process is gone. It never deletes locks.
 
 New attempts save `phase` (`preparing`, `download`, `index`, or `complete`) and a
@@ -200,9 +223,22 @@ Limits still apply:
 
 - Chat tool invocations may have deadlines shorter than a full download. Terminal
   avoids that chat-tool deadline, not every timeout.
-- The wrapper currently limits **mbsync to 15 minutes** and **notmuch to 5 minutes**
-  per account. Updated builds record the actual failure category and phase as
-  described above; old deployed records only have `MAIL_COMMAND_FAILED`.
+- The wrapper allows **mbsync 6 hours for backfill**, **15 minutes for routine
+  downloads**, and **notmuch 5 minutes** per account. Backfill means the persisted
+  `completedDownloadScope` in `/data/mail/state/ALIAS.json` does not match the
+  current folder-selection hash. Missing fields (including upgraded Inbox-only
+  records) count as backfill. Only a successful mbsync exit records the current
+  scope; indexing failure does not undo download completion. Failed/interrupted
+  downloads preserve the prior scope. Changing folder-selection configuration
+  changes the hash automatically; new remote folders under `Patterns *` do not.
+- Override either download default with `MAIL_SYNC_TIMEOUT_MINUTES` (integer
+  1–1440). For example, in private Terminal:
+  `MAIL_SYNC_TIMEOUT_MINUTES=360 mailctl sync personal --progress`.
+  Set it in the Deployment environment to affect scheduled workers too. This is
+  a total subprocess deadline, not a progress-based stall detector; mbsync's
+  separate 60-second network timeout remains. Long backfills occupy scheduler
+  slots but do not lock unrelated accounts. Updated builds record the actual failure
+  category and phase; old records may only have `MAIL_COMMAND_FAILED`.
 - Terminal processes survive tab changes/disconnections, but not shell exit,
   container restart, deployment, or maintenance shutdown. There is no
   terminal output replay; a reconnect can miss the command's completion output.
@@ -262,7 +298,7 @@ which limit was exceeded or when it will reset.
 - [ ] Opt-in periodic sync and restart/interruption recovery with real mail.
 - [ ] Backup and isolated restore verification after mail data is populated,
   including capacity against your configured staging limits.
-- [ ] Decide whether to expand beyond Inbox; Gmail labels/All Mail duplication,
+- [ ] Validate all-folder syncing on real Gmail; Gmail labels/All Mail duplication,
   retention, and archive/removal semantics need an explicit design first.
 
 These items document remaining work, not implemented features. Changes to this
