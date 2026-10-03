@@ -53,14 +53,20 @@ export class MailStore {
   accounts(): Account[] {
     return readdirSync(this.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => this.account(f.slice(0, -5)));
   }
-  private async lock<T>(target: string, action: () => Promise<T>): Promise<T> {
+  private async lock<T>(target: string, action: () => Promise<T>, waitForOAuth = false): Promise<T> {
     let release: () => Promise<void>;
-    try { release = await lockfile.lock(target, { stale: 60000, update: 10000, retries: 0 }); }
+    try { release = await lockfile.lock(target, { stale: 60000, update: 10000,
+      retries: waitForOAuth ? { retries: 60, factor: 1, minTimeout: 500, maxTimeout: 500, randomize: false } : 0 }); }
     catch { throw new MailError('MAIL_BUSY'); }
     try { return await action(); } finally { await release(); }
   }
   async locked<T>(kind: 'oauth', action: () => Promise<T>): Promise<T> {
     return this.lock(this.path('.locks', kind), action);
+  }
+  async withTokenRefreshLock<T>(action: () => Promise<T>): Promise<T> {
+    // Share the OAuth writer lock, but tolerate short contention from concurrent
+    // mbsync helpers. At most 30 seconds of retry delays; no secret output.
+    return this.lock(this.path('.locks', 'oauth'), action, true);
   }
   private syncTarget(name: string) {
     const target = this.path('.locks', 'sync', alias(name));

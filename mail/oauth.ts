@@ -103,7 +103,7 @@ export class MailOAuth {
   }
   // Called only by the mbsync password helper, never by public CLI commands.
   async accessToken(name: string): Promise<string> {
-    return this.store.locked('oauth', async () => {
+    return this.store.withTokenRefreshLock(async () => {
       const account = this.store.account(name), client = this.client();
       if (account.oauth.clientId !== client.clientId) throw new MailError('RECONNECT_ACCOUNT');
       if (account.oauth.expiresAt > this.now() + 120000 && secret(account.oauth.accessToken)) return account.oauth.accessToken;

@@ -176,7 +176,13 @@ local index, with `freshness` metadata and a conservative `partial` marker. Part
 results are not a complete mailbox audit, and even a completed sync is a local
 folder archive, not live membership. Previously successful syncs remain searchable.
 `MAIL_BUSY` means another operation owns that account's lock; wait rather than bypassing it.
-OAuth refresh uses its own cross-process lock. `account status` exposes last attempt,
+OAuth refresh shares the cross-process OAuth writer lock with configuration,
+consent, and account-setting changes. Token helpers retry that lock for up to
+30 seconds of retry delays (500 ms intervals), then return sanitized `MAIL_BUSY`;
+other OAuth writers remain fail-fast. Token/cache state is re-read only after
+acquiring the lock, preventing duplicate refresh rotation or lost setting updates.
+Downloads remain concurrent after this short serialized credential step.
+`account status` exposes last attempt,
 last success, and safe error codes. `RECONNECT_ACCOUNT` requires a fresh consent
 flow. Subprocess/provider diagnostics are intentionally suppressed, not dumped into
 chat or container logs. A killed sync may retain a `syncing` status and a short-lived

@@ -4,6 +4,7 @@ const messages = {
   timeout: 'The configured subprocess deadline was reached.',
   quota: 'Provider reported a quota or bandwidth limit. Pause retries; reset time is unknown.',
   authentication: 'Authentication failed or authorization needs renewal.',
+  busy: 'The credential lock remained busy after the bounded wait. Retry later.',
   tls: 'TLS or certificate validation failed.',
   network: 'The connection failed or timed out before the subprocess deadline.',
   storage: 'Local storage is full, read-only, or inaccessible.',
@@ -26,6 +27,7 @@ export function classifyFailure(error: { code?: unknown; signal?: unknown }, tex
   const category: Category = timedOut ? 'timeout'
     : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'output_limit'
     : responseCode === 'OVERQUOTA' || responseCode === 'LIMIT' || /Account exceeded command or bandwidth limits|Too many simultaneous connections|rate limit exceeded/i.test(text) ? 'quota'
+    : /MAIL_TOKEN_ERROR:MAIL_BUSY\b/.test(text) ? 'busy'
     : /MAIL_TOKEN_ERROR:RECONNECT_ACCOUNT|AUTHENTICATIONFAILED|invalid credentials|authentication failed/i.test(text) ? 'authentication'
     : /certificate verification|certificate verify|TLS error|SSL error/i.test(text) ? 'tls'
     : /no space left on device|permission denied|read-only file system/i.test(text) ? 'storage'
