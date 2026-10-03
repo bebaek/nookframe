@@ -167,7 +167,21 @@ quota errors or timeouts**. Download failures/cooldowns remain recorded separate
 from successful indexing. If indexing also fails, inspect its separate diagnostic.
 An abrupt kill can prevent this follow-up; a later attempt or `mailctl index` can
 recover it. Download limits are scope-aware (6 hours for backfill, 15 minutes for
-routine downloads); indexing remains limited to 5 minutes.
+routine downloads); indexing defaults to one hour per account.
+
+Set `MAIL_INDEX_TIMEOUT_MINUTES` (integer 1–1440) to override the one-hour indexing
+deadline for both automatic and local-only indexing. For example, in private Terminal:
+
+```sh
+MAIL_INDEX_TIMEOUT_MINUTES=120 mailctl index personal
+```
+
+This indexes existing downloads without contacting Gmail, even during a provider
+quota cooldown; it does not clear that cooldown or mark a partial download complete.
+Set the variable in the Deployment environment to affect scheduled workers. Manual
+`sync --progress` reports the configured indexing deadline. This is a wall-clock
+limit, not a progress/stall detector; deployment or backup shutdown can still
+interrupt it. Use Terminal rather than a long chat tool invocation for large indexes.
 
 `mailctl index ALIAS` runs only notmuch under that account's lock and records index
 freshness without clearing download failures or cooldowns. Use it to register
@@ -268,7 +282,7 @@ Limits still apply:
 - Chat tool invocations may have deadlines shorter than a full download. Terminal
   avoids that chat-tool deadline, not every timeout.
 - The wrapper allows **mbsync 6 hours for backfill**, **15 minutes for routine
-  downloads**, and **notmuch 5 minutes** per account. Backfill means the persisted
+  downloads**, and **notmuch 1 hour** per account. Backfill means the persisted
   `completedDownloadScope` in `/data/mail/state/ALIAS.json` does not match the
   current folder-selection hash. Missing fields (including upgraded Inbox-only
   records) count as backfill. Only a successful mbsync exit records the current

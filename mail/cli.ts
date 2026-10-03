@@ -6,6 +6,7 @@ import { mailRuntime } from './runtime.js';
 import { MailError, alias } from './store.js';
 import { syncMail, searchMail, readMail, indexMail } from './commands.js';
 import { retryPlan } from './jobs.js';
+import { indexTimeout } from './index-policy.js';
 
 async function configurePrivately() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new MailError('PRIVATE_TERMINAL_REQUIRED');
@@ -87,9 +88,10 @@ async function main(args: string[]) {
   if (args[0] === 'sync') {
     const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, options: { progress: { type: 'boolean' }, scheduled: { type: 'boolean' } }, strict: true });
     if (positionals.length > 1) throw new MailError('INVALID_COMMAND');
+    const indexDeadlineSeconds = indexTimeout() / 1000;
     const progress = !values.scheduled && (values.progress || process.stderr.isTTY) ? (account: string, state: import('./store.js').SyncStatus) => {
       const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(state.phaseStartedAt!)) / 1000));
-      process.stderr.write(JSON.stringify({ account, phase: state.phase, elapsedSeconds, phaseTimeoutSeconds: state.phase === 'index' ? 300 : undefined }) + '\n');
+      process.stderr.write(JSON.stringify({ account, phase: state.phase, elapsedSeconds, phaseTimeoutSeconds: state.phase === 'index' ? indexDeadlineSeconds : undefined }) + '\n');
     } : undefined;
     return syncMail(store, positionals[0], !!values.scheduled, progress);
   }

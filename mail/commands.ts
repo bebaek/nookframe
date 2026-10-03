@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { MailError, MailStore, alias, type Account, type SyncStatus, type IndexStatus } from './store.js';
 import { prepareConfig, DOWNLOAD_SCOPE } from './config.js';
 import { downloadTimeout } from './download-policy.js';
+import { indexTimeout } from './index-policy.js';
 import { jobDue } from './jobs.js';
 import { classifyFailure, diagnosticErrorCode, type Diagnostic } from './diagnostics.js';
 
@@ -97,7 +98,7 @@ async function indexUnlocked(store: MailStore, account: Account, run: typeof pri
   const path = store.path('state', account.alias, 'index-status.json');
   store.write(path, state);
   try {
-    await run('/usr/bin/notmuch', [`--config=${files.notmuch}`, 'new', '--quiet'], undefined, 5 * 60000);
+    await run('/usr/bin/notmuch', [`--config=${files.notmuch}`, 'new', '--quiet'], undefined, indexTimeout());
     state.status = 'ok'; state.lastSuccess = new Date().toISOString(); state.completeThrough = completeThrough;
   } catch (error) {
     state.status = 'failed';
