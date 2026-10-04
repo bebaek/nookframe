@@ -5,7 +5,7 @@ import { Writable } from 'node:stream';
 import { mailRuntime } from './runtime.js';
 import { MailError, alias } from './store.js';
 import { syncMail, searchMail, readMail, indexMail } from './commands.js';
-import { retryPlan } from './jobs.js';
+import { retryPlan, indexRetryPlan, nextMailWork } from './jobs.js';
 import { indexTimeout } from './index-policy.js';
 
 async function configurePrivately() {
@@ -40,14 +40,21 @@ async function main(args: string[]) {
     let configured = false; try { configured = store.client().redirectUri === oauth.redirectUri; } catch {}
     return { configured, callbackUrl: oauth.redirectUri, clientType: 'Google OAuth web application', accounts: store.accounts().map(a => a.alias), nextStep: configured ? 'account connect ALIAS' : 'Run mailctl oauth configure in the private Terminal; never paste the client secret into chat' };
   }
-  if (args[0] === 'index' && args.length === 2) return indexMail(store, args[1]);
+  if (args[0] === 'index') {
+    const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, options: { scheduled: { type: 'boolean' } }, strict: true });
+    if (positionals.length !== 1) throw new MailError('INVALID_COMMAND');
+    return indexMail(store, positionals[0], undefined, !!values.scheduled);
+  }
   if (args[0] === 'jobs') {
     const [_, action, name] = args;
     if (action === 'status' && args.length <= 3) {
       const accounts = name ? [store.account(name)] : store.accounts();
       const jobs = await Promise.all(accounts.map(async a => {
-        const sync = store.status(a.alias), plan = retryPlan(sync);
-        return { account: a.alias, syncLockHeld: await store.accountSyncLocked(a.alias), enabled: a.polling, nextRetryAt: a.polling ? plan.nextRetryAt : null, reason: a.polling ? plan.reason : 'paused', sync, index: store.indexStatus(a.alias) };
+        const sync = store.status(a.alias), index = store.indexStatus(a.alias), plan = retryPlan(sync), indexPlan = indexRetryPlan(index);
+        return { account: a.alias, syncLockHeld: await store.accountSyncLocked(a.alias), enabled: a.polling,
+          nextRetryAt: a.polling ? plan.nextRetryAt : null, reason: a.polling ? plan.reason : 'paused',
+          indexRetry: a.polling ? indexPlan : { nextRetryAt: null, reason: 'paused' },
+          nextWork: a.polling ? nextMailWork(sync, index) ?? null : null, sync, index };
       }));
       return { syncLockHeld: jobs.some(job => job.syncLockHeld), jobs };
     }
@@ -79,10 +86,14 @@ async function main(args: string[]) {
   }
   if (args[0] === 'diagnose' && args.length === 2) {
     const account = store.account(args[1]);
-    const lastAttempt = store.status(account.alias);
+    const lastAttempt = store.status(account.alias), index = store.indexStatus(account.alias);
     const syncLockHeld = await store.accountSyncLocked(account.alias);
-    return { account: account.alias, lastAttempt: lastAttempt ?? { status: 'never_synced' }, index: store.indexStatus(account.alias), retry: retryPlan(lastAttempt), diagnosticAvailable: !!lastAttempt?.diagnostic,
-      syncLockHeld, potentiallyInterrupted: lastAttempt?.status === 'syncing' && !syncLockHeld,
+    const syncDiagnosticAvailable = !!lastAttempt?.diagnostic, indexDiagnosticAvailable = !!index?.diagnostic;
+    const syncPotentiallyInterrupted = lastAttempt?.status === 'syncing' && !syncLockHeld;
+    const indexPotentiallyInterrupted = index?.status === 'indexing' && !syncLockHeld;
+    return { account: account.alias, lastAttempt: lastAttempt ?? { status: 'never_synced' }, index, retry: retryPlan(lastAttempt), indexRetry: indexRetryPlan(index),
+      diagnosticAvailable: syncDiagnosticAvailable || indexDiagnosticAvailable, syncDiagnosticAvailable, indexDiagnosticAvailable,
+      syncLockHeld, potentiallyInterrupted: syncPotentiallyInterrupted || indexPotentiallyInterrupted, syncPotentiallyInterrupted, indexPotentiallyInterrupted,
       note: 'Local inspection only; no network requests or retries. The account-specific lock covers download/index work, not proof of download progress. Historical discarded errors cannot be recovered.' };
   }
   if (args[0] === 'sync') {

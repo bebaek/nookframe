@@ -19,8 +19,8 @@ export interface Account {
   alias: string; provider: 'gmail'; email: string; polling: boolean;
   oauth: { clientId: string; refreshToken: string; accessToken: string; expiresAt: number };
 }
-export interface IndexStatus { status: 'indexing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; completeThrough?: string; diagnostic?: Diagnostic }
-export interface SyncStatus { completedDownloadScope?: string; failures?: number; downloadCompletedAt?: string; status: 'syncing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; error?: string; phase?: 'preparing' | 'download' | 'index' | 'complete'; phaseStartedAt?: string; diagnostic?: Diagnostic }
+export interface IndexStatus { retryNotBefore?: string; failures?: number; status: 'pending' | 'indexing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; completeThrough?: string; diagnostic?: Diagnostic }
+export interface SyncStatus { indexDeferred?: boolean; completedDownloadScope?: string; failures?: number; downloadCompletedAt?: string; status: 'syncing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; error?: string; phase?: 'preparing' | 'download' | 'index' | 'complete'; phaseStartedAt?: string; diagnostic?: Diagnostic }
 export class MailStore {
   readonly root: string;
   constructor(root: string) {
@@ -107,8 +107,8 @@ export class MailStore {
       const value = JSON.parse(readFileSync(this.path('state', alias(name), 'index-status.json'), 'utf8'));
       const time = (v: unknown) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(v) && Number.isFinite(Date.parse(v)) ? v : undefined;
       const attemptedAt = time(value.attemptedAt);
-      if (!attemptedAt || !['indexing', 'ok', 'failed'].includes(value.status)) return undefined;
-      return { status: value.status, attemptedAt, completedAt: time(value.completedAt), lastSuccess: time(value.lastSuccess), completeThrough: time(value.completeThrough), diagnostic: sanitizeDiagnostic(value.diagnostic) };
+      if (!attemptedAt || !['pending', 'indexing', 'ok', 'failed'].includes(value.status)) return undefined;
+      return { status: value.status, retryNotBefore: time(value.retryNotBefore), failures: Number.isSafeInteger(value.failures) && value.failures >= 0 ? Math.min(value.failures, 1000) : undefined, attemptedAt, completedAt: time(value.completedAt), lastSuccess: time(value.lastSuccess), completeThrough: time(value.completeThrough), diagnostic: sanitizeDiagnostic(value.diagnostic) };
     } catch { return undefined; }
   }
   status(name: string): SyncStatus | undefined {
@@ -118,7 +118,7 @@ export class MailStore {
       const attemptedAt = time(value.attemptedAt);
       if (!['syncing', 'ok', 'failed'].includes(value.status) || !attemptedAt) return undefined;
       const errors = new Set(['RECONNECT_ACCOUNT', 'MAIL_COMMAND_FAILED', 'SYNC_FAILED', 'INVALID_MAIL_CONFIG', 'INVALID_EMAIL', ...diagnosticErrorCodes]);
-      return { status: value.status, completedDownloadScope: typeof value.completedDownloadScope === 'string' && /^sha256:[0-9a-f]{64}$/.test(value.completedDownloadScope) ? value.completedDownloadScope : undefined, failures: Number.isSafeInteger(value.failures) && value.failures >= 0 ? Math.min(value.failures, 1000) : undefined, downloadCompletedAt: time(value.downloadCompletedAt), attemptedAt, completedAt: time(value.completedAt), lastSuccess: time(value.lastSuccess), phase: ['preparing', 'download', 'index', 'complete'].includes(value.phase) ? value.phase : undefined, phaseStartedAt: time(value.phaseStartedAt), diagnostic: value.status === 'failed' ? sanitizeDiagnostic(value.diagnostic) : undefined, error: value.status === 'failed' ? (errors.has(value.error) ? value.error : 'SYNC_FAILED') : undefined };
+      return { status: value.status, indexDeferred: value.indexDeferred === true ? true : undefined, completedDownloadScope: typeof value.completedDownloadScope === 'string' && /^sha256:[0-9a-f]{64}$/.test(value.completedDownloadScope) ? value.completedDownloadScope : undefined, failures: Number.isSafeInteger(value.failures) && value.failures >= 0 ? Math.min(value.failures, 1000) : undefined, downloadCompletedAt: time(value.downloadCompletedAt), attemptedAt, completedAt: time(value.completedAt), lastSuccess: time(value.lastSuccess), phase: ['preparing', 'download', 'index', 'complete'].includes(value.phase) ? value.phase : undefined, phaseStartedAt: time(value.phaseStartedAt), diagnostic: value.status === 'failed' ? sanitizeDiagnostic(value.diagnostic) : undefined, error: value.status === 'failed' ? (errors.has(value.error) ? value.error : 'SYNC_FAILED') : undefined };
     } catch { return undefined; }
   }
 }

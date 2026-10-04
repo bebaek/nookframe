@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import { MailError, MailStore, alias, type Account, type SyncStatus, type IndexStatus } from './store.js';
 import { prepareConfig, DOWNLOAD_SCOPE } from './config.js';
 import { downloadTimeout } from './download-policy.js';
 import { indexTimeout } from './index-policy.js';
-import { jobDue } from './jobs.js';
+import { nextMailWork, indexRetryPlan } from './jobs.js';
 import { classifyFailure, diagnosticErrorCode, type Diagnostic } from './diagnostics.js';
 
 export class MailCommandError extends MailError {
@@ -40,7 +41,7 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
       const previous = store.status(account.alias);
       // Re-read opt-in state immediately before each account: pausing a queued
       // account does not wait for the currently running account to finish.
-      if (scheduled && (!account.polling || !jobDue(previous))) return;
+      if (scheduled && (!account.polling || nextMailWork(previous, store.indexStatus(account.alias)) !== 'sync')) return;
       const state: SyncStatus = { status: 'syncing', attemptedAt: new Date().toISOString(), lastSuccess: previous?.lastSuccess, completedDownloadScope: previous?.completedDownloadScope };
       const phase = (next: SyncStatus['phase']) => {
         state.phase = next; state.phaseStartedAt = new Date().toISOString();
@@ -53,6 +54,16 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
       try {
         const timeout = downloadTimeout(previous);
         const files = prepareConfig(store, account);
+        // Persist before launching mbsync: even an interrupted/partial download
+        // needs local indexing. A held account lock excludes retry workers.
+        const previousIndex = store.indexStatus(account.alias);
+        store.write(store.path('state', account.alias, 'index-status.json'), {
+          status: 'pending', attemptedAt: new Date().toISOString(),
+          lastSuccess: previousIndex?.lastSuccess, failures: previousIndex?.failures,
+          // Keep an existing index retry deadline even as new mail is downloaded.
+          retryNotBefore: indexRetryPlan(previousIndex).nextRetryAt ?? undefined,
+          diagnostic: previousIndex?.diagnostic,
+        } satisfies IndexStatus);
         phase('download');
         const downloadStartedAt = state.phaseStartedAt;
         let downloadError: unknown;
@@ -66,19 +77,25 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
           if (error instanceof MailCommandError) state.diagnostic = error.diagnostic;
           state.completedAt = new Date().toISOString();
         }
-        // The awaited child has exited before indexing starts. Preserve the
-        // download failure even if local indexing succeeds or also fails.
-        phase('index');
+        // The awaited child has exited before indexing starts. Scheduled syncs
+        // respect index backoff; manual sync/index remain explicit overrides.
+        const indexPlan = indexRetryPlan(store.indexStatus(account.alias));
+        state.indexDeferred = scheduled && !!indexPlan.nextRetryAt && Date.parse(indexPlan.nextRetryAt) > Date.now() ? true : undefined;
         let indexError: unknown;
-        try { await indexUnlocked(store, account, run, state.downloadCompletedAt); } catch (error) { indexError = error; }
+        if (!state.indexDeferred) {
+          phase('index');
+          try { await indexUnlocked(store, account, run, state.downloadCompletedAt); } catch (error) { indexError = error; }
+        }
         if (downloadError) { state.phase = 'download'; state.phaseStartedAt = downloadStartedAt; throw downloadError; }
         if (indexError) throw indexError;
-        state.status = 'ok'; state.lastSuccess = new Date().toISOString(); state.phase = 'complete';
+        state.status = 'ok'; state.phase = 'complete';
+        // Do not advance the last fully successful sync when indexing was deferred.
+        if (!state.indexDeferred) state.lastSuccess = new Date().toISOString();
       } catch (error) {
         state.status = 'failed'; state.error = error instanceof MailError ? error.code : 'SYNC_FAILED';
         if (error instanceof MailCommandError) state.diagnostic = error.diagnostic;
       } finally { clearInterval(heartbeat); }
-      state.failures = state.status === 'ok' ? 0 : Math.min(1000, (previous?.failures ?? 0) + 1);
+      state.failures = state.status === 'ok' || state.downloadCompletedAt ? 0 : Math.min(1000, (previous?.failures ?? 0) + 1);
       state.completedAt = new Date().toISOString();
       store.write(store.path('state', account.alias + '.json'), state);
       results.push({ account: account.alias, ...state });
@@ -93,31 +110,35 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
   return { results };
 }
 async function indexUnlocked(store: MailStore, account: Account, run: typeof privateCommand, completeThrough?: string) {
-  const files = prepareConfig(store, account), previous = store.indexStatus(account.alias);
-  const state: IndexStatus = { status: 'indexing', attemptedAt: new Date().toISOString(), lastSuccess: previous?.lastSuccess, completeThrough: previous?.completeThrough };
+  const previous = store.indexStatus(account.alias);
+  const state: IndexStatus = { status: 'indexing', failures: previous?.failures, attemptedAt: new Date().toISOString(), lastSuccess: previous?.lastSuccess, completeThrough: previous?.completeThrough };
   const path = store.path('state', account.alias, 'index-status.json');
+  mkdirSync(store.path('state', account.alias), { recursive: true, mode: 0o700 });
   store.write(path, state);
   try {
+    const files = prepareConfig(store, account);
     await run('/usr/bin/notmuch', [`--config=${files.notmuch}`, 'new', '--quiet'], undefined, indexTimeout());
-    state.status = 'ok'; state.lastSuccess = new Date().toISOString(); state.completeThrough = completeThrough;
+    state.status = 'ok'; state.failures = 0; state.lastSuccess = new Date().toISOString(); state.completeThrough = completeThrough;
   } catch (error) {
-    state.status = 'failed';
+    state.status = 'failed'; state.failures = Math.min(1000, (previous?.failures ?? 0) + 1);
     if (error instanceof MailCommandError) state.diagnostic = error.diagnostic;
     throw error;
   } finally { state.completedAt = new Date().toISOString(); store.write(path, state); }
   return state;
 }
-export async function indexMail(store: MailStore, name: string, run: typeof privateCommand = privateCommand) {
+export async function indexMail(store: MailStore, name: string, run: typeof privateCommand = privateCommand, scheduled = false) {
   return store.withAccountSyncLock(name, async () => {
-    const account = store.account(name);
-    const state = await indexUnlocked(store, account, run, store.status(name)?.downloadCompletedAt);
+    const account = store.account(name), sync = store.status(name);
+    if (scheduled && (!account.polling || nextMailWork(sync, store.indexStatus(name)) !== 'index')) return { account: name, skipped: true };
+    const state = await indexUnlocked(store, account, run, sync?.downloadCompletedAt);
     return { account: name, index: state, partial: !state.completeThrough };
   });
 }
 export function freshness(store: MailStore, name: string) {
   const sync = store.status(name), index = store.indexStatus(name);
+  const downloadComplete = sync?.status === 'ok' || (sync?.phase === 'index' && !!sync.downloadCompletedAt);
   return { account: name, indexedAt: index?.lastSuccess ?? sync?.lastSuccess ?? null,
-    partial: index ? !index.completeThrough || sync?.status !== 'ok' || index.status !== 'ok' : sync?.status !== 'ok',
+    partial: index ? !index.completeThrough || !downloadComplete || index.status !== 'ok' : sync?.status !== 'ok',
     lastDownload: sync?.downloadCompletedAt ?? sync?.lastSuccess ?? null };
 }
 function indexArgs(store: MailStore, account: Account) {

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { MailError, type MailStore } from './store.js';
-import { jobDue } from './jobs.js';
+import { nextMailWork } from './jobs.js';
 
 export function mailConcurrency(value = process.env.MAIL_SYNC_CONCURRENCY): number {
   if (value === undefined) return 2;
@@ -24,12 +24,14 @@ export class MailScheduler {
     try {
       for (const account of this.store.accounts()) {
         if (this.closing || this.children.size >= this.concurrency) break;
-        if (this.children.has(account.alias) || !account.polling || !jobDue(this.store.status(account.alias))) continue;
+        if (this.children.has(account.alias) || !account.polling) continue;
+        const work = nextMailWork(this.store.status(account.alias), this.store.indexStatus(account.alias));
+        if (!work) continue;
         if (await this.store.accountSyncLocked(account.alias)) continue;
         if (this.closing) break;
         // The worker rechecks opt-in/eligibility under its account lock. Each
         // group contains mbsync/token-helper children; never relay their output.
-        const child = this.launch(process.execPath, [this.cli, 'sync', account.alias, '--scheduled'], {
+        const child = this.launch(process.execPath, [this.cli, work, account.alias, '--scheduled'], {
           detached: true, stdio: 'ignore', env: { ...process.env, MAIL_DIR: this.store.root, PUBLIC_ORIGIN: this.origin },
         });
         this.children.set(account.alias, child);

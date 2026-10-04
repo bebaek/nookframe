@@ -135,8 +135,8 @@ survive redeployment. Per-account cross-process locks prevent overlapping sync o
 index work for the same account, while different accounts can run concurrently.
 The scheduler starts one worker per account, with **2 concurrent workers** by
 default. Set `MAIL_SYNC_CONCURRENCY` in the server environment to an integer 1–8.
-This bounds scheduled workers only; manual commands obey account locks but do not
-consume scheduler slots. A manual `mailctl sync` without an alias visits accounts
+This bounds scheduled download and index-only workers together; manual commands
+obey account locks but do not consume scheduler slots. A manual `mailctl sync` without an alias visits accounts
 sequentially, reporting busy accounts and continuing with the others.
 
 **Migration from global locking:** pause all jobs and drain active sync/index
@@ -154,16 +154,18 @@ root. Do not delete locks to bypass active work. Retry policy:
 - Interrupted `syncing` record: wait at least an hour from its start and acquire
   the sync lock before retrying. A held lock still prevents another worker.
 
-`jobs status` shows enablement, next eligibility time/reason, last attempt/phase,
-and separate index status. Each job includes its own `syncLockHeld`; the top-level
+`jobs status` shows enablement, next download eligibility time/reason, last
+attempt/phase, and separate index status. `indexRetry` reports local-index
+eligibility, and `nextWork` is the currently eligible action (`index`, `sync`, or
+null), not proof of an active worker. Each job includes its own `syncLockHeld`; the top-level
 field means any of the listed accounts is locked. An eligibility time is not a
 guarantee of immediate execution: scheduler capacity or same-account manual work
 can delay it. Server shutdown terminates all its worker groups; jobs resume
 eligibility checks after restart.
 This is a persistent retry policy, not a durable execution queue with job IDs.
 
-After each mbsync attempt has exited, the worker runs local indexing, **even after
-quota errors or timeouts**. Download failures/cooldowns remain recorded separately
+After each mbsync attempt has exited, the worker attempts local indexing, **even
+after quota errors or timeouts**, unless a scheduled run must honor index backoff. Download failures/cooldowns remain recorded separately
 from successful indexing. If indexing also fails, inspect its separate diagnostic.
 An abrupt kill can prevent this follow-up; a later attempt or `mailctl index` can
 recover it. Download limits are scope-aware (6 hours for backfill, 15 minutes for
@@ -218,6 +220,45 @@ flow. Subprocess/provider diagnostics are intentionally suppressed, not dumped i
 chat or container logs. A killed sync may retain a `syncing` status and a short-lived
 stale lock until the next run; inspect timestamps, never blindly remove active locks.
 
+## Independent local-index retries
+
+Enabled jobs now retry failed indexes even while downloads are blocked by Gmail
+quota or authentication errors. The scheduler runs `index ALIAS --scheduled`
+(local notmuch only), not another IMAP download. This uses the same account lock
+and shared worker limit as sync. Pausing jobs stops both kinds of future attempts;
+manual `mailctl index ALIAS` remains available while paused.
+
+Per-account `state/ALIAS/index-status.json` persists index failure counts. Failed
+index attempts retry after 5 minutes, doubling up to 6 hours; successful indexing
+resets the count. Old failed records without a count use the initial five-minute
+backoff. Interrupted `indexing` records become eligible five minutes after their
+start, but a fresh account lock always prevents overlapping work.
+
+Before each mbsync launch, a durable `pending` index record marks the archive as
+needing indexing. Its `retryNotBefore` retains any existing index retry deadline
+across downloads and restarts. Otherwise pending work is eligible immediately once
+the account lock is free, including after an interrupted download. No missing index
+record by itself triggers work for a new, empty account. Index recovery wins when
+both indexing and downloading are due; workers recheck eligibility under the lock.
+Scheduled downloads do not bypass index backoff: if the deadline has not elapsed
+when mbsync exits, indexing stays pending and sync records `indexDeferred: true`.
+For successful downloads, sync status is `ok` but the last fully successful sync
+timestamp is not advanced; consult index status/freshness for archive readiness.
+This deferral flag is historical and remains if a later index-only retry succeeds.
+Manual `mailctl sync` and `mailctl index` explicitly override index backoff.
+
+An index-only retry never rewrites sync/download history, clears provider
+cooldowns, or claims a partial download was complete. After a successful download
+followed by an index failure, download eligibility uses the normal ten-minute
+cadence rather than index-error backoff. A successful local retry restores index
+freshness for that completed download; the historical sync attempt may still show
+its old index failure until another sync completes. Partial downloads remain
+marked partial even after indexing succeeds.
+
+**Upgrade behavior:** already-enabled accounts with old failed indexes will become
+eligible for local-only recovery automatically, without bypassing Gmail cooldowns.
+No real-mail index retries were started during implementation/testing.
+
 ## Inspecting sync failures (diagnostic update)
 
 ```sh
@@ -229,8 +270,13 @@ mailctl sync personal --progress
 
 `diagnose` is **local inspection only**: it makes no provider requests and starts
 no sync. It returns the last recorded phase/failure and checks that account's
-sync/index lock. A held lock is not proof that a download is making progress. `potentiallyInterrupted` flags a saved `syncing` record with no fresh lock,
-not a guarantee that every old child process is gone. It never deletes locks.
+sync/index lock. A held lock is not proof that a download is making progress.
+`syncDiagnosticAvailable` and `indexDiagnosticAvailable` distinguish saved failures;
+`diagnosticAvailable` is true if either has a diagnostic. Likewise,
+`syncPotentiallyInterrupted` and `indexPotentiallyInterrupted` flag saved running
+records without a fresh lock, and `potentiallyInterrupted` aggregates them. These
+are not guarantees that every old child process is gone. Pending/deferred indexes
+are not running markers. Diagnose never deletes locks.
 
 New attempts save `phase` (`preparing`, `download`, `index`, or `complete`) and a
 phase start time. Failures also save sanitized `diagnostic` fields: category,
@@ -250,7 +296,7 @@ Raw stdout/stderr, exception messages, command arguments, response identifiers,
 URLs, and credentials are never persisted or returned as diagnostics. Recognized
 messages come from a fixed allowlist; unknown details remain withheld. Saved data
 is re-projected through the same allowlist when read. Old `MAIL_COMMAND_FAILED`
-records have no recoverable detail (`diagnosticAvailable: false`); no retroactive
+records have no recoverable sync detail (`syncDiagnosticAvailable: false`); no retroactive
 cause is inferred from their duration alone.
 
 In Terminal, sync prints phase changes and an elapsed-time heartbeat every 30

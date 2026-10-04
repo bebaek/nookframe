@@ -128,6 +128,15 @@ store.saveAccount(account);console.log(JSON.stringify(prepareConfig(store,accoun
     (root / 'mail/state/personal.json').write_text(json.dumps({'status': 'failed', 'attemptedAt': '2026-09-26T12:00:00Z', 'error': 'MAIL_QUOTA'}))
     cli('index', 'personal')
     assert cli('account', 'status', 'personal')['accounts'][0]['sync']['error'] == 'MAIL_QUOTA'
+    # Recover a persisted index failure through the scheduled, local-only path.
+    # The disposable IMAP server is stopped, so no provider connection is possible.
+    sync_before = (root / 'mail/state/personal.json').read_bytes()
+    (root / 'mail/state/personal/index-status.json').write_text(json.dumps({'status': 'failed', 'attemptedAt': '2026-09-26T12:00:00Z', 'failures': 1}))
+    cli('jobs', 'enable', 'personal')
+    assert cli('jobs', 'status', 'personal')['jobs'][0]['nextWork'] == 'index'
+    assert cli('index', 'personal', '--scheduled')['index']['status'] == 'ok'
+    assert (root / 'mail/state/personal.json').read_bytes() == sync_before
+    cli('jobs', 'pause', 'personal')
     all_mail = cli('search')
     assert next(f for f in all_mail['freshness'] if f['account'] == 'personal')['partial'] is True
     assert len(all_mail['results']) == 2, all_mail

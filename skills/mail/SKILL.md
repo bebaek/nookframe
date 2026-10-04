@@ -20,6 +20,7 @@ Gmail IMAP requires the broad `https://mail.google.com/` OAuth scope. Download-o
 ## Search and read
 
 - `mailctl account status` — sanitized account and sync state; no credentials.
+- `mailctl jobs status` — download eligibility plus independent `indexRetry` and eligible `nextWork`. Enabled jobs retry local indexing during provider cooldowns without contacting Gmail. A held account lock still excludes overlapping work; `jobs pause ALIAS` pauses both kinds of future attempts.
 - `mailctl search --unread --limit 20` — search downloaded conversations across accounts.
 - `mailctl search --account personal --query 'from:example@example.com date:7d..' --limit 20`
 - `mailctl read personal:THREAD_ID` — use the exact `ref` returned by search. Returns a bounded conversation with attachment metadata; HTML-only mail is inert text, not rendered.
