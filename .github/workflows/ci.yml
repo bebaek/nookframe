@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Type check, test, and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts && npm rebuild node-pty --foreground-scripts
+      - run: npm run check
+      # HTTP integration tests serve dist/web and require a fresh frontend build.
+      - run: npm run build
+      - run: npm test
+
+  production-image:
+    name: Build and smoke-test image (read-only)
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TEST_IMAGE: nookframe-smoke:${{ github.sha }}
+      CONTAINER_RUNTIME: docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install smoke-test dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild node-pty --foreground-scripts
+          npx playwright install --with-deps chromium
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build production image once
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.TEST_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=nookframe
+          cache-to: type=gha,mode=max,scope=nookframe
+      - run: npm run test:container
+      - run: npm run test:mail-container
+      - name: Export tested image for publishing
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: docker save "$TEST_IMAGE" --output "${RUNNER_TEMP}/nookframe-image.tar"
+      - name: Upload tested image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-image
+          path: ${{ runner.temp }}/nookframe-image.tar
+          if-no-files-found: error
+          # Stable name supports retrying only a failed publishing job.
+          overwrite: true
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish tested image (main only)
+    needs: production-image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    env:
+      IMAGE_NAME: ghcr.io/bebaek/nookframe
+      TEST_IMAGE: nookframe-smoke:${{ github.sha }}
+    steps:
+      # No checkout or execution of repository code in this write-capable job.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-image
+          path: ${{ runner.temp }}/image
+      - run: docker load --input "${RUNNER_TEMP}/image/nookframe-image.tar"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the smoke-tested image without rebuilding
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_image="${IMAGE_NAME}:${GITHUB_SHA}"
+          docker tag "$TEST_IMAGE" "$commit_image"
+          docker push "$commit_image"
+          digest="$(docker buildx imagetools inspect "$commit_image" --format '{{.Manifest.Digest}}')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image="${commit_image}@${digest}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          printf '### Published image\n\n`%s`\n\nClean-runner verification pending; `main` is promoted only after verification.\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+
+  verify-published:
+    name: Verify registry image on a clean runner
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TEST_IMAGE: ${{ needs.publish.outputs.image }}
+      CONTAINER_RUNTIME: docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install smoke-test dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild node-pty --foreground-scripts
+          npx playwright install --with-deps chromium
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull exact published digest
+        run: docker pull "$TEST_IMAGE"
+      - run: npm run test:container
+      - run: npm run test:mail-container
+
+  promote:
+    name: Promote verified current main image
+    needs: [publish, verify-published]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TEST_IMAGE: ${{ needs.publish.outputs.image }}
+    steps:
+      # Only registry operations; never execute repository code with package writes.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker pull "$TEST_IMAGE"
+      - name: Promote only if the tested commit is still main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_sha" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$current_sha" != "$GITHUB_SHA" ]]; then
+            printf '### Promotion skipped\n\nTested commit `%s` is no longer main (`%s`). The verified digest remains `%s`.\n' "$GITHUB_SHA" "$current_sha" "$TEST_IMAGE" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker tag "$TEST_IMAGE" ghcr.io/bebaek/nookframe:main
+          docker push ghcr.io/bebaek/nookframe:main
+          printf '### Verified registry image\n\n`%s`\n\nBoth container smoke tests passed after a clean-runner pull. No deployment performed.\n' "$TEST_IMAGE" >> "$GITHUB_STEP_SUMMARY"

@@ -342,6 +342,52 @@ both volumes and backups: sessions can contain sensitive text and `/data/agent`
 contains provider credentials. The token file is likewise readable by the agent
 under this deliberately single-user trust model.
 
+## CI and container publishing
+
+`.github/workflows/ci.yml` runs on pull requests, pushes to `main`, and manual
+workflow dispatch. Node 24 type checks, tests, and the application build gate a
+single `linux/amd64` production image build from `Containerfile`. Both offline
+container smoke tests run against that image before publication. Actions are
+commit-pinned, all checkouts disable persisted credentials, and PR builds have
+read-only repository permissions with no package access. PR runs never log in
+to GHCR or publish images.
+
+Successful non-PR runs on `main` publish the tested image, without rebuilding, to
+`ghcr.io/bebaek/nookframe:<full-commit-sha>`. A separate clean runner pulls its
+registry digest and repeats both smoke tests with read-only package access.
+A separate promotion job checks the current remote `main` SHA immediately before
+updating the `main` tag; rerunning an older commit skips promotion.
+The workflow summary includes the deployment-ready reference:
+
+```text
+ghcr.io/bebaek/nookframe:<full-commit-sha>@sha256:<registry-digest>
+```
+
+Use that digest-pinned reference for deployments, not the moving `main` tag.
+Commit tags identify source revisions but can be replaced by rerunning a build;
+the digest identifies the exact tested artifact. If verification fails, the
+commit tag remains available for diagnosis but `main` is not promoted.
+
+Publishing uses the repository's `GITHUB_TOKEN` with `packages: write` restricted
+to main-only publish/promote jobs, which never check out or execute repository
+code. The read-only build job transfers the exact tested image via a seven-day
+workflow artifact; publishing loads it without rebuilding. A stable artifact name
+supports retries of failed publishing jobs within that retention window (rerun
+all jobs after expiry). No registry PAT or production credentials are needed in CI. The GHCR package
+should remain private and linked to this repository (the image source label
+provides the link). If the package already exists, verify that this repository
+has Actions access. Do not delete digests used by deployments or rollback images.
+GitHub Actions cache is used for build layers, with no PR registry-cache writes.
+Docker's `.dockerignore` excludes local credentials, `.local`, and build output.
+
+For Docker-based local smoke tests, set `CONTAINER_RUNTIME=docker` alongside
+`TEST_IMAGE`; the default remains Podman. Install Playwright Chromium first.
+Both tests use disposable fixtures rather than production mail/model credentials.
+
+This workflow **does not deploy**. Deployment is a separate operator action using
+the verified image digest. Private packages require registry pull credentials;
+choose the appropriate pull policy and retain any images needed for rollback.
+
 ## Validation
 
 ```bash

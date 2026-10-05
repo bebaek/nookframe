@@ -15,11 +15,11 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${port}`;
   const name = `pi-terminal-test-${process.pid}`;
-  const podman = (...args: string[]) => execFileSync('podman', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000 });
+  const container = (...args: string[]) => execFileSync(process.env.CONTAINER_RUNTIME || 'podman', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000 });
   const token = 'terminal-smoke-fixture-not-a-real-token';
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
-    podman('run', '-d', '--name', name, '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
+    container('run', '-d', '--name', name, '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
       '--memory=512m', '--pids-limit=256', '-p', `127.0.0.1:${port}:3000`, '--tmpfs', '/tmp',
       '--tmpfs', '/data:rw,mode=1777', '--tmpfs', '/workspace:rw,mode=1777', '--tmpfs', '/home/node:rw,mode=1777',
       '-e', `PUBLIC_ORIGIN=${origin}`, '-e', 'ACCESS_TOKEN_FILE=/tmp/test-token', '-e', 'PI_OFFLINE=1',
@@ -46,10 +46,10 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('No models available'));
     await mkdir('.local', { recursive: true });
     await page.screenshot({ path: '.local/terminal-container-mobile.png', fullPage: false });
-    assert.ok(!podman('logs', name).includes('private_terminal_canary'), 'Terminal output must not enter application logs');
+    assert.ok(!container('logs', name).includes('private_terminal_canary'), 'Terminal output must not enter application logs');
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();
-    try { podman('rm', '-f', name); } catch {}
+    try { container('rm', '-f', name); } catch {}
   }
 });
