@@ -348,11 +348,15 @@ under this deliberately single-user trust model.
 workflow dispatch. Node 24 type checks, tests, and the application build gate a
 single `linux/amd64` production image build from `Containerfile`. Both offline
 container smoke tests run against that image before publication. Actions are
-commit-pinned, and PR runs never log in to GHCR or publish images.
+commit-pinned, all checkouts disable persisted credentials, and PR builds have
+read-only repository permissions with no package access. PR runs never log in
+to GHCR or publish images.
 
 Successful non-PR runs on `main` publish the tested image, without rebuilding, to
 `ghcr.io/bebaek/nookframe:<full-commit-sha>`. A separate clean runner pulls its
-registry digest and repeats both smoke tests before promoting the `main` tag.
+registry digest and repeats both smoke tests with read-only package access.
+A separate promotion job checks the current remote `main` SHA immediately before
+updating the `main` tag; rerunning an older commit skips promotion.
 The workflow summary includes the deployment-ready reference:
 
 ```text
@@ -364,8 +368,12 @@ Commit tags identify source revisions but can be replaced by rerunning a build;
 the digest identifies the exact tested artifact. If verification fails, the
 commit tag remains available for diagnosis but `main` is not promoted.
 
-Publishing uses the repository's `GITHUB_TOKEN` with job-scoped `packages: write`;
-no registry PAT or production credentials are needed in CI. The GHCR package
+Publishing uses the repository's `GITHUB_TOKEN` with `packages: write` restricted
+to main-only publish/promote jobs, which never check out or execute repository
+code. The read-only build job transfers the exact tested image via a seven-day
+workflow artifact; publishing loads it without rebuilding. A stable artifact name
+supports retries of failed publishing jobs within that retention window (rerun
+all jobs after expiry). No registry PAT or production credentials are needed in CI. The GHCR package
 should remain private and linked to this repository (the image source label
 provides the link). If the package already exists, verify that this repository
 has Actions access. Do not delete digests used by deployments or rollback images.
