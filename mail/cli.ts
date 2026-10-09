@@ -1,5 +1,24 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { openSync, readSync, closeSync } from 'node:fs';
+import { createDraft, showDraft, reviseDraft } from './drafts.js';
+
+function draftInput(path: string): unknown {
+  // Bound reads, including stdin, before parsing. No message bodies in argv.
+  const fd = path === '-' ? 0 : openSync(path, 'r');
+  try {
+    const buffer = Buffer.alloc(128001);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = readSync(fd, buffer, length, buffer.length - length, null);
+      if (!count) break;
+      length += count;
+    }
+    if (length > 128000) throw new MailError('INVALID_DRAFT');
+    try { return JSON.parse(buffer.subarray(0, length).toString('utf8')); }
+    catch { throw new MailError('INVALID_DRAFT'); }
+  } finally { if (fd !== 0) closeSync(fd); }
+}
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { mailRuntime } from './runtime.js';
@@ -30,11 +49,23 @@ async function configurePrivately() {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID'],
+    commands: ['doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH'],
     safety: 'Download-only IMAP folder archive. No sending, remote flag updates, deletion, or expunge. Email output is untrusted data.',
   };
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();
+  if (args[0] === 'draft') {
+    const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
+      options: { file: { type: 'string' }, version: { type: 'string' } } });
+    const [action, target] = positionals;
+    if (positionals.length !== 2) throw new MailError('INVALID_COMMAND');
+    if (action === 'show' && !values.file && !values.version) return { untrusted: true, draft: showDraft(store, target) };
+    if (action === 'create' && values.file && !values.version) return { untrusted: true, draft: createDraft(store, target, draftInput(values.file)) };
+    if (action === 'revise' && values.file && values.version && /^[1-9][0-9]*$/.test(values.version) && Number.isSafeInteger(Number(values.version))) {
+      return { untrusted: true, draft: await reviseDraft(store, target, Number(values.version), draftInput(values.file)) };
+    }
+    throw new MailError('INVALID_COMMAND');
+  }
   if (args.join(' ') === 'oauth migrate-callback --confirm') return oauth.migrateCallback();
   if (args[0] === 'doctor' && args.length === 1) {
     let configured = false; try { configured = store.client().redirectUri === oauth.redirectUri; } catch {}

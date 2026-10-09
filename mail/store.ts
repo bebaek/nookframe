@@ -63,6 +63,12 @@ export class MailStore {
   async locked<T>(kind: 'oauth', action: () => Promise<T>): Promise<T> {
     return this.lock(this.path('.locks', kind), action);
   }
+  async withDraftLock<T>(id: string, action: () => Promise<T>): Promise<T> {
+    if (!/^[a-f0-9]{32}$/.test(id)) throw new MailError('INVALID_DRAFT_ID');
+    const target = this.path('.locks', 'drafts', id);
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    return this.lock(target, action);
+  }
   async withAccountCredentialLock<T>(name: string, action: () => Promise<T>, wait = false): Promise<T> {
     const target = this.path('.locks', 'credentials', alias(name));
     mkdirSync(target, { recursive: true, mode: 0o700 });

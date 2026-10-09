@@ -144,6 +144,23 @@ concurrent commands/agents can edit the same files or refresh credentials.
 Credential changes may need a manual server restart to refresh the RPC model
 catalog. Terminal pi model selection does not update the web's saved selection.
 
+## Mail architecture and direction
+
+Nookframe is a general-purpose virtual desktop, not an email application. Chat
+stays neutral to specific capabilities: email workflows belong to the `mailctl`
+CLI, with the mail skill teaching the agent how to use it. Nookframe is one host
+for that CLI, not its required frontend. Keep mail operations, persistence, and
+structured output in `mailctl`, usable by humans, other agents, and a possible
+future standalone app. Do not add email-specific review cards or Send buttons
+to chat. Any future UI-level action approvals should be capability-neutral.
+
+The planned sending workflow is to prepare a persistent draft, inspect/revise it,
+obtain explicit user approval in the conversation, and send that exact draft
+version. Sending needs persistent outcome tracking and duplicate-send protection;
+uncertain delivery must not trigger automatic retries. Conversational approval
+is a workflow convention, not a security boundary against the shared shell.
+Local versioned drafts are implemented first; provider sending is not yet enabled.
+
 ## Read-only mail
 
 The image includes `mailctl`, mbsync, notmuch, and a Gmail XOAUTH2 helper. A bundled

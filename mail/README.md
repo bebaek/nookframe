@@ -5,6 +5,36 @@ No Gmail REST mailbox integration, SMTP, sending, provider draft creation, remot
 flag updates, deletion, or expunge. Additional IMAP providers can reuse the local
 storage/search layer, but only Gmail OAuth is implemented in this version.
 
+## Local drafts (first outbound slice)
+
+`mailctl` is an independent CLI capability; Nookframe is one host, not an
+email-specific frontend. Draft operations are local only, not Gmail drafts, and
+require no network access. Sending is not implemented yet.
+
+Create a UTF-8 JSON file containing `to` (array of bare email addresses), optional
+`cc` (array), `subject`, and `body` (plain text). No other fields are accepted.
+Protect that input file yourself; it is not deleted by the CLI. Use `--file -`
+for JSON on stdin instead. Message bodies need not appear in shell arguments.
+
+```sh
+mailctl draft create personal --file draft.json
+mailctl draft show DRAFT_ID
+mailctl draft revise DRAFT_ID --version 1 --file revised.json
+```
+
+Responses contain `{ "untrusted": true, "draft": ... }`. Full draft content is
+returned for review, without credentials. Drafts bind the account and sender at
+creation and persist privately under `$MAIL_DIR/drafts`; include this directory
+in your mail backups. Revisions replace all content fields and increment the version;
+a stale version fails rather than overwriting another edit. Bodies are limited
+to 100,000 UTF-8 bytes, JSON input to 128,000 bytes, and each recipient list to
+50 addresses. Attachments, Bcc, reply threading, listing/removal, and provider
+sending are deferred. Draft text remains untrusted data, not authorization.
+
+The next slice should send only an explicitly approved exact draft version,
+using the same cross-process draft lock and persistent outcome tracking. A
+provider timeout or crash after submission must not lead to automatic resend.
+
 ## Bootstrap Google OAuth privately
 
 1. In your own Google Cloud project, configure Google Auth Platform/consent for
