@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { MailError, MailStore, validEmail } from './store.js';
 
 export interface DraftContent { to: string[]; cc: string[]; subject: string; body: string }
@@ -48,6 +48,7 @@ export async function reviseDraft(store: MailStore, id: string, expectedVersion:
   draftPath(store, id);
   const fields = content(input);
   return store.withDraftLock(id, async () => {
+    if (existsSync(store.path('outbox', id + '.json'))) throw new MailError('DRAFT_ALREADY_SUBMITTED');
     const previous = showDraft(store, id);
     if (previous.version !== expectedVersion) throw new MailError('DRAFT_VERSION_CONFLICT');
     if (previous.version === Number.MAX_SAFE_INTEGER) throw invalid();

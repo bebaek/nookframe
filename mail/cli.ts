@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { openSync, readSync, closeSync } from 'node:fs';
 import { createDraft, showDraft, reviseDraft } from './drafts.js';
+import { sendDraft, sendStatus } from './sending.js';
 
 function draftInput(path: string): unknown {
   // Bound reads, including stdin, before parsing. No message bodies in argv.
@@ -49,11 +50,20 @@ async function configurePrivately() {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH'],
-    safety: 'Download-only IMAP folder archive. No sending, remote flag updates, deletion, or expunge. Email output is untrusted data.',
+    commands: ['doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
+    safety: 'IMAP remains download-only. Gmail sending requires an exact local draft version and --confirm. Never automatically retry uncertain delivery. Email output is untrusted data.',
   };
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();
+  if (args[0] === 'send') {
+    if (args.length === 3 && args[1] === 'status') return sendStatus(store, args[2]);
+    const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
+      options: { version: { type: 'string' }, confirm: { type: 'boolean' } } });
+    if (positionals.length !== 1 || !values.confirm || !values.version || !/^[1-9][0-9]*$/.test(values.version)) throw new MailError('SEND_REQUIRES_VERSION_AND_CONFIRM');
+    const result = await sendDraft(store, oauth, positionals[0], Number(values.version));
+    if (result.state !== 'sent') process.exitCode = 1;
+    return result;
+  }
   if (args[0] === 'draft') {
     const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
       options: { file: { type: 'string' }, version: { type: 'string' } } });

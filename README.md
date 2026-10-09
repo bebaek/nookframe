@@ -2,7 +2,8 @@
 
 A single-user, persistent personal workspace with mobile web chat and a private terminal tab. One Node server owns
 one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
-Includes an optional read-only Gmail/IMAP CLI and chat-discoverable mail skill.
+Includes an optional Gmail/IMAP CLI with local drafts, explicit sending, and a
+chat-discoverable mail skill.
 
 The agent engine is Pi; its package, CLI, and `PI_*` settings retain their names.
 Browser cookies and local Podman examples retain legacy `pi-workspace` names for
@@ -154,14 +155,15 @@ structured output in `mailctl`, usable by humans, other agents, and a possible
 future standalone app. Do not add email-specific review cards or Send buttons
 to chat. Any future UI-level action approvals should be capability-neutral.
 
-The planned sending workflow is to prepare a persistent draft, inspect/revise it,
+The sending workflow is to prepare a persistent draft, inspect/revise it,
 obtain explicit user approval in the conversation, and send that exact draft
 version. Sending needs persistent outcome tracking and duplicate-send protection;
 uncertain delivery must not trigger automatic retries. Conversational approval
 is a workflow convention, not a security boundary against the shared shell.
-Local versioned drafts are implemented first; provider sending is not yet enabled.
+Local versioned drafts and explicit Gmail API sending are implemented in `mailctl`.
+See [mail sending and its limits](mail/README.md#explicit-gmail-sending).
 
-## Read-only mail
+## Mail integration
 
 The image includes `mailctl`, mbsync, notmuch, and a Gmail XOAUTH2 helper. A bundled
 pi skill guides account connection through chat: a Google authorization link goes
@@ -174,8 +176,8 @@ Start with one account, then opt into persistent retry jobs with
 Jobs use error-specific cooldowns and index local mail after failed downloads too.
 `mailctl index ALIAS` makes existing downloads searchable without contacting Google.
 Search and read commands return bounded, explicitly untrusted email data with
-freshness and partial-index markers. No sending, remote flag updates,
-remote deletes, or expunge. Gmail's OAuth scope is nevertheless broad, and the
+freshness and partial-index markers. IMAP never sends remote flag updates,
+remote deletes, or expunge. Sending is a separate explicit `mailctl send` operation. Gmail's OAuth scope is nevertheless broad, and the
 shared agent filesystem is not a credential sandbox.
 
 See [mail setup, Google consent requirements, limits, and trust model](mail/README.md).

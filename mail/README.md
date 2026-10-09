@@ -1,15 +1,16 @@
-# Read-only mail workspace (first slice)
+# mailctl: mail workspace CLI
 
 Gmail via IMAP/XOAUTH2, `mbsync` → Maildir → per-account `notmuch` indexes.
-No Gmail REST mailbox integration, SMTP, sending, provider draft creation, remote
-flag updates, deletion, or expunge. Additional IMAP providers can reuse the local
+IMAP is download-only: no remote flag updates, deletion, or expunge.
+Local drafts can be explicitly sent through Gmail's REST API. No SMTP, provider
+draft creation, or remote mailbox-management operations are implemented. Additional IMAP providers can reuse the local
 storage/search layer, but only Gmail OAuth is implemented in this version.
 
-## Local drafts (first outbound slice)
+## Local drafts
 
 `mailctl` is an independent CLI capability; Nookframe is one host, not an
 email-specific frontend. Draft operations are local only, not Gmail drafts, and
-require no network access. Sending is not implemented yet.
+require no network access. Sending is a separate explicit command.
 
 Create a UTF-8 JSON file containing `to` (array of bare email addresses), optional
 `cc` (array), `subject`, and `body` (plain text). No other fields are accepted.
@@ -28,12 +29,51 @@ creation and persist privately under `$MAIL_DIR/drafts`; include this directory
 in your mail backups. Revisions replace all content fields and increment the version;
 a stale version fails rather than overwriting another edit. Bodies are limited
 to 100,000 UTF-8 bytes, JSON input to 128,000 bytes, and each recipient list to
-50 addresses. Attachments, Bcc, reply threading, listing/removal, and provider
-sending are deferred. Draft text remains untrusted data, not authorization.
+50 addresses. Attachments, Bcc, reply threading, and listing/removal are deferred. Draft text remains untrusted data, not authorization.
 
-The next slice should send only an explicitly approved exact draft version,
-using the same cross-process draft lock and persistent outcome tracking. A
-provider timeout or crash after submission must not lead to automatic resend.
+## Explicit Gmail sending
+
+Enable the Gmail API in the Google Cloud project that owns your OAuth client.
+The existing `https://mail.google.com/` scope supports sending; no additional
+scope is requested. Existing consent and refresh rules still apply.
+
+```sh
+mailctl draft show DRAFT_ID
+# Only after reviewing and approving this exact version:
+mailctl send DRAFT_ID --version 1 --confirm
+mailctl send status DRAFT_ID
+```
+
+`--confirm` records caller intent, not an independent approval mechanism. Agents
+must obtain explicit user approval for the account, recipients, subject, body,
+and version before invoking it. A changed draft requires new review. Nookframe
+needs no email-specific UI. The shared shell/credentials remain a trust boundary
+limitation: these checks cannot stop deliberate bypass.
+
+Sending uses plain-text MIME with Unicode encoding and a stable Message-ID for
+the attempt. It does not require a complete local index. `sent` means Gmail
+accepted the message, not proof of delivery to recipients. No automatic retries
+are made. A private, fsynced record under `$MAIL_DIR/outbox` is saved **before**
+the request; send and revise share a cross-process lock. Once an attempt exists,
+that draft cannot be revised or sent again, including after a restart.
+
+Outcomes are `sent`, `rejected` (a definitive HTTP 4xx except 408), or `uncertain`
+(network error, timeout, server error, malformed success, or interruption).
+A record may also be uncertain while submission is still in progress. Both
+rejected and uncertain send commands exit nonzero. Credential failures before
+submission leave no attempt and may be retried after repair. Status is local-only;
+corrupt records fail closed. Raw provider errors and credentials are not returned.
+
+For an uncertain outcome, inspect Gmail Sent or search Gmail for the recorded
+Message-ID before taking further action. Do not delete the record or automatically
+create/send another draft. There is no automatic reconciliation or retry command
+yet. Even rejected attempts require deliberate creation/review of a new draft.
+This prevents ordinary duplicate invocations, not exactly-once delivery: provider
+idempotency is not available, and restoring an older backup can lose attempt
+records. Review Gmail after a restore before sending anything again.
+
+Sending is covered by fake-provider tests, not real-account acceptance. No real
+email is sent by the test suite.
 
 ## Bootstrap Google OAuth privately
 

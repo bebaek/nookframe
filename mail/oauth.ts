@@ -104,7 +104,7 @@ export class MailOAuth {
       }, true);
     });
   }
-  // Called only by the mbsync password helper, never by public CLI commands.
+  // Internal credential access for mbsync and Gmail sending; never print the result.
   async accessToken(name: string): Promise<string> {
     return this.store.withAccountCredentialLock(name, async () => {
       const account = this.store.account(name), client = this.client();
