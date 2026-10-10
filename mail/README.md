@@ -35,7 +35,10 @@ to 100,000 UTF-8 bytes, JSON input to 128,000 bytes, and each recipient list to
 
 Enable the Gmail API in the Google Cloud project that owns your OAuth client.
 The existing `https://mail.google.com/` scope supports sending; no additional
-scope is requested. Existing consent and refresh rules still apply.
+scope is requested. Existing consent and refresh rules still apply. Working IMAP
+access does **not** prove the REST API is enabled. Select the OAuth client's project
+at <https://console.cloud.google.com/apis/library/gmail.googleapis.com> and enable
+Gmail API; allow time for propagation before trying a new send.
 
 ```sh
 mailctl draft show DRAFT_ID
@@ -67,13 +70,29 @@ corrupt records fail closed. Raw provider errors and credentials are not returne
 For an uncertain outcome, inspect Gmail Sent or search Gmail for the recorded
 Message-ID before taking further action. Do not delete the record or automatically
 create/send another draft. There is no automatic reconciliation or retry command
-yet. Even rejected attempts require deliberate creation/review of a new draft.
+yet. For a definitive `rejected` outcome, fix the cause first, then an explicit
+user request may create a new draft with the same contents. Show the new ID/version,
+account, recipients, subject, and body for fresh approval before sending. This is
+not an automatic retry and does not require a Sent-folder check for the definitive
+rejection. The original attempt record remains intact; its draft ID stays locked.
 This prevents ordinary duplicate invocations, not exactly-once delivery: provider
 idempotency is not available, and restoring an older backup can lose attempt
 records. Review Gmail after a restore before sending anything again.
 
-Sending is covered by fake-provider tests, not real-account acceptance. No real
-email is sent by the test suite.
+Sending has fake-provider coverage; no real email is sent by the test suite.
+Gmail acceptance is distinct from confirmed recipient delivery. Keep live account
+trials, identifiers, timestamps, and deployment notes in private operator records.
+
+### Sending diagnostics and recovery
+
+- Working IMAP access does not establish that the Gmail API is enabled. Diagnose
+  API-readiness failures without resending a draft.
+- Send records do not yet include bounded HTTP status and allowlisted provider
+  reason codes. Add these diagnostics without recording raw responses or secrets.
+- Enabling an API does not reset a durable send attempt. Retain attempt records
+  and follow the rejected/uncertain/sent recovery rules above.
+- Test agent recovery instructions as well as CLI state transitions. Preparing a
+  replacement draft is not permission to send it; require fresh explicit approval.
 
 ## Bootstrap Google OAuth privately
 
