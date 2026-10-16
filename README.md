@@ -163,6 +163,15 @@ is a workflow convention, not a security boundary against the shared shell.
 Local versioned drafts and explicit Gmail API sending are implemented in `mailctl`.
 See [mail sending and its limits](mail/README.md#explicit-gmail-sending).
 
+## Calendar direction
+
+Calendar is planned as an independent capability with both chat access and a
+standalone agenda UI. The first target is read-only Google Calendar aggregation
+across accounts. The [calendarctl foundation](calendar/README.md) provides private
+Google OAuth connection and local account status; fetching and UI are not yet
+implemented. See the [calendar MVP design](docs/calendar-mvp.md) for boundaries
+and delivery steps.
+
 ## Mail integration
 
 The image includes `mailctl`, mbsync, notmuch, and a Gmail XOAUTH2 helper. A bundled

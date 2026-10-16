@@ -8,8 +8,10 @@ import type { ServerMessage } from '../shared/protocol.js';
 import { BrowserSessions, SESSION_SECONDS } from './browser-sessions.js';
 import type { MailOAuth } from '../mail/oauth.js';
 import { MailError } from '../mail/store.js';
+import type { CalendarOAuth } from '../calendar/oauth.js';
+import { CalendarError } from '../calendar/store.js';
 
-export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth }) {
+export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const origin = new URL(config.origin).origin;
   const secure = new URL(origin).protocol === 'https:';
@@ -23,6 +25,22 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    if (config.calendar && req.method === 'GET' && (req.url === '/calendar/oauth/callback' || req.url?.startsWith('/calendar/oauth/callback?'))) {
+      // Cross-site OAuth return: single-use state + PKCE, not the Strict cookie.
+      // Never log this URL or provider errors.
+      let status = 'connected';
+      try {
+        if (req.url.length > 8192) throw new CalendarError('INVALID_OR_EXPIRED_AUTHORIZATION');
+        await config.calendar.callback(new URL(req.url, origin));
+      } catch (error) { status = error instanceof CalendarError ? error.code : 'AUTHORIZATION_FAILED'; }
+      res.writeHead(303, { Location: `/calendar/oauth/result?status=${encodeURIComponent(status)}` }).end(); return;
+    }
+    if (config.calendar && req.method === 'GET' && req.url?.startsWith('/calendar/oauth/result?')) {
+      const status = new URL(req.url, origin).searchParams.get('status');
+      const known = new Set(['INVALID_OR_EXPIRED_AUTHORIZATION', 'AUTHORIZATION_DENIED', 'OAUTH_CLIENT_CHANGED_RETRY', 'OAUTH_CALLBACK_CHANGED_RECONFIGURE', 'OAUTH_CLIENT_NOT_CONFIGURED', 'OAUTH_REQUEST_FAILED', 'INVALID_TOKEN_RESPONSE', 'CALENDAR_READ_SCOPES_REQUIRED', 'VERIFIED_IDENTITY_REQUIRED', 'WRONG_ACCOUNT_FOR_ALIAS', 'ACCOUNT_ALREADY_CONNECTED', 'REFRESH_TOKEN_REQUIRED_REAUTHORIZE', 'CALENDAR_BUSY', 'RECONNECT_ACCOUNT']);
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end(status === 'connected' ? 'Calendar authorization stored. Run calendarctl account status to check. No calendar data has been fetched or changed.' : `Calendar authorization not completed (${known.has(status ?? '') ? status : 'AUTHORIZATION_FAILED'}). Request a fresh authorization link. Do not paste callback URLs or codes into chat.`); return;
+    }
     if (config.mail && req.method === 'GET' && (req.url === '/mail/oauth/callback' || req.url?.startsWith('/mail/oauth/callback?'))) {
       // OAuth returns via a cross-site navigation, so SameSite=Strict login cookies
       // are intentionally not required here. Single-use state + PKCE authenticate

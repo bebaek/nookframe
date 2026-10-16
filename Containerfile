@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 COPY tsconfig*.json vite.config.ts ./
 COPY server ./server
 COPY mail ./mail
+COPY calendar ./calendar
 COPY shared ./shared
 COPY web ./web
 RUN npm run build && npm prune --omit=dev --ignore-scripts
@@ -22,9 +23,11 @@ COPY --chmod=0644 package.json ./
 COPY skills ./skills
 COPY --chmod=0644 mail/README.md ./docs/mail.md
 COPY --chmod=0755 scripts/mailctl /usr/local/bin/mailctl
+COPY --chmod=0755 scripts/calendarctl /usr/local/bin/calendarctl
+COPY --chmod=0644 calendar/README.md ./docs/calendar.md
 COPY --chmod=0755 scripts/pi-mail-token /usr/local/libexec/pi-mail-token
 RUN chmod -R a+rX /app/skills && mkdir -p /workspace /data/agent /data/state && chown -R node:node /workspace /data
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 WORKSPACE_DIR=/workspace PI_CODING_AGENT_DIR=/data/agent STATE_DIR=/data/state MAIL_DIR=/data/mail PI_TELEMETRY=0
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 WORKSPACE_DIR=/workspace PI_CODING_AGENT_DIR=/data/agent STATE_DIR=/data/state MAIL_DIR=/data/mail CALENDAR_DIR=/data/calendar PI_TELEMETRY=0
 USER node
 EXPOSE 3000
 ENTRYPOINT ["/usr/bin/tini", "--"]

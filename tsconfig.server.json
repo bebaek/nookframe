@@ -4,5 +4,5 @@
     "strict": true, "skipLibCheck": true, "outDir": "dist", "rootDir": ".",
     "esModuleInterop": true
   },
-  "include": ["server", "shared", "mail"]
+  "include": ["server", "shared", "mail", "calendar"]
 }
