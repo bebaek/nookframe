@@ -414,6 +414,14 @@ has Actions access. Do not delete digests used by deployments or rollback images
 GitHub Actions cache is used for build layers, with no PR registry-cache writes.
 Docker's `.dockerignore` excludes local credentials, `.local`, and build output.
 
+Buildx provenance metadata, image provenance attestations, and Docker build
+summary/record exports are disabled: they can include GitHub push-event account
+emails even when every commit uses a noreply author address. This deliberately
+trades provenance detail for privacy. Source/revision image labels, registry
+digests, and the smoke-test gates remain enabled. Avoid dumping GitHub event
+payloads or enabling debug output in public CI; audit logs again after action
+upgrades. These settings do not remove previously uploaded logs or artifacts.
+
 For Docker-based local smoke tests, set `CONTAINER_RUNTIME=docker` alongside
 `TEST_IMAGE`; the default remains Podman. Install Playwright Chromium first.
 Both tests use disposable fixtures rather than production mail/model credentials.
