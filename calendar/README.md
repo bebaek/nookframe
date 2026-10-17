@@ -16,14 +16,21 @@ Local commands use `npm run calendar -- ...`; the container installs `calendarct
    deliberately choose the intended account. Never paste callback URLs/codes in chat.
 5. Run `calendarctl account status personal`. Repeat for another alias/account.
 
+For a single Google setup and token shared with Mail, enable
+[shared Google connections](../google/README.md). Existing mail installations
+must explicitly migrate before enabling `GOOGLE_DIR`; then skip the second client
+configuration step and connect Calendar using the existing mail account alias.
+
 Scopes: `calendar.calendarlist.readonly`, `calendar.events.readonly` (under
 `https://www.googleapis.com/auth/`), `openid`, and `email`. Mail authorization is
-not reused. The same Google client may be configured explicitly, but Google grant
+not reused in standalone mode. Shared mode requests incremental consent instead.
+The same Google client may be configured explicitly, but Google grant
 revocation can affect both capabilities when they share that client. Testing-mode
 refresh tokens may expire; Workspace policy may block authorization.
 
 State is separate under `CALENDAR_DIR`, defaulting to a sibling `calendar` directory
 of `STATE_DIR` (`.local/calendar` normally; `/data/calendar` in the container).
+In shared mode, credentials live in `GOOGLE_DIR`, not calendar account metadata.
 Directories are created 0700 and files 0600. Tokens are plaintext private files,
 not isolated from the shared agent/shell. Do not point this at mail storage.
 Include this directory in backups before rollout; no deployment or backup changes

@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { calendarRuntime } from './runtime.js';
 import { CalendarError } from './store.js';
+import { CALENDAR_SCOPES } from './oauth.js';
 
 async function configurePrivately() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new CalendarError('PRIVATE_TERMINAL_REQUIRED');
@@ -31,14 +32,14 @@ async function main(args: string[]) {
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = calendarRuntime();
   if (args.length === 1 && args[0] === 'doctor') {
-    let configured = false; try { configured = store.client().redirectUri === oauth.redirectUri; } catch {}
+    let configured = false; try { const uri = store.client().redirectUri; configured = !uri || uri === oauth.redirectUri; } catch {}
     return { configured, callbackUrl: oauth.redirectUri, accounts: store.accounts().map(a => a.alias), nextStep: configured ? 'account connect ALIAS' : 'Run calendarctl oauth configure privately in Terminal' };
   }
   if (args[0] === 'account' && args[1] === 'connect' && args.length === 3) return oauth.connect(args[2]);
   if (args[0] === 'account' && args[1] === 'status' && [2, 3].includes(args.length)) {
     const accounts = args[2] ? [store.account(args[2])] : store.accounts();
     let clientId: string | undefined; try { clientId = store.client().clientId; } catch {}
-    return { untrusted: true, accounts: accounts.map(a => ({ alias: a.alias, provider: a.provider, email: a.email, scopes: a.scopes, status: a.oauth.clientId === clientId ? 'authorization_stored' : 'reconnect_required' })), note: 'Local status only; does not verify provider access. No calendar data has been fetched.' };
+    return { untrusted: true, accounts: accounts.map(a => ({ alias: a.alias, provider: a.provider, email: a.email, scopes: a.scopes, status: a.oauth.clientId === clientId && CALENDAR_SCOPES.every(s => a.scopes.includes(s)) ? 'authorization_stored' : 'reconnect_required' })), note: 'Local status only; does not verify provider access. No calendar data has been fetched.' };
   }
   throw new CalendarError('INVALID_COMMAND');
 }

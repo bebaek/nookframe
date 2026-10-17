@@ -23,6 +23,7 @@ function draftInput(path: string): unknown {
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { mailRuntime } from './runtime.js';
+import { MAIL_SCOPE } from './oauth.js';
 import { MailError, alias } from './store.js';
 import { syncMail, searchMail, readMail, indexMail } from './commands.js';
 import { retryPlan, indexRetryPlan, nextMailWork } from './jobs.js';
@@ -78,7 +79,7 @@ async function main(args: string[]) {
   }
   if (args.join(' ') === 'oauth migrate-callback --confirm') return oauth.migrateCallback();
   if (args[0] === 'doctor' && args.length === 1) {
-    let configured = false; try { configured = store.client().redirectUri === oauth.redirectUri; } catch {}
+    let configured = false; try { const uri = store.client().redirectUri; configured = !uri || uri === oauth.redirectUri; } catch {}
     return { configured, callbackUrl: oauth.redirectUri, clientType: 'Google OAuth web application', accounts: store.accounts().map(a => a.alias), nextStep: configured ? 'account connect ALIAS' : 'Run mailctl oauth configure in the private Terminal; never paste the client secret into chat' };
   }
   if (args[0] === 'index') {
@@ -112,7 +113,7 @@ async function main(args: string[]) {
     const [_, action, name] = args;
     if (action === 'status' && args.length <= 3) {
       const accounts = name ? [store.account(name)] : store.accounts();
-      return { accounts: accounts.map(a => ({ alias: a.alias, email: a.email, authorized: true, polling: a.polling, sync: store.status(a.alias) ?? { status: 'never_synced' }, index: store.indexStatus(a.alias) })) };
+      return { accounts: accounts.map(a => ({ alias: a.alias, email: a.email, authorized: !a.scopes || a.scopes.includes(MAIL_SCOPE), polling: a.polling, sync: store.status(a.alias) ?? { status: 'never_synced' }, index: store.indexStatus(a.alias) })) };
     }
     if (name && args.length === 3) {
       alias(name);

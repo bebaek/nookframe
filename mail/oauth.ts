@@ -38,7 +38,7 @@ export class MailOAuth {
   }
   private client() {
     const client = this.store.client();
-    if (client.redirectUri !== this.redirectUri) throw new MailError('OAUTH_CALLBACK_CHANGED_RECONFIGURE');
+    if (client.redirectUri && client.redirectUri !== this.redirectUri) throw new MailError('OAUTH_CALLBACK_CHANGED_RECONFIGURE');
     return client;
   }
   async connect(name: string) {
@@ -53,7 +53,7 @@ export class MailOAuth {
       const state = randomBytes(32).toString('base64url'), verifier = randomBytes(32).toString('base64url');
       this.store.write(this.store.path('pending', hash(state) + '.json'), { alias: name, verifier, expiresAt: this.now() + 15 * 60000, clientId: client.clientId } satisfies Pending);
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: `${MAIL_SCOPE} openid email`, access_type: 'offline', prompt: 'consent select_account', state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
+      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...new Set([MAIL_SCOPE, 'openid', 'email', ...(this.store.google?.account(name)?.scopes ?? [])])].join(' '), include_granted_scopes: 'true', access_type: 'offline', prompt: 'consent select_account', state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
       return { account: name, status: 'authorization_pending', authorizationUrl: url.href, expiresInSeconds: 900 };
     });
   }
@@ -96,10 +96,14 @@ export class MailOAuth {
         if (!validEmail(identity.email) || identity.email_verified !== true) throw new MailError('VERIFIED_EMAIL_REQUIRED');
         const existing = existsSync(this.store.path('accounts', pending.alias + '.json')) ? this.store.account(pending.alias) : undefined;
         if (existing && existing.email.toLowerCase() !== identity.email.toLowerCase()) throw new MailError('WRONG_ACCOUNT_FOR_ALIAS');
-        if (this.store.accounts().some(a => a.alias !== pending.alias && a.email.toLowerCase() === identity.email.toLowerCase())) throw new MailError('ACCOUNT_ALREADY_CONNECTED');
-        const refreshToken = data.refresh_token ?? (existing?.oauth.clientId === client.clientId ? existing.oauth.refreshToken : undefined);
+        if (this.store.accounts().some(a => a.alias !== pending.alias && a.email.toLowerCase() === identity.email.toLowerCase()) || this.store.google?.accounts().some(a => a.alias !== pending.alias && (a.email.toLowerCase() === identity.email.toLowerCase() || (a.subject && a.subject === identity.sub)))) throw new MailError('ACCOUNT_ALREADY_CONNECTED');
+        const shared = this.store.google?.account(pending.alias);
+        if (shared && (shared.email.toLowerCase() !== identity.email.toLowerCase() || (shared.subject && shared.subject !== identity.sub))) throw new MailError('WRONG_ACCOUNT_FOR_ALIAS');
+        if (this.store.google && !secret(identity.sub)) throw new MailError('VERIFIED_EMAIL_REQUIRED');
+        const previous = shared ?? existing;
+        const refreshToken = data.refresh_token ?? (previous?.oauth.clientId === client.clientId ? previous.oauth.refreshToken : undefined);
         if (!secret(refreshToken)) throw new MailError('REFRESH_TOKEN_REQUIRED_REAUTHORIZE');
-        this.store.saveAccount({ alias: pending.alias, provider: 'gmail', email: identity.email, polling: existing?.polling ?? false,
+        this.store.saveAccount({ alias: pending.alias, provider: 'gmail', email: identity.email, subject: identity.sub, scopes: data.scope.split(' '), polling: existing?.polling ?? false,
           oauth: { clientId: client.clientId, refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 } });
       }, true);
     });
@@ -109,9 +113,11 @@ export class MailOAuth {
     return this.store.withAccountCredentialLock(name, async () => {
       const account = this.store.account(name), client = this.client();
       if (account.oauth.clientId !== client.clientId) throw new MailError('RECONNECT_ACCOUNT');
+      if (account.scopes && !account.scopes.includes(MAIL_SCOPE)) throw new MailError('GMAIL_IMAP_SCOPE_REQUIRED');
       if (account.oauth.expiresAt > this.now() + 120000 && secret(account.oauth.accessToken)) return account.oauth.accessToken;
       const data = await this.exchange(client, { grant_type: 'refresh_token', refresh_token: account.oauth.refreshToken });
       if (data.refresh_token !== undefined && !secret(data.refresh_token)) throw new MailError('INVALID_TOKEN_RESPONSE');
+      if (typeof data.scope === 'string') account.scopes = data.scope.split(' ');
       account.oauth = { clientId: client.clientId, refreshToken: data.refresh_token ?? account.oauth.refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 };
       this.store.saveAccount(account);
       return account.oauth.accessToken;

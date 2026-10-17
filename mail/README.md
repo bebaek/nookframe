@@ -94,6 +94,15 @@ trials, identifiers, timestamps, and deployment notes in private operator record
 - Test agent recovery instructions as well as CLI state transitions. Preparing a
   replacement draft is not permission to send it; require fresh explicit approval.
 
+## Shared Google connections (optional)
+
+Mail and Calendar can use one Google client and credential set per account.
+See [shared Google setup and migration](../google/README.md) before enabling
+`GOOGLE_DIR` on an existing installation. Migration is explicit and preserves
+mail data; it moves credentials out of mail account metadata. Without `GOOGLE_DIR`,
+the standalone setup below is unchanged. In shared mode, configure the client only
+once and register both capability callbacks. Revocation can affect both modules.
+
 ## Bootstrap Google OAuth privately
 
 1. In your own Google Cloud project, configure Google Auth Platform/consent for

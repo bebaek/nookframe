@@ -23,7 +23,7 @@ export class CalendarOAuth {
   }
   private client() {
     const client = this.store.client();
-    if (client.redirectUri !== this.redirectUri) throw new CalendarError('OAUTH_CALLBACK_CHANGED_RECONFIGURE');
+    if (client.redirectUri && client.redirectUri !== this.redirectUri) throw new CalendarError('OAUTH_CALLBACK_CHANGED_RECONFIGURE');
     return client;
   }
   connect(name: string) {
@@ -37,7 +37,7 @@ export class CalendarOAuth {
       const state = randomBytes(32).toString('base64url'), verifier = randomBytes(32).toString('base64url');
       this.store.write(this.store.path('pending', hash(state) + '.json'), { version: 1, alias: name, verifier, expiresAt: this.now() + 900000, clientId: client.clientId } satisfies Pending);
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...CALENDAR_SCOPES, 'openid', 'email'].join(' '), access_type: 'offline', prompt: 'consent select_account', state, code_challenge: hashBase64(verifier), code_challenge_method: 'S256' }).toString();
+      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...new Set([...CALENDAR_SCOPES, 'openid', 'email', ...(this.store.google?.account(name)?.scopes ?? [])])].join(' '), include_granted_scopes: 'true', access_type: 'offline', prompt: 'consent select_account', state, code_challenge: hashBase64(verifier), code_challenge_method: 'S256' }).toString();
       return { account: name, status: 'authorization_pending', authorizationUrl: url.href, expiresInSeconds: 900 };
     });
   }
@@ -97,8 +97,11 @@ export class CalendarOAuth {
         if (!secret(identity?.sub) || !validEmail(identity.email) || identity.email_verified !== true) throw new CalendarError('VERIFIED_IDENTITY_REQUIRED');
         const existing = existsSync(this.store.path('accounts', pending.alias + '.json')) ? this.store.account(pending.alias) : undefined;
         if (existing && existing.subject !== identity.sub) throw new CalendarError('WRONG_ACCOUNT_FOR_ALIAS');
-        if (this.store.accounts().some(a => a.alias !== pending.alias && a.subject === identity.sub)) throw new CalendarError('ACCOUNT_ALREADY_CONNECTED');
-        const refreshToken = data.refresh_token ?? (existing?.oauth.clientId === client.clientId ? existing.oauth.refreshToken : undefined);
+        if (this.store.accounts().some(a => a.alias !== pending.alias && a.subject === identity.sub) || this.store.google?.accounts().some(a => a.alias !== pending.alias && (a.email.toLowerCase() === identity.email.toLowerCase() || a.subject === identity.sub))) throw new CalendarError('ACCOUNT_ALREADY_CONNECTED');
+        const shared = this.store.google?.account(pending.alias);
+        if (shared && (shared.email.toLowerCase() !== identity.email.toLowerCase() || (shared.subject && shared.subject !== identity.sub))) throw new CalendarError('WRONG_ACCOUNT_FOR_ALIAS');
+        const previous = shared ?? existing;
+        const refreshToken = data.refresh_token ?? (previous?.oauth.clientId === client.clientId ? previous.oauth.refreshToken : undefined);
         if (!secret(refreshToken)) throw new CalendarError('REFRESH_TOKEN_REQUIRED_REAUTHORIZE');
         this.store.saveAccount({ version: 1, alias: pending.alias, provider: 'google', subject: identity.sub, email: identity.email, scopes,
           oauth: { clientId: client.clientId, refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 } });

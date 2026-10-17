@@ -12,6 +12,7 @@ import { MailStore } from '../mail/store.js';
 import { MailOAuth } from '../mail/oauth.js';
 import { MailScheduler } from '../mail/scheduler.js';
 import { calendarRuntime } from '../calendar/runtime.js';
+import { googleStore } from '../google/runtime.js';
 
 const root = process.cwd();
 const workspaceDir = resolve(process.env.WORKSPACE_DIR ?? join(root, '.local/workspace'));
@@ -19,7 +20,7 @@ const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(root, '.local/a
 const stateDir = resolve(process.env.STATE_DIR ?? join(root, '.local/state'));
 const port = Number(process.env.PORT ?? 3000);
 const publicOrigin = process.env.PUBLIC_ORIGIN ?? `http://localhost:${port}`;
-const mailStore = new MailStore(resolve(process.env.MAIL_DIR ?? join(stateDir, '..', 'mail')));
+const mailStore = new MailStore(resolve(process.env.MAIL_DIR ?? join(stateDir, '..', 'mail')), googleStore());
 const mailOAuth = new MailOAuth(mailStore, publicOrigin);
 const calendar = calendarRuntime();
 const tokenFile = process.env.ACCESS_TOKEN_FILE;
@@ -36,7 +37,7 @@ const threads = new ThreadStore(join(agentDir, 'workspace-sessions'), workspaceD
 const initialThread = await threads.initial();
 const client = new RpcClient({
   cliPath, cwd: workspaceDir,
-  env: { PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, PUBLIC_ORIGIN: publicOrigin },
+  env: { PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
   provider: selection.model?.provider,
   model: selection.model?.id,
   args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md')],
@@ -56,7 +57,7 @@ const app = createApp(workspace, {
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-    PI_CODING_AGENT_DIR: agentDir, MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, PUBLIC_ORIGIN: publicOrigin,
+    PI_CODING_AGENT_DIR: agentDir, MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin,
     PATH: `${join(root, 'node_modules/.bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
   }),
 });

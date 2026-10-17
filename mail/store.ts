@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import lockfile from 'proper-lockfile';
+import { GoogleStore } from '../google/store.js';
 import { sanitizeDiagnostic, diagnosticErrorCodes, type Diagnostic } from './diagnostics.js';
 
 export class MailError extends Error {
@@ -16,19 +17,23 @@ export function validEmail(value: unknown): value is string {
 }
 export interface OAuthClient { clientId: string; clientSecret: string; redirectUri: string }
 export interface Account {
-  alias: string; provider: 'gmail'; email: string; polling: boolean;
+  alias: string; provider: 'gmail'; email: string; polling: boolean; scopes?: string[]; subject?: string;
   oauth: { clientId: string; refreshToken: string; accessToken: string; expiresAt: number };
 }
 export interface IndexStatus { retryNotBefore?: string; failures?: number; status: 'pending' | 'indexing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; completeThrough?: string; diagnostic?: Diagnostic }
 export interface SyncStatus { indexDeferred?: boolean; completedDownloadScope?: string; failures?: number; downloadCompletedAt?: string; status: 'syncing' | 'ok' | 'failed'; attemptedAt: string; completedAt?: string; lastSuccess?: string; error?: string; phase?: 'preparing' | 'download' | 'index' | 'complete'; phaseStartedAt?: string; diagnostic?: Diagnostic }
 export class MailStore {
   readonly root: string;
-  constructor(root: string) {
+  constructor(root: string, readonly google?: GoogleStore) {
     this.root = resolve(root);
+    if (google?.root === this.root) throw new MailError('SEPARATE_GOOGLE_DIR_REQUIRED');
     for (const part of ['', 'accounts', 'pending', 'maildir', 'index', 'state', '.locks/oauth', '.locks/sync', '.locks/credentials']) mkdirSync(join(this.root, part), { recursive: true, mode: 0o700 });
   }
   path(...parts: string[]) { return join(this.root, ...parts); }
-  write(path: string, value: unknown) { this.writeText(path, JSON.stringify(value) + '\n'); }
+  write(path: string, value: unknown) {
+    if (this.google && path === this.path('oauth-client.json')) { this.google.configure(value as OAuthClient); return; }
+    this.writeText(path, JSON.stringify(value) + '\n');
+  }
   writeText(path: string, value: string) {
     const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
     try { writeFileSync(temporary, value, { mode: 0o600, flag: 'wx' }); renameSync(temporary, path); }
@@ -36,6 +41,8 @@ export class MailStore {
   }
   client(): OAuthClient {
     try {
+      const shared = this.google?.client();
+      if (shared) return { ...shared, redirectUri: '' };
       const client = JSON.parse(readFileSync(this.path('oauth-client.json'), 'utf8')) as OAuthClient;
       if (typeof client.clientId !== 'string' || !/^[a-zA-Z0-9-]+\.apps\.googleusercontent\.com$/.test(client.clientId) || typeof client.clientSecret !== 'string' || !client.clientSecret || typeof client.redirectUri !== 'string') throw new Error();
       return client;
@@ -45,11 +52,22 @@ export class MailStore {
     alias(name);
     try {
       const account = JSON.parse(readFileSync(this.path('accounts', name + '.json'), 'utf8')) as Account;
+      const shared = this.google?.account(name);
+      if (shared) {
+        if (shared.email.toLowerCase() !== account.email.toLowerCase()) throw new Error();
+        account.oauth = shared.oauth; account.scopes = shared.scopes; account.subject = shared.subject;
+      }
       if (account.alias !== name || account.provider !== 'gmail' || !validEmail(account.email) || typeof account.polling !== 'boolean' || typeof account.oauth?.refreshToken !== 'string' || !account.oauth.refreshToken || typeof account.oauth.clientId !== 'string' || typeof account.oauth.accessToken !== 'string' || !Number.isFinite(account.oauth.expiresAt)) throw new Error();
       return account;
     } catch { throw new MailError('ACCOUNT_NOT_CONNECTED'); }
   }
-  saveAccount(account: Account) { this.write(this.path('accounts', alias(account.alias) + '.json'), account); }
+  saveAccount(account: Account) {
+    if (this.google) {
+      this.google.save({ version: 1, alias: account.alias, email: account.email, subject: account.subject, scopes: account.scopes ?? ['https://mail.google.com/'], oauth: account.oauth });
+      const { oauth, scopes, ...metadata } = account;
+      this.write(this.path('accounts', alias(account.alias) + '.json'), { ...metadata, googleAccount: account.alias });
+    } else this.write(this.path('accounts', alias(account.alias) + '.json'), account);
+  }
   accounts(): Account[] {
     return readdirSync(this.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => this.account(f.slice(0, -5)));
   }
@@ -61,7 +79,7 @@ export class MailStore {
     try { return await action(); } finally { await release(); }
   }
   async locked<T>(kind: 'oauth', action: () => Promise<T>): Promise<T> {
-    return this.lock(this.path('.locks', kind), action);
+    return this.lock(this.google?.path('.locks', kind) ?? this.path('.locks', kind), action);
   }
   async withDraftLock<T>(id: string, action: () => Promise<T>): Promise<T> {
     if (!/^[a-f0-9]{32}$/.test(id)) throw new MailError('INVALID_DRAFT_ID');
@@ -70,7 +88,7 @@ export class MailStore {
     return this.lock(target, action);
   }
   async withAccountCredentialLock<T>(name: string, action: () => Promise<T>, wait = false): Promise<T> {
-    const target = this.path('.locks', 'credentials', alias(name));
+    const target = this.google?.path('.locks', 'credentials', alias(name)) ?? this.path('.locks', 'credentials', alias(name));
     mkdirSync(target, { recursive: true, mode: 0o700 });
     return this.lock(target, action, wait);
   }
@@ -84,13 +102,14 @@ export class MailStore {
       const unchanged = ifUnchanged?.();
       if (unchanged !== undefined) return unchanged;
       const accounts = this.accounts().sort((a, b) => a.alias.localeCompare(b.alias));
+      const names = [...new Set([...accounts.map(a => a.alias), ...(this.google?.accounts().map(a => a.alias) ?? [])])].sort();
       if (accounts.some(a => a.polling)) throw new MailError('PAUSE_MAIL_JOBS_FIRST');
       const acquire = async (index: number): Promise<T> => {
-        if (index === accounts.length) return action();
-        const name = accounts[index].alias;
+        if (index === names.length) return action();
+        const name = names[index];
         return this.withAccountSyncLock(name, () => this.withAccountCredentialLock(name, async () => {
           // Recheck under the credential lock: jobs enable/pause use this lock too.
-          if (this.account(name).polling) throw new MailError('PAUSE_MAIL_JOBS_FIRST');
+          if (accounts.some(a => a.alias === name) && this.account(name).polling) throw new MailError('PAUSE_MAIL_JOBS_FIRST');
           return acquire(index + 1);
         }));
       };

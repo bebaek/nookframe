@@ -170,7 +170,10 @@ standalone agenda UI. The first target is read-only Google Calendar aggregation
 across accounts. The [calendarctl foundation](calendar/README.md) provides private
 Google OAuth connection and local account status; fetching and UI are not yet
 implemented. See the [calendar MVP design](docs/calendar-mvp.md) for boundaries
-and delivery steps.
+and delivery steps. Mail and Calendar can optionally use
+[shared Google connections](google/README.md): one client setup, incremental
+consent, and one credential set per account. Existing mail installations require
+an explicit offline migration before enabling `GOOGLE_DIR`.
 
 ## Mail integration
 

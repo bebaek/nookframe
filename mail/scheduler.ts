@@ -32,7 +32,7 @@ export class MailScheduler {
         // The worker rechecks opt-in/eligibility under its account lock. Each
         // group contains mbsync/token-helper children; never relay their output.
         const child = this.launch(process.execPath, [this.cli, work, account.alias, '--scheduled'], {
-          detached: true, stdio: 'ignore', env: { ...process.env, MAIL_DIR: this.store.root, PUBLIC_ORIGIN: this.origin },
+          detached: true, stdio: 'ignore', env: { ...process.env, MAIL_DIR: this.store.root, GOOGLE_DIR: this.store.google?.root ?? '', PUBLIC_ORIGIN: this.origin },
         });
         this.children.set(account.alias, child);
         const done = () => { if (this.children.get(account.alias) === child) this.children.delete(account.alias); };

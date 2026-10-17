@@ -9,6 +9,7 @@ COPY tsconfig*.json vite.config.ts ./
 COPY server ./server
 COPY mail ./mail
 COPY calendar ./calendar
+COPY google ./google
 COPY shared ./shared
 COPY web ./web
 RUN npm run build && npm prune --omit=dev --ignore-scripts
@@ -24,6 +25,8 @@ COPY skills ./skills
 COPY --chmod=0644 mail/README.md ./docs/mail.md
 COPY --chmod=0755 scripts/mailctl /usr/local/bin/mailctl
 COPY --chmod=0755 scripts/calendarctl /usr/local/bin/calendarctl
+COPY --chmod=0755 scripts/googlectl /usr/local/bin/googlectl
+COPY --chmod=0644 google/README.md ./docs/google.md
 COPY --chmod=0644 calendar/README.md ./docs/calendar.md
 COPY --chmod=0755 scripts/pi-mail-token /usr/local/libexec/pi-mail-token
 RUN chmod -R a+rX /app/skills && mkdir -p /workspace /data/agent /data/state && chown -R node:node /workspace /data

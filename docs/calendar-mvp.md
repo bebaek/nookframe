@@ -14,7 +14,8 @@ invitations, RSVP, and event creation will be integrations, not prerequisites.
 
 Non-goals: remote writes, background polling, push notifications, Outlook, CalDAV,
 ICS subscriptions, month/week grids, conflict detection, and a generic integration
-framework. No existing mail credentials or accounts are migrated.
+framework. Existing mail credentials move only through the explicit shared Google
+migration described below; calendar data remains independent.
 
 ## Findings in the current code
 
@@ -33,10 +34,11 @@ framework. No existing mail credentials or accounts are migrated.
 - `server/main.ts` wires the mail runtime, environment, and skill explicitly.
   Calendar needs equivalent wiring, not mail operations added to chat protocol.
 
-**Reuse patterns, not mail state.** Initially keep calendar-specific OAuth and
-storage modules. Extract only small mechanical helpers if that demonstrably
-reduces duplication and existing mail tests stay unchanged. Do not make calendar
-inherit `MailStore` or use `MailOAuth.accessToken()`.
+**Share Google connections, not capability data.** Calendar does not inherit
+`MailStore` or call `MailOAuth.accessToken()`. Optional `GOOGLE_DIR` stores the
+shared Google client, credentials, scopes, and locks. Capability-specific OAuth
+flows and data stores remain separate. See [shared Google setup](../google/README.md)
+for explicit migration and operational boundaries.
 
 ## Authorization
 
@@ -45,13 +47,15 @@ Use Google's Calendar API with `calendar.calendarlist.readonly` and
 `https://www.googleapis.com/auth/`), plus `openid email`. Verify granted scopes;
 missing consent must fail clearly. Enable Calendar API in the chosen project.
 
-Register `/calendar/oauth/callback` explicitly. The same Google web application
-client may be configured privately for both capabilities, but calendar keeps its
-own configuration, pending authorizations, and tokens. No implicit import from
-mail and no mail scope in calendar consent. Record granted scopes and Google
-subject identity; bind aliases to that identity on reconnect. Local separation
-is not provider-level grant isolation: revoking a shared Google application can
-also affect mail. Do not add provider-wide revocation in this MVP.
+Register `/calendar/oauth/callback` explicitly alongside the mail callback. In
+shared mode, configure one Google web client and use one credential set per
+account. Calendar keeps its own pending authorizations and callback. Consent uses
+incremental authorization, requests the new capability scopes, and preserves
+recorded grants. Calendar-only accounts do not request mail access. Record actual
+granted scopes and Google subject identity; bind aliases to that identity on
+reconnect. Revoking the Google application can affect both capabilities. Do not
+add provider-wide revocation in this MVP. Standalone mode remains available when
+`GOOGLE_DIR` is unset; existing mail migration requires explicit offline action.
 
 Retain mail's protections: hidden TTY input, PKCE, single-use state, expiration,
 client binding, account credential locks, refresh-token rotation, no secrets in
@@ -108,7 +112,8 @@ credential lock except token refresh. Document a consistent lock order.
 
 Persist:
 
-- Private OAuth client, pending state, and account credentials.
+- Private pending state and account metadata; Google client and credentials live
+  in `GOOGLE_DIR` in shared mode (locally in standalone mode).
 - Account identity, discovered calendars, and selected source IDs.
 - A bounded, replaceable snapshot per selected calendar with its exact fetched
   window, events, fetch time, and latest attempt status. A new window replaces

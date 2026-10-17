@@ -17,6 +17,7 @@
     "test:container": "tsx --test test/container.smoke.ts",
     "mail": "tsx mail/cli.ts",
     "calendar": "tsx calendar/cli.ts",
+    "google": "tsx google/cli.ts",
     "test:mail-container": "tsx --test test/mail.container.smoke.ts"
   },
   "dependencies": {
