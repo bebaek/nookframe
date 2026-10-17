@@ -28,8 +28,9 @@ Tokens and actual granted scopes are shared; access checks remain capability-spe
 Connection status is local metadata, not proof that Google still accepts a token.
 
 A second capability still needs explicit `account connect ALIAS` consent. No jobs,
-event fetching, or mail sync are enabled by connecting. Calendar remains OAuth-only
-at this stage. Accounts cannot silently change identity or use multiple aliases for
+event fetching, or mail sync are enabled by connecting. Calendar discovery and
+explicit selection are separate commands; `calendarctl agenda` fetches events
+on demand from selected calendars. Accounts cannot silently change identity or use multiple aliases for
 the same Google identity. Migrated mail identities are initially verified-email
 bound; the next successful consent also records Google's stable subject ID.
 

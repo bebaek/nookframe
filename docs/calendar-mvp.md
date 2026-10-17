@@ -1,8 +1,11 @@
 # Calendar MVP design
 
-Status: design with the CLI/storage/OAuth foundation implemented. Calendar
-fetching, agenda, chat skill, and UI remain planned. See
-[calendarctl setup](../calendar/README.md) for the available commands.
+Status: CLI/storage/OAuth, on-demand calendar discovery/selection, live read-only
+agenda, and chat skill are implemented. See [calendarctl setup](../calendar/README.md)
+for the current commands. The cache-only agenda, explicit sync, background jobs,
+and UI below remain a future design, not the current interface. The first read
+phase deliberately uses `calendarctl agenda ALIAS --days 7` to fetch live data;
+it does not silently introduce cached coverage or background work.
 
 ## Goal and boundary
 
