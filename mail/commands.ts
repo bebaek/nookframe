@@ -68,7 +68,7 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
         const downloadStartedAt = state.phaseStartedAt;
         let downloadError: unknown;
         try {
-          await run('/usr/bin/mbsync', ['-q', '-c', files.mbsync, '-a'], { ...process.env, MAIL_DIR: store.root }, timeout);
+          await run('/usr/bin/mbsync', ['-q', '-c', files.mbsync, '-a'], { ...process.env, MAIL_DIR: store.root, GOOGLE_DIR: store.google?.root ?? '' }, timeout);
           state.downloadCompletedAt = new Date().toISOString();
           state.completedDownloadScope = DOWNLOAD_SCOPE;
         } catch (error) {
