@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash git curl c
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY --chmod=0644 package.json ./
+COPY --chmod=0644 package.json LICENSE ./
 COPY skills ./skills
 COPY --chmod=0644 mail/README.md ./docs/mail.md
 COPY --chmod=0755 scripts/mailctl /usr/local/bin/mailctl

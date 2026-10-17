@@ -1,5 +1,8 @@
 # Nookframe
 
+Licensed under the [MIT License](LICENSE). Third-party dependencies retain their
+own licenses.
+
 A single-user, persistent personal workspace with mobile web chat and a private terminal tab. One Node server owns
 one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
 Includes an optional Gmail/IMAP CLI with local drafts, explicit sending, and a
