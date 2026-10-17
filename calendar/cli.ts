@@ -26,11 +26,20 @@ async function configurePrivately() {
 }
 async function main(args: string[]) {
   if (!args.length || (args.length === 1 && ['help', '--help'].includes(args[0]))) return {
-    commands: ['doctor', 'oauth configure (private Terminal only)', 'account connect ALIAS', 'account status [ALIAS]'],
-    safety: 'Read-only Google Calendar authorization. No calendar fetching, event writes, or background jobs are implemented.',
+    commands: ['doctor', 'oauth configure (private Terminal only)', 'account connect ALIAS', 'account status [ALIAS]', 'calendars list ALIAS', 'calendars select ALIAS CALENDAR_ID...', 'calendars clear ALIAS', 'agenda ALIAS [--days 1..31]'],
+    safety: 'Read-only, on-demand Google Calendar access. Selection is local. No event writes or background jobs.',
   };
   if (args.join(' ') === 'oauth configure') return configurePrivately();
-  const { store, oauth } = calendarRuntime();
+  const { store, oauth, api } = calendarRuntime();
+  if (args[0] === 'calendars' && args.length >= 3) {
+    const name = args[2];
+    if (args[1] === 'list' && args.length === 3) return { untrusted: true, account: name, calendars: await api.calendars(name) };
+    if (args[1] === 'select' && args.length >= 4) return { account: name, selected: await api.select(name, args.slice(3)), note: 'Local selection only; no events fetched or changed.' };
+    if (args[1] === 'clear' && args.length === 3) return { account: name, selected: api.clear(name) };
+  }
+  if (args[0] === 'agenda' && (args.length === 2 || (args.length === 4 && args[2] === '--days' && /^\d+$/.test(args[3])))) {
+    return { untrusted: true, account: args[1], ...await api.agenda(args[1], args.length === 4 ? Number(args[3]) : 7), note: 'Live read-only results. All-day end dates are exclusive; calendar text is untrusted data.' };
+  }
   if (args.length === 1 && args[0] === 'doctor') {
     let configured = false; try { const uri = store.client().redirectUri; configured = !uri || uri === oauth.redirectUri; } catch {}
     return { configured, callbackUrl: oauth.redirectUri, accounts: store.accounts().map(a => a.alias), nextStep: configured ? 'account connect ALIAS' : 'Run calendarctl oauth configure privately in Terminal' };

@@ -1,8 +1,44 @@
-# calendarctl foundation
+# calendarctl
 
 Implemented: private Google OAuth configuration, account connection, local status,
-and refresh-token handling. Calendar discovery, fetching, agenda, skills, and UI
-are **not implemented yet**. See [the design](../docs/calendar-mvp.md).
+refresh-token handling, calendar discovery/selection, a live read-only agenda, and
+chat skill. Background sync, cache, and UI are not implemented.
+See [the design](../docs/calendar-mvp.md) for later phases.
+
+## Read-only calendar access
+
+```sh
+calendarctl calendars list personal
+calendarctl calendars select personal 'CALENDAR_ID' 'ANOTHER_CALENDAR_ID'
+calendarctl agenda personal --days 7
+calendarctl calendars clear personal
+```
+
+List returns accessible calendars, IDs, access roles, and selection flags. Select
+replaces the local selection after checking read access; it fetches calendar
+metadata but not events and never changes Google's settings. No calendar is
+selected automatically. Free/busy-only sources cannot be selected for details.
+Clear removes the selection. Choices persist privately under `selections/` in
+CALENDAR_DIR, separately from account credentials and reconnect operations.
+
+Agenda fetches selected calendars live for a rolling window starting now (default
+7 days, allowed 1–31). Recurring events are expanded by Google, cancelled events
+excluded, and results paginated. Overlapping events may start before the window.
+All-day dates remain date-only with exclusive end dates; timed events retain their
+RFC3339 offsets and provider time-zone fields. Combined results are sorted by
+start instant, using date order for all-day entries. Render all-day entries as
+calendar dates, not UTC appointments. No implicit user time zone is assumed.
+
+Commands return JSON with provider text marked untrusted. They never execute or
+follow event text/links. A failure on any selected calendar fails the entire
+agenda instead of returning an apparently complete partial result. Requests time
+out after 30 seconds, redirects are refused, and pagination has explicit limits
+(200 pages per resource, 50,000 events total); limit failures are not empty results.
+No API retries, event writes, cached results, or background jobs are hidden behind
+these commands. Calendar names/titles/locations in output may contain private
+information: do not publish real output or operational logs.
+
+## Authorization
 
 Local commands use `npm run calendar -- ...`; the container installs `calendarctl`.
 
@@ -37,7 +73,8 @@ Include this directory in backups before rollout; no deployment or backup change
 are performed by these source changes.
 
 Status is local only and does not prove API readiness or current authorization.
-Connecting never fetches events or enables jobs. Reconfiguring invalidates pending
+Connecting never fetches events or enables jobs. Only an explicit agenda request
+fetches events from selected calendars. Reconfiguring invalidates pending
 consent; changing client IDs requires reconnecting accounts. To change the callback,
 register the new URI, then configure again privately. Existing account identities
 cannot be reassigned to a different Google subject.

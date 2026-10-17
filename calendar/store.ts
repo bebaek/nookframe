@@ -23,7 +23,7 @@ export class CalendarStore {
   constructor(root: string, readonly google?: GoogleStore) {
     this.root = resolve(root);
     if (google?.root === this.root) throw new CalendarError('SEPARATE_GOOGLE_DIR_REQUIRED');
-    for (const part of ['', 'accounts', 'pending', '.locks/oauth', '.locks/credentials']) mkdirSync(this.path(part), { recursive: true, mode: 0o700 });
+    for (const part of ['', 'accounts', 'pending', 'selections', '.locks/oauth', '.locks/credentials']) mkdirSync(this.path(part), { recursive: true, mode: 0o700 });
   }
   path(...parts: string[]) { return join(this.root, ...parts); }
   write(path: string, value: unknown) {

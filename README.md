@@ -170,9 +170,9 @@ See [mail sending and its limits](mail/README.md#explicit-gmail-sending).
 
 Calendar is planned as an independent capability with both chat access and a
 standalone agenda UI. The first target is read-only Google Calendar aggregation
-across accounts. The [calendarctl foundation](calendar/README.md) provides private
-Google OAuth connection and local account status; fetching and UI are not yet
-implemented. See the [calendar MVP design](docs/calendar-mvp.md) for boundaries
+across accounts. [calendarctl](calendar/README.md) provides private Google OAuth
+connection, calendar discovery and explicit selection, a live read-only agenda,
+and a chat skill. Background sync, caching, and UI are not yet implemented. See the [calendar MVP design](docs/calendar-mvp.md) for boundaries
 and delivery steps. Mail and Calendar can optionally use
 [shared Google connections](google/README.md): one client setup, incremental
 consent, and one credential set per account. Existing mail installations require

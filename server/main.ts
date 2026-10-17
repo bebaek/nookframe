@@ -40,7 +40,7 @@ const client = new RpcClient({
   env: { PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
   provider: selection.model?.provider,
   model: selection.model?.id,
-  args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md')],
+  args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md')],
 });
 const workspace = new Workspace(client, stateDir, selection, threads);
 try {
