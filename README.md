@@ -304,7 +304,9 @@ Only `/workspace` and `/data` persist; bake additional installed software into
 The image includes development and homelab administration tools. See
 [development workstation setup](docs/development-workstation.md) for persistent
 home configuration, credential risks, checkout tests, and CI-based image builds.
-No credentials are baked into the image.
+No credentials are baked into the image. All npm test entry points automatically
+isolate the test environment and temporary home; use them rather than invoking
+`tsx --test` directly inside a live pod. See the workstation guide for details.
 
 The image runs as UID/GID 1000. Named volumes initialize from image directories;
 existing bind mounts instead need ownership mapped for rootless Podman's user

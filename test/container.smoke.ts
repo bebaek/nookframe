@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { containerEnvironment } from './container-runtime.js';
 
 test('isolated container: read-only non-root PTY and real offline pi TUI', { timeout: 60000 }, async () => {
   const image = process.env.TEST_IMAGE;
@@ -15,7 +16,7 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${port}`;
   const name = `pi-terminal-test-${process.pid}`;
-  const container = (...args: string[]) => execFileSync(process.env.CONTAINER_RUNTIME || 'podman', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000 });
+  const container = (...args: string[]) => execFileSync(process.env.CONTAINER_RUNTIME || 'podman', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000, env: containerEnvironment() });
   const token = 'terminal-smoke-fixture-not-a-real-token';
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
