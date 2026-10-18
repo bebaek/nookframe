@@ -4,9 +4,10 @@ export interface ChatMessage {
   text: string;
   details: string;
   error?: string;
+  photos?: { id: string; url: string }[];
 }
 export interface ThreadChoice { id: string; title: string; updatedAt: string }
-export interface ModelChoice { provider: string; id: string }
+export interface ModelChoice { provider: string; id: string; images?: boolean }
 export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {
   messages: ChatMessage[];
@@ -25,7 +26,7 @@ export interface Snapshot {
 }
 export type ClientCommand =
   | { type: 'auth'; token: string }
-  | { type: 'prompt'; id: string; text: string; threadId: string }
+  | { type: 'prompt'; id: string; text: string; threadId: string; photos?: string[] }
   | { type: 'stop'; id: string; threadId: string }
   | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
   | { type: 'new_thread'; id: string; threadId: string }

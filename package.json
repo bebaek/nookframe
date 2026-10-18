@@ -14,7 +14,7 @@
     "dev": "tsx server/main.ts",
     "test": "node scripts/run-tests.mjs test/*.test.ts",
     "test:rpc": "node scripts/run-tests.mjs test/rpc.smoke.ts",
-    "test:browser": "node scripts/run-tests.mjs test/browser.smoke.ts test/threads.browser.smoke.ts test/auth.browser.smoke.ts test/composer.browser.smoke.ts",
+    "test:browser": "node scripts/run-tests.mjs test/browser.smoke.ts test/threads.browser.smoke.ts test/auth.browser.smoke.ts test/composer.browser.smoke.ts test/photos.browser.smoke.ts",
     "test:container": "node scripts/run-tests.mjs --container test/container.smoke.ts",
     "mail": "tsx mail/cli.ts",
     "calendar": "tsx calendar/cli.ts",
@@ -25,10 +25,12 @@
     "@earendil-works/pi-coding-agent": "1.3.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "heic-decode": "2.1.0",
     "node-pty": "1.1.0",
     "proper-lockfile": "4.1.2",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "sharp": "0.35.5",
     "ws": "8.22.0"
   },
   "devDependencies": {
