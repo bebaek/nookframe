@@ -2,7 +2,6 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RpcClient } from '@earendil-works/pi-coding-agent';
-import lockfile from 'proper-lockfile';
 import { Workspace } from './workspace.js';
 import { createApp } from './http.js';
 import { resolveModelSelection } from './models.js';
@@ -28,8 +27,8 @@ if (!tokenFile) throw new Error('Set ACCESS_TOKEN_FILE to a file containing a ra
 const token = (await readFile(tokenFile, 'utf8')).trim();
 if (token.length < 32) throw new Error('Access token must be at least 32 characters');
 for (const dir of [workspaceDir, agentDir, stateDir]) await mkdir(dir, { recursive: true, mode: 0o700 });
-// Reject a second server using this profile, including during overlapping restarts.
-const releaseLock = await lockfile.lock(agentDir, { stale: 30000, update: 10000, retries: 0 });
+// Shared profiles are allowed. Same-session concurrency is not coordinated yet;
+// see docs/session-concurrency.md before running overlapping instances.
 const selection = resolveModelSelection(stateDir, agentDir, process.env);
 // The published CLI lives beside the exported bundled RPC entry, not dist/cli.js.
 const cliPath = join(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent/rpc-entry'))), 'cli.js');
@@ -48,7 +47,6 @@ try {
   await workspace.initialize();
 } catch (error) {
   await client.stop();
-  await releaseLock();
   throw error;
 }
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
@@ -69,7 +67,7 @@ async function shutdown() {
   if (closing) return;
   closing = true;
   const deadline = setTimeout(() => process.exit(1), 15000);
-  try { await app.close(); await mailScheduler.close(); await workspace.close(); await releaseLock(); }
+  try { await app.close(); await mailScheduler.close(); await workspace.close(); }
   finally { clearTimeout(deadline); process.exit(0); }
 }
 process.on('SIGTERM', () => { void shutdown(); });
