@@ -18,7 +18,7 @@ export function fakeAgent() {
     async getEntries() { return { entries: [], leafId: null }; },
     async prompt(text: string) { calls.push(text); },
     async clearQueue() { calls.push('clear'); return { steering: [], followUp: [] }; },
-    async abort() { calls.push('abort'); listener({ type: 'agent_settled' }); },
+    async abort() { calls.push('abort'); listener({ type: 'agent_settled', aborted: true }); },
     async stop() { calls.push('stop'); },
   } as unknown as Agent;
   return { agent, calls, emit: (event: unknown) => listener(event as JsonAgentSessionEvent) };
@@ -41,12 +41,14 @@ test('one run, streamed blocks, authoritative final message, settled not agent_e
     assert.equal(workspace.state.messages[0].text, 'final');
     fake.emit({ type: 'agent_end', messages: [], willRetry: true });
     assert.equal(workspace.state.busy, true);
-    fake.emit({ type: 'agent_settled' });
+    fake.emit({ type: 'agent_settled', aborted: false });
     assert.equal(workspace.state.busy, false);
     assert.equal(existsSync(join(dir, 'run-active')), false);
     await workspace.prompt('again');
     await workspace.abort();
     assert.deepEqual(fake.calls.slice(-2), ['clear', 'abort']);
+    assert.equal(workspace.state.busy, false);
+    assert.equal(existsSync(join(dir, 'run-active')), false);
   } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
