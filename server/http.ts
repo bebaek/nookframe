@@ -11,8 +11,12 @@ import { MailError } from '../mail/store.js';
 import type { CalendarOAuth } from '../calendar/oauth.js';
 import { CalendarError } from '../calendar/store.js';
 
-export function createApp(workspace: Workspace, config: { token: string; origin: string; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+import { allowedBrowserOrigins } from './origins.js';
+
+export function createApp(workspace: Workspace, config: { token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
+  const allowedOrigins = allowedBrowserOrigins(config.origin, config.allowedOrigins);
+  const acceptsOrigin = (value: string | undefined) => value !== undefined && allowedOrigins.has(value);
   const origin = new URL(config.origin).origin;
   const secure = new URL(origin).protocol === 'https:';
   // Legacy cookie name intentionally survives the Nookframe branding migration.
@@ -65,7 +69,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     if ((req.url === '/auth/login' || req.url === '/auth/logout') && req.method === 'POST') {
       res.setHeader('Content-Type', 'application/json');
       // Explicit origin check protects cookie-backed login/logout from CSRF.
-      if (req.headers.origin !== origin) { res.writeHead(403).end(JSON.stringify({ error: 'Origin rejected' })); return; }
+      if (!acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(JSON.stringify({ error: 'Origin rejected' })); return; }
       try {
         if (req.url === '/auth/login') {
           if (req.headers['content-type']?.split(';')[0] !== 'application/json') { res.writeHead(415).end(); return; }
@@ -104,7 +108,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
   server.on('upgrade', (req, socket, head) => {
-    if ((req.url !== '/ws' && !(req.url === '/terminal' && config.terminal)) || req.headers.origin !== origin || wss.clients.size >= 16) {
+    if ((req.url !== '/ws' && !(req.url === '/terminal' && config.terminal)) || !acceptsOrigin(req.headers.origin) || wss.clients.size >= 16) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));

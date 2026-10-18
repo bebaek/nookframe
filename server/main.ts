@@ -12,6 +12,7 @@ import { MailOAuth } from '../mail/oauth.js';
 import { MailScheduler } from '../mail/scheduler.js';
 import { calendarRuntime } from '../calendar/runtime.js';
 import { googleStore } from '../google/runtime.js';
+import { allowedBrowserOrigins } from './origins.js';
 
 const root = process.cwd();
 const workspaceDir = resolve(process.env.WORKSPACE_DIR ?? join(root, '.local/workspace'));
@@ -19,6 +20,7 @@ const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(root, '.local/a
 const stateDir = resolve(process.env.STATE_DIR ?? join(root, '.local/state'));
 const port = Number(process.env.PORT ?? 3000);
 const publicOrigin = process.env.PUBLIC_ORIGIN ?? `http://localhost:${port}`;
+const allowedOrigins = [...allowedBrowserOrigins(publicOrigin, process.env.ALLOWED_ORIGINS?.split(','))];
 const mailStore = new MailStore(resolve(process.env.MAIL_DIR ?? join(stateDir, '..', 'mail')), googleStore());
 const mailOAuth = new MailOAuth(mailStore, publicOrigin);
 const calendar = calendarRuntime();
@@ -51,7 +53,8 @@ try {
 }
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
 const app = createApp(workspace, {
-  token, origin: publicOrigin, mail: mailOAuth, calendar: calendar.oauth,
+  token, origin: publicOrigin, allowedOrigins,
+  mail: mailOAuth, calendar: calendar.oauth,
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),

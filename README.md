@@ -310,7 +310,8 @@ namespace. Don't use `chmod 777` as a workaround.
 | Variable | Default / purpose |
 |---|---|
 | `ACCESS_TOKEN_FILE` | Required; random access token, at least 32 characters |
-| `PUBLIC_ORIGIN` | `http://localhost:3000`; exact browser origin allowed for WebSockets |
+| `PUBLIC_ORIGIN` | `http://localhost:3000`; canonical origin for OAuth callbacks and default allowed browser origin |
+| `ALLOWED_ORIGINS` | Optional comma-separated additional browser origins for login/logout and chat/terminal WebSockets; `PUBLIC_ORIGIN` is always allowed |
 | `HOST` | `127.0.0.1` locally; `0.0.0.0` in image |
 | `PORT` | `3000` |
 | `WORKSPACE_DIR` | `.local/workspace`; `/workspace` in image |
@@ -320,6 +321,15 @@ namespace. Don't use `chmod 777` as a workaround.
 | `AGENT_PROVIDER`, `AGENT_MODEL` | Optional paired override: provider plus exact model ID; locks the web selector |
 
 Use an HTTPS reverse proxy with WebSocket upgrade support before remote access.
+`ALLOWED_ORIGINS` is an Origin-header security allowlist, not CORS configuration.
+For example, set `PUBLIC_ORIGIN=https://app.example.com` and
+`ALLOWED_ORIGINS=https://fallback.example.com` to serve both hostnames. Entries
+must be HTTP(S) origins using the same scheme as `PUBLIC_ORIGIN`, without paths,
+credentials, queries, fragments, or wildcards. Invalid entries fail startup.
+Cookies remain host-only: log in separately on each hostname. OAuth callbacks
+still use `PUBLIC_ORIGIN`; start OAuth setup on the main URL, not the fallback.
+This does not synchronize conversation state across instances.
+
 Set `PUBLIC_ORIGIN` to the exact HTTPS origin and persist workspace and application
 data. For Kubernetes, use one replica with `Recreate`, disable automounted service
 account credentials, and provision the access token through a private secret
