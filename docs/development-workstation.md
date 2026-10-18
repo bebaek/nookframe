@@ -33,6 +33,31 @@ npm test
 npm run test:browser
 ```
 
+All `npm test` / `npm run test:*` entry points now launch tests through
+`scripts/run-tests.mjs`. The launcher allowlists only tooling/environment basics,
+uses a temporary home, temp directory and XDG directories, and does not inherit
+application directories, provider keys, admin credentials or `NODE_OPTIONS`.
+Fixture subprocesses inherit that isolated environment. The launcher propagates
+exit status, forwards interruption signals, and cleans up after completion,
+failure or handled interruption (SIGKILL cannot be cleaned up).
+
+This prevents accidental live-state access such as a fixture CLI inheriting
+`GOOGLE_DIR=/data/google`. It is **not a sandbox**: test code can still explicitly
+open `/data` or use network access. Avoid direct `tsx --test` / `node --test`
+invocations in a live pod because those bypass the launcher. For a focused test:
+
+```bash
+node scripts/run-tests.mjs test/mail.test.ts
+```
+
+Browser binaries use the existing Playwright cache or configured system Chromium,
+not the disposable home. Container smoke tests use an explicit `--container` mode:
+the test process remains isolated, while `containerEnvironment()` restores the
+original Docker/Podman storage/config paths **only for runtime invocations**.
+This retains local image discovery and registry configuration without passing
+live Nookframe state variables into test subprocesses. Container runtime access
+is privileged by design; do not treat those tests as untrusted code.
+
 The application image sets `NODE_ENV=production`; explicitly include dev
 dependencies when installing a checkout. `BROWSER_EXECUTABLE_PATH` points to
 system Chromium and `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` avoids duplicate browser
