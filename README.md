@@ -294,11 +294,12 @@ podman run --name pi-workspace --rm \
 ```
 
 Use `podman stop pi-workspace` to shut down. Start the same command again to
-restore the session and files. Do not run two containers against the same volumes.
-Named volumes are retained when the container is removed. The server locks its pi
-profile against a second server; after an unclean kill the stale lock may take
-30 seconds to become reclaimable. Only `/workspace` and
-`/data` persist; bake additional installed software into `Containerfile`.
+restore the session and files. Named volumes are retained when the container is
+removed. Multiple servers may share the profile, but concurrent access to the
+same conversation is not coordinated, and an idle server can retain stale state.
+See [shared-profile concurrency and future work](docs/session-concurrency.md).
+Only `/workspace` and `/data` persist; bake additional installed software into
+`Containerfile`.
 
 The image runs as UID/GID 1000. Named volumes initialize from image directories;
 existing bind mounts instead need ownership mapped for rootless Podman's user
