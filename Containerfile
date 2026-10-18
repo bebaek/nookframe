@@ -15,8 +15,20 @@ COPY web ./web
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 FROM docker.io/library/node:24-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends bash git curl ca-certificates ripgrep python3 tini isync notmuch libsasl2-modules-kdexoauth2 \
+# Trusted personal development/admin workstation; no container daemon or sudo.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash git curl ca-certificates ripgrep python3 python3-yaml make g++ pkg-config \
+    gh openssh-client age jq rsync less procps unzip chromium \
+    tini isync notmuch libsasl2-modules-kdexoauth2 \
     && rm -rf /var/lib/apt/lists/*
+# This image is published for linux/amd64. Pin standalone tools by version and hash.
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && curl -fsSL https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl \
+    && echo '1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82  /usr/local/bin/kubectl' | sha256sum -c - \
+    && curl -fsSL https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64 -o /usr/local/bin/sops \
+    && echo 'e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  /usr/local/bin/sops' | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/kubectl /usr/local/bin/sops
+ENV BROWSER_EXECUTABLE_PATH=/usr/bin/chromium PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
