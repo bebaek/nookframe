@@ -23,7 +23,7 @@ export class CalendarStore {
   constructor(root: string, readonly google?: GoogleStore) {
     this.root = resolve(root);
     if (google?.root === this.root) throw new CalendarError('SEPARATE_GOOGLE_DIR_REQUIRED');
-    for (const part of ['', 'accounts', 'pending', 'selections', '.locks/oauth', '.locks/credentials']) mkdirSync(this.path(part), { recursive: true, mode: 0o700 });
+    for (const part of ['', 'accounts', 'pending', 'selections', 'writes', 'operations', '.locks/writes', '.locks/oauth', '.locks/credentials']) mkdirSync(this.path(part), { recursive: true, mode: 0o700 });
   }
   path(...parts: string[]) { return join(this.root, ...parts); }
   write(path: string, value: unknown) {
@@ -67,6 +67,11 @@ export class CalendarStore {
     try { release = await lockfile.lock(target, { stale: 60000, update: 10000, retries: wait ? { retries: 60, factor: 1, minTimeout: 500, maxTimeout: 500, randomize: false } : 0 }); }
     catch { throw new CalendarError('CALENDAR_BUSY'); }
     try { return await action(); } finally { await release(); }
+  }
+  withWriteLock<T>(name: string, action: () => Promise<T>) {
+    const target = this.path('.locks/writes', alias(name));
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    return this.lock(target, action);
   }
   locked<T>(action: () => Promise<T>) { return this.lock(this.google?.path('.locks/oauth') ?? this.path('.locks/oauth'), action); }
   withAccountCredentialLock<T>(name: string, action: () => Promise<T>, wait = false) {

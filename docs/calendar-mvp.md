@@ -5,7 +5,11 @@ agenda, and chat skill are implemented. See [calendarctl setup](../calendar/READ
 for the current commands. The cache-only agenda, explicit sync, background jobs,
 and UI below remain a future design, not the current interface. The first read
 phase deliberately uses `calendarctl agenda ALIAS --days 7` to fetch live data;
-it does not silently introduce cached coverage or background work.
+it does not silently introduce cached coverage or background work. A separate
+opt-in single-event CRUD phase is now implemented; see the setup guide for
+write consent, owner-calendar allowlists, immutable previews, and confirmation.
+The read-only MVP boundaries below describe the original aggregation design;
+recurring-event writes, attendees, and calendar administration remain excluded.
 
 ## Goal and boundary
 
