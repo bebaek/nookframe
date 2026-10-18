@@ -20,8 +20,8 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
     container('run', '-d', '--name', name, '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
-      '--memory=512m', '--pids-limit=256', '-p', `127.0.0.1:${port}:3000`, '--tmpfs', '/tmp',
-      '--tmpfs', '/data:rw,mode=1777', '--tmpfs', '/workspace:rw,mode=1777', '--tmpfs', '/home/node:rw,mode=1777',
+      '--memory=512m', '--pids-limit=256', '-p', `127.0.0.1:${port}:3000`, '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,mode=1777',
+      '--tmpfs', '/data:rw,mode=1777', '--tmpfs', '/workspace:rw,exec,nosuid,nodev,mode=1777', '--tmpfs', '/home/node:rw,mode=1777',
       '-e', `PUBLIC_ORIGIN=${origin}`, '-e', 'ACCESS_TOKEN_FILE=/tmp/test-token', '-e', 'PI_OFFLINE=1',
       '--entrypoint', '/bin/bash', image, '-c', `umask 077; printf %s ${token} > /tmp/test-token; exec node dist/server/main.js`);
     for (let n = 0; n < 100; n++) {
@@ -33,7 +33,7 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       'for tool in git gh node npm python3 make g++ kubectl sops ssh age jq rsync chromium; do command -v "$tool"; done; ' +
       'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
       'test "$BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium; ' +
-      'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /tmp/compiler-smoke; /tmp/compiler-smoke');
+      'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /workspace/compiler-smoke; /workspace/compiler-smoke');
     assert.match(container('exec', name, 'chromium', '--headless', '--no-sandbox', '--disable-dev-shm-usage',
       '--dump-dom', 'data:text/html,<title>workstation-smoke</title>'), /<title>workstation-smoke<\/title>/);
     browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
