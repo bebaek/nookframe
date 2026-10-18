@@ -114,6 +114,16 @@ credentials, and one agent process. Thread titles come from the first user messa
   independent terminal pi sessions. No delete, fork, or in-thread branch UI yet.
 - Include these sessions and the active-selection file in your private backups.
 
+## Photo attachments
+
+Attach phone photos (including HEIC/HEIF), paste screenshots, or drop images onto
+the composer. Up to four photos can be sent with or without a caption. Photos
+are auto-oriented, resized to 2048 pixels, converted to JPEG, and stripped of
+metadata. The selected model must support images. Uploads and history images
+require browser sign-in; sent images persist in Pi's session history.
+
+See [Chat photos](docs/photos.md) for limits, privacy, cleanup, and validation.
+
 ## Terminal tab
 
 After signing in, select **Terminal**. This opens one shared Bash PTY in the

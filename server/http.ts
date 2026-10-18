@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Workspace } from './workspace.js';
 import type { TerminalSession } from './terminal.js';
@@ -12,6 +12,7 @@ import type { CalendarOAuth } from '../calendar/oauth.js';
 import { CalendarError } from '../calendar/store.js';
 
 import { allowedBrowserOrigins } from './origins.js';
+import { PhotoStore, validPhotoId, MAX_PHOTO_BYTES, type PhotoContent } from './photos.js';
 
 export function createApp(workspace: Workspace, config: { token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
@@ -24,6 +25,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
   const cookie = (value: string, seconds: number) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${seconds}${secure ? '; Secure' : ''}`;
   const sessions = new BrowserSessions(config.token, config.stateDir);
   const browserSockets = new Map<WebSocket, string>();
+  const photos = config.stateDir ? new PhotoStore(join(config.stateDir, 'photos')) : undefined;
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -92,6 +94,30 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
         }
         res.end(JSON.stringify({ ok: true }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
+      return;
+    }
+    if (req.url === '/photos' || req.url?.startsWith('/photos/')) {
+      if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+      if (!photos) { res.writeHead(503).end(); return; }
+      try {
+        if (req.method === 'POST' && req.url === '/photos') {
+          if (!acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(); return; }
+          if (Number(req.headers['content-length'] ?? 0) > MAX_PHOTO_BYTES) { res.writeHead(413).end(); return; }
+          workspace.assertThread(req.headers['x-thread-id']);
+          const photo = await photos.upload(req);
+          workspace.assertThread(req.headers['x-thread-id']);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(photo));
+        } else if (req.method === 'GET') {
+          const id = req.url.slice('/photos/'.length);
+          if (!validPhotoId(id)) { res.writeHead(404).end(); return; }
+          const data = workspace.photo(id) ?? await photos.read(id);
+          res.setHeader('Content-Type', 'image/jpeg');
+          res.end(data);
+        } else res.writeHead(405).end();
+      } catch (error) {
+        res.writeHead(req.method === 'GET' ? 404 : 400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: req.method === 'GET' ? 'Photo unavailable' : error instanceof Error ? error.message : 'Photo upload failed' }));
+      }
       return;
     }
     if (req.method !== 'GET') { res.writeHead(405).end(); return; }
@@ -184,10 +210,23 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
         workspace.assertThread(command.threadId);
         if (command.type === 'switch_thread' && (typeof command.targetId !== 'string' || !command.targetId || command.targetId.length > 255)) throw new Error('Thread ID required');
         if (command.type === 'set_model' && (typeof command.provider !== 'string' || !command.provider || command.provider.length > 200 || typeof command.modelId !== 'string' || !command.modelId || command.modelId.length > 500)) throw new Error('Provider and model ID required');
-        if (command.type === 'prompt' && (typeof command.text !== 'string' || !command.text.trim() || command.text.length > 32000)) throw new Error('Prompt must be 1–32000 characters');
+        if (command.type === 'prompt') {
+          if (command.photos !== undefined && (!Array.isArray(command.photos) || command.photos.length > 4 || !command.photos.every(validPhotoId))) throw new Error('Attach at most four valid photos');
+          if (typeof command.text !== 'string' || (!command.text.trim() && !command.photos?.length) || command.text.length > 32000) throw new Error('Enter a message (up to 32000 characters) or attach a photo');
+        }
         commandPending = true;
         try {
-          if (command.type === 'prompt') await workspace.prompt(command.text);
+          if (command.type === 'prompt') {
+            const images: PhotoContent[] = [];
+            for (const id of command.photos ?? []) {
+              if (!photos) throw new Error('Photo uploads unavailable');
+              let data: Buffer;
+              try { data = await photos.read(id); } catch { throw new Error('Photo expired or unavailable; attach it again'); }
+              images.push({ type: 'image', data: data.toString('base64'), mimeType: 'image/jpeg' });
+            }
+            workspace.assertThread(command.threadId);
+            await workspace.prompt(command.text, images);
+          }
           else if (command.type === 'set_model') await workspace.setModel(command.provider, command.modelId);
           else if (command.type === 'new_thread') await workspace.switchThread();
           else if (command.type === 'switch_thread') await workspace.switchThread(command.targetId);
@@ -204,6 +243,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     server,
     async close() {
       unsubscribe();
+      photos?.close();
       config.terminal?.close();
       if (timer) clearTimeout(timer);
       for (const ws of wss.clients) ws.terminate();

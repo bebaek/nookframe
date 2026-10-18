@@ -4,6 +4,7 @@ import type { RpcClient, JsonAgentSessionEvent } from '@earendil-works/pi-coding
 import type { ChatMessage, Snapshot } from '../shared/protocol.js';
 import { saveModelSelection, type ModelSelection } from './models.js';
 import type { ThreadStore } from './threads.js';
+import { photoId, type PhotoContent } from './photos.js';
 
 export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
 const clip = (text: string) => text.length > 24000 ? text.slice(0, 24000) + '\n[display truncated]' : text;
@@ -32,6 +33,8 @@ export class Workspace {
   private nextId = 0;
   private blocks = new Map<number, string>();
   private marker: string;
+  private photos = new Map<string, Buffer>();
+  photo(id: string) { return this.photos.get(id); }
   private unsubscribe: () => void;
   private stopping = false;
   private heartbeat?: ReturnType<typeof setInterval>;
@@ -46,7 +49,8 @@ export class Workspace {
   }
 
   async initialize() {
-    this.state.models = (await this.agent.getAvailableModels()).map(({ provider, id }) => ({ provider, id }));
+    // RPC returns full models; Pi 1.3's ModelInfo declaration omits input.
+    this.state.models = (await this.agent.getAvailableModels()).map(model => ({ provider: model.provider, id: model.id, images: 'input' in model && Array.isArray(model.input) && model.input.includes('image') }));
     this.state.modelSource = this.selection.source;
     let state = await this.agent.getState();
     const desired = this.selection.model;
@@ -90,6 +94,7 @@ export class Workspace {
       cursor = entry.parentId;
     }
     this.state.messages = [];
+    this.photos.clear();
     this.state.liveText = '';
     this.state.tools = {};
     this.blocks.clear();
@@ -149,7 +154,23 @@ export class Workspace {
   private changed() { for (const listener of this.listeners) listener(); }
   private append(message: unknown) {
     const display = displayMessage(message, ++this.nextId);
-    if (display) this.state.messages = [...this.state.messages, display].slice(-200);
+    if (display) {
+      const content = (message as { content?: unknown }).content;
+      if (display.role === 'user' && Array.isArray(content)) {
+        const photos: { id: string; url: string }[] = [];
+        for (const block of content) {
+          if (block.type !== 'image' || block.mimeType !== 'image/jpeg' || typeof block.data !== 'string' || block.data.length > 6 * 1024 * 1024) continue;
+          const data = Buffer.from(block.data, 'base64');
+          const id = photoId(data);
+          this.photos.set(id, data);
+          photos.push({ id, url: `/photos/${id}` });
+        }
+        if (photos.length) display.photos = photos;
+      }
+      this.state.messages = [...this.state.messages, display].slice(-200);
+      const retained = new Set(this.state.messages.flatMap(m => m.photos?.map(p => p.id) ?? []));
+      for (const id of this.photos.keys()) if (!retained.has(id)) this.photos.delete(id);
+    }
   }
   private fail() {
     this.state.available = false;
@@ -229,16 +250,17 @@ export class Workspace {
     }
   }
 
-  async prompt(text: string) {
+  async prompt(text: string, images: PhotoContent[] = []) {
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('A run, model change, or thread change is already active');
+    if (images.length && !this.state.models.some(m => `${m.provider}/${m.id}` === this.state.model && m.images)) throw new Error('This model cannot accept photos. Choose an image-capable model.');
     // Slash commands / extensions need additional UI semantics; not exposed in v1.
     if (text.trimStart().startsWith('/')) throw new Error('Slash commands are not supported in this first version');
     writeFileSync(this.marker, new Date().toISOString(), { mode: 0o600 });
     this.state.busy = true;
     this.state.notice = '';
     this.changed();
-    try { await this.agent.prompt(text); }
+    try { await this.agent.prompt(text, images.length ? images : undefined); }
     catch {
       // A timeout can mean pi accepted the prompt: fail closed, never auto-resend.
       this.fail();
