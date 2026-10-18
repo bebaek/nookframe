@@ -34,7 +34,7 @@ test('origin and token checks; disconnect preserves task; reconnect snapshot; st
     async getEntries() { return { entries: [], leafId: null }; },
     async prompt() { prompts++; },
     async clearQueue() { return { steering: [], followUp: [] }; },
-    async abort() { aborts++; event({ type: 'agent_settled' }); },
+    async abort() { aborts++; event({ type: 'agent_settled', aborted: true }); },
     async stop() {},
   } as unknown as Agent;
   const workspace = new Workspace(agent, dir);

@@ -28,7 +28,7 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
       event({ type: 'tool_execution_start', toolCallId: '1', toolName: 'write', args: { path: 'hello.txt', content: 'hello from pi' } });
     },
     async clearQueue() { return { steering: [], followUp: [] }; },
-    async abort() { event({ type: 'agent_settled' }); },
+    async abort() { event({ type: 'agent_settled', aborted: true }); },
     async stop() {},
   } as unknown as Agent;
   const workspace = new Workspace(agent, dir);
