@@ -3,9 +3,10 @@ import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { CalendarError, CalendarStore, alias, secret, validEmail, type OAuthClient } from './store.js';
 
 export const CALENDAR_SCOPES = ['https://www.googleapis.com/auth/calendar.calendarlist.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly'];
+export const CALENDAR_WRITE_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
 export const CALLBACK_PATH = '/calendar/oauth/callback';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-interface Pending { version: 1; alias: string; verifier: string; expiresAt: number; clientId: string }
+interface Pending { version: 1; alias: string; verifier: string; expiresAt: number; clientId: string; write?: boolean }
 export class CalendarOAuth {
   readonly redirectUri: string;
   constructor(readonly store: CalendarStore, origin: string, private request: typeof fetch = fetch, private now: () => number = Date.now) {
@@ -26,7 +27,7 @@ export class CalendarOAuth {
     if (client.redirectUri && client.redirectUri !== this.redirectUri) throw new CalendarError('OAUTH_CALLBACK_CHANGED_RECONFIGURE');
     return client;
   }
-  connect(name: string) {
+  connect(name: string, write = false) {
     alias(name);
     return this.store.locked(async () => {
       const client = this.client();
@@ -35,9 +36,9 @@ export class CalendarOAuth {
         try { if (JSON.parse(readFileSync(this.store.path('pending', file), 'utf8')).expiresAt <= this.now()) unlinkSync(this.store.path('pending', file)); } catch { /* Never log pending state. */ }
       }
       const state = randomBytes(32).toString('base64url'), verifier = randomBytes(32).toString('base64url');
-      this.store.write(this.store.path('pending', hash(state) + '.json'), { version: 1, alias: name, verifier, expiresAt: this.now() + 900000, clientId: client.clientId } satisfies Pending);
+      this.store.write(this.store.path('pending', hash(state) + '.json'), { version: 1, alias: name, verifier, expiresAt: this.now() + 900000, clientId: client.clientId, write } satisfies Pending);
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...new Set([...CALENDAR_SCOPES, 'openid', 'email', ...(this.store.google?.account(name)?.scopes ?? [])])].join(' '), include_granted_scopes: 'true', access_type: 'offline', prompt: 'consent select_account', state, code_challenge: hashBase64(verifier), code_challenge_method: 'S256' }).toString();
+      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...new Set([...CALENDAR_SCOPES, ...(write ? [CALENDAR_WRITE_SCOPE] : []), 'openid', 'email', ...(this.store.google?.account(name)?.scopes ?? [])])].join(' '), include_granted_scopes: 'true', access_type: 'offline', prompt: 'consent select_account', state, code_challenge: hashBase64(verifier), code_challenge_method: 'S256' }).toString();
       return { account: name, status: 'authorization_pending', authorizationUrl: url.href, expiresInSeconds: 900 };
     });
   }
@@ -105,20 +106,23 @@ export class CalendarOAuth {
         if (!secret(refreshToken)) throw new CalendarError('REFRESH_TOKEN_REQUIRED_REAUTHORIZE');
         this.store.saveAccount({ version: 1, alias: pending.alias, provider: 'google', subject: identity.sub, email: identity.email, scopes,
           oauth: { clientId: client.clientId, refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 } });
+        if (pending.write && !scopes.includes(CALENDAR_WRITE_SCOPE)) throw new CalendarError('CALENDAR_WRITE_SCOPE_REQUIRED');
       }, true);
     });
   }
   // Internal only. Never expose credentials through CLI or HTTP output.
-  accessToken(name: string): Promise<string> {
+  accessToken(name: string, write = false): Promise<string> {
     return this.store.withAccountCredentialLock(name, async () => {
       const account = this.store.account(name), client = this.client();
       if (account.oauth.clientId !== client.clientId) throw new CalendarError('RECONNECT_ACCOUNT');
       this.scopes(account.scopes.join(' '));
+      if (write && !account.scopes.includes(CALENDAR_WRITE_SCOPE)) throw new CalendarError('CALENDAR_WRITE_SCOPE_REQUIRED');
       if (account.oauth.expiresAt > this.now() + 120000) return account.oauth.accessToken;
       const data = await this.exchange(client, { grant_type: 'refresh_token', refresh_token: account.oauth.refreshToken });
       if (data.scope !== undefined) account.scopes = this.scopes(data.scope);
       account.oauth = { clientId: client.clientId, refreshToken: data.refresh_token ?? account.oauth.refreshToken, accessToken: data.access_token, expiresAt: this.now() + data.expires_in * 1000 };
       this.store.saveAccount(account);
+      if (write && !account.scopes.includes(CALENDAR_WRITE_SCOPE)) throw new CalendarError('CALENDAR_WRITE_SCOPE_REQUIRED');
       return account.oauth.accessToken;
     }, true);
   }
