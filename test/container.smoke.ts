@@ -29,6 +29,13 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal((await fetch(origin + '/healthz')).status, 200);
+    container('exec', name, 'sh', '-ec',
+      'for tool in git gh node npm python3 make g++ kubectl sops ssh age jq rsync chromium; do command -v "$tool"; done; ' +
+      'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
+      'test "$BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium; ' +
+      'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /tmp/compiler-smoke; /tmp/compiler-smoke');
+    assert.match(container('exec', name, 'chromium', '--headless', '--no-sandbox', '--disable-dev-shm-usage',
+      '--dump-dom', 'data:text/html,<title>workstation-smoke</title>'), /<title>workstation-smoke<\/title>/);
     browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
     const errors: string[] = [];
