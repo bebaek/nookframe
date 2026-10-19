@@ -56,6 +56,29 @@ TypeScript backend against already-built frontend assets.
 Local execution is **not sandboxed**: pi runs as your host user. Prefer the
 container before enabling integrations or handling untrusted content.
 
+## Response images and Markdown
+
+Assistant responses render Markdown, including while streaming. Raw HTML and
+unsafe links are disabled. External images are shown as links, never loaded
+inline; the browser's same-origin image policy remains unchanged.
+
+Image blocks returned by tools (for example, reading a PNG screenshot) appear in
+the tool card. Image blocks in assistant messages also appear inline. Click an
+image to open it full size in a new tab. Delivery requires a signed-in browser;
+no filesystem paths or base64 image data are exposed in chat snapshots.
+
+Previews accept PNG, JPEG, and WebP, with at most four distinct images per message,
+6 MiB input per image, and a 32 MiB active-transcript input budget. Unsupported or
+excess blocks are omitted. A disposable decoder rejects invalid/animated images
+and inputs above 25 megapixels, strips metadata, preserves transparency, and
+bounds previews to 2048 pixels and 6 MiB. Decode failures show an unavailable
+placeholder. The preview cache is reconstructed from session image blocks on
+restart/thread switching and pruned with the displayed transcript.
+
+Markdown can embed registered `/response-images/<id>` or `/photos/<id>` URLs.
+Arbitrary local-file publishing and durable standalone artifacts are not yet
+supported; merely including a local path does not expose that file.
+
 ## Browser sign-in
 
 - Sign in once per browser with the existing access token. An upgrade from the

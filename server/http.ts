@@ -96,6 +96,20 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
       return;
     }
+    if (req.url?.startsWith('/response-images/')) {
+      if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+      if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+      const id = req.url.slice('/response-images/'.length);
+      if (!validPhotoId(id)) { res.writeHead(404).end(); return; }
+      try {
+        const data = await workspace.responseImages.read(id);
+        // Sign-out during image processing must not release image bytes.
+        if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+        res.setHeader('Content-Type', 'image/png');
+        res.end(data);
+      } catch { res.writeHead(404).end(); }
+      return;
+    }
     if (req.url === '/photos' || req.url?.startsWith('/photos/')) {
       if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
       if (!photos) { res.writeHead(503).end(); return; }
