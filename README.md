@@ -75,9 +75,58 @@ bounds previews to 2048 pixels and 6 MiB. Decode failures show an unavailable
 placeholder. The preview cache is reconstructed from session image blocks on
 restart/thread switching and pruned with the displayed transcript.
 
-Markdown can embed registered `/response-images/<id>` or `/photos/<id>` URLs.
-Arbitrary local-file publishing and durable standalone artifacts are not yet
-supported; merely including a local path does not expose that file.
+Markdown can embed registered `/response-images/<id>`, `/photos/<id>`, or
+`/artifacts/<thread-key>/<image-id>/preview` URLs. Merely including a local path
+does not expose that file.
+
+### Publish generated or downloaded images
+
+The bundled **images** skill teaches the agent to use `imagectl`, rather than
+invent filesystem-based URLs. The container installs this command for both the
+agent and terminal:
+
+```text
+imagectl context
+imagectl publish THREAD /absolute/path/to/image.png "Image description"
+```
+
+`context` returns the current thread ID and a private per-thread output directory.
+Create or explicitly download the desired image into that directory, then pass
+that exact thread ID to `publish`. The command returns JSON with ready-to-use
+`markdown`, a preview URL, a full-size view URL, and a download URL. Files outside
+that directory, symlinks, and stale thread IDs are rejected. There is no arbitrary
+filesystem endpoint or server-side URL-fetching proxy. Public image sources
+should be credited and their licenses respected.
+
+Publishing supports static PNG/JPEG/WebP up to 20 MiB and 25 megapixels. A bounded
+worker fully decodes the image before publication. The WebP preview fits within
+2048 pixels and 6 MiB, strips metadata, and preserves transparency. Full-size
+views and downloads preserve **the exact original bytes, including metadata**;
+do not publish sensitive metadata unintentionally. Markdown image clicks open
+the full-size view, while the download link returns an attachment.
+
+Artifacts are immutable copies under `STATE_DIR/image-artifacts`, associated with
+the originating thread. They survive source-file removal, reloads, thread
+switching, and service restarts. All reads require a signed-in browser; this is a
+single-user workspace, so signed-in browsers can access artifacts across
+threads. Artifacts have no automatic expiry or eviction and are limited to 256
+images and 512 MiB per slot (publication reserves worst-case preview space).
+When full, publishing fails without deleting existing images. Include this
+folder in state backups; any removal should be an explicit operator action.
+The staging/source folder `STATE_DIR/image-output` is not the durable source and
+is not included in the artifact quota. Sources may be removed after publication.
+
+For a native checkout, the equivalent command is
+`NOOKFRAME_IMAGE_STATE_DIR=/path/to/state npm run image -- context` (or `publish`
+with the same arguments). The agent and terminal receive this state-directory
+setting automatically when launched by Nookframe. This is not a filesystem
+sandbox: the agent still has its normal shell access.
+
+The public-image publishing tests use a checked-in 330 × 330 thumbnail of NASA's
+public-domain Apollo 17 photograph (38 KB), with provenance and checksum in
+`test/fixtures/images/README.md`. A compressible high-resolution image generated
+at test runtime separately verifies resizing and transparency. Tests do not
+depend on remote image availability.
 
 ## Browser sign-in
 

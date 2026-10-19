@@ -13,6 +13,7 @@ import { CalendarError } from '../calendar/store.js';
 
 import { allowedBrowserOrigins } from './origins.js';
 import { PhotoStore, validPhotoId, MAX_PHOTO_BYTES, type PhotoContent } from './photos.js';
+import { ArtifactStore } from './artifacts.js';
 
 export function createApp(workspace: Workspace, config: { token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
@@ -26,6 +27,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
   const sessions = new BrowserSessions(config.token, config.stateDir);
   const browserSockets = new Map<WebSocket, string>();
   const photos = config.stateDir ? new PhotoStore(join(config.stateDir, 'photos')) : undefined;
+  const artifacts = config.stateDir ? new ArtifactStore(config.stateDir) : undefined;
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -94,6 +96,20 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
         }
         res.end(JSON.stringify({ ok: true }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
+      return;
+    }
+    if (req.url?.startsWith('/artifacts/')) {
+      if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+      if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+      const match = /^\/artifacts\/([a-f0-9]{64})\/([a-f0-9]{64})\/(preview|full|download)$/.exec(req.url);
+      if (!artifacts || !match) { res.writeHead(404).end(); return; }
+      try {
+        const image = await artifacts.read(match[1], match[2], match[3]);
+        if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+        res.setHeader('Content-Type', image.mimeType);
+        if (match[3] === 'download') res.setHeader('Content-Disposition', `attachment; filename="${image.filename}"`);
+        res.end(image.data);
+      } catch { res.writeHead(404).end(); }
       return;
     }
     if (req.url?.startsWith('/response-images/')) {

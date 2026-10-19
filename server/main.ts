@@ -38,10 +38,10 @@ const threads = new ThreadStore(join(agentDir, 'workspace-sessions'), workspaceD
 const initialThread = await threads.initial();
 const client = new RpcClient({
   cliPath, cwd: workspaceDir,
-  env: { PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
+  env: { NOOKFRAME_IMAGE_STATE_DIR: stateDir, PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
   provider: selection.model?.provider,
   model: selection.model?.id,
-  args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md')],
+  args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')],
 });
 const workspace = new Workspace(client, stateDir, selection, threads);
 try {
@@ -58,7 +58,7 @@ const app = createApp(workspace, {
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-    PI_CODING_AGENT_DIR: agentDir, MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin,
+    NOOKFRAME_IMAGE_STATE_DIR: stateDir, PI_CODING_AGENT_DIR: agentDir, MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin,
     PATH: `${join(root, 'node_modules/.bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
   }),
 });
