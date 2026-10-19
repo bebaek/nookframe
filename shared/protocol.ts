@@ -1,4 +1,6 @@
+export interface ResponseImage { id: string; url: string; description?: string }
 export interface ToolOperation {
+  images?: ResponseImage[];
   id: string;
   name: string;
   args: Record<string, unknown>;
@@ -8,6 +10,7 @@ export interface ToolOperation {
   endedAt?: number;
 }
 export interface ChatMessage {
+  images?: ResponseImage[];
   tool?: ToolOperation;
   id: number;
   role: string;

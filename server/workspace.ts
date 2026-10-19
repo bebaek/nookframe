@@ -5,6 +5,7 @@ import type { ChatMessage, Snapshot, ToolOperation } from '../shared/protocol.js
 import { saveModelSelection, type ModelSelection } from './models.js';
 import type { ThreadStore } from './threads.js';
 import { photoId, type PhotoContent } from './photos.js';
+import { ResponseImages } from './response-images.js';
 
 export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
 const clip = (text: string) => text.length > 24000 ? text.slice(0, 24000) + '\n[display truncated]' : text;
@@ -32,6 +33,7 @@ export class Workspace {
   private nextId = 0;
   private blocks = new Map<number, string>();
   private marker: string;
+  readonly responseImages = new ResponseImages();
   private photos = new Map<string, Buffer>();
   photo(id: string) { return this.photos.get(id); }
   private unsubscribe: () => void;
@@ -94,6 +96,7 @@ export class Workspace {
     }
     this.state.messages = [];
     this.photos.clear();
+    this.responseImages.clear();
     this.state.liveText = '';
     this.state.tools = {};
     this.blocks.clear();
@@ -101,6 +104,7 @@ export class Workspace {
       if (entry.type === 'message') this.append(entry.message);
     }
     this.interruptTools();
+    this.pruneImages();
   }
 
   assertThread(id: unknown) {
@@ -151,7 +155,13 @@ export class Workspace {
   }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  private changed() { for (const listener of this.listeners) listener(); }
+  private changed() {
+    this.pruneImages();
+    for (const listener of this.listeners) listener();
+  }
+  private pruneImages() {
+    this.responseImages.retain(new Set(this.state.messages.flatMap(m => [...(m.images ?? []), ...(m.tool?.images ?? [])].map(image => image.id))));
+  }
   private operation(id: string, name: string, args: unknown = {}): ToolOperation {
     const existing = this.state.messages.find(m => m.tool?.id === id)?.tool;
     if (existing) return existing;
@@ -186,6 +196,7 @@ export class Workspace {
     if (raw?.role === 'toolResult' && raw.toolCallId) {
       const tool = this.operation(raw.toolCallId, raw.toolName ?? 'Tool');
       tool.output = contentText(raw.content);
+      tool.images = this.responseImages.collect(raw.content);
       tool.status = raw.isError ? 'failed' : 'succeeded';
       return;
     }
@@ -203,7 +214,8 @@ export class Workspace {
         }
         if (photos.length) display.photos = photos;
       }
-      if (display.text || display.photos?.length || display.error || display.role !== 'assistant') {
+      if (display.role !== 'user') display.images = this.responseImages.collect(content);
+      if (display.text || display.photos?.length || display.images?.length || display.error || display.role !== 'assistant') {
         this.state.messages = [...this.state.messages, display].slice(-200);
       }
       if (raw.role === 'assistant' && Array.isArray(raw.content)) {
@@ -213,6 +225,7 @@ export class Workspace {
       }
       const retained = new Set(this.state.messages.flatMap(m => m.photos?.map(p => p.id) ?? []));
       for (const id of this.photos.keys()) if (!retained.has(id)) this.photos.delete(id);
+      this.pruneImages();
     }
   }
   private fail() {
@@ -263,6 +276,7 @@ export class Workspace {
       case 'tool_execution_end': {
         const tool = this.operation(event.toolCallId, event.toolName);
         tool.output = contentText(event.result.content);
+        tool.images = this.responseImages.collect(event.result.content);
         tool.status = event.isError ? 'failed' : 'succeeded';
         tool.endedAt = Date.now();
         delete this.state.tools[event.toolCallId];

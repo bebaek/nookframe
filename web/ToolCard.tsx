@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ToolOperation } from '../shared/protocol';
+import { ResponseImages } from './MessageContent';
 
 function preview(tool: ToolOperation): string {
   const a = tool.args ?? {};
@@ -45,6 +46,7 @@ export function ToolCard({ tool }: { tool: ToolOperation }) {
     {text && <pre className="tool-preview">{shown.map((line, i) => <span key={i} className={tool.name === 'edit' ? line.startsWith('+ ') ? 'diff-add' : line.startsWith('- ') ? 'diff-remove' : undefined : undefined}>{line}{'\n'}</span>)}</pre>}
     {lines.length > 8 && <button type="button" className="secondary tool-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Show less' : `Show all ${lines.length} lines`}</button>}
     {(tool.name === 'edit' || tool.name === 'write') && tool.output && <details open={tool.status === 'failed' || undefined}><summary>Result</summary><pre>{tool.output}</pre></details>}
+    <ResponseImages images={tool.images} />
     <details><summary>Arguments</summary><pre>{JSON.stringify(a, null, 2)}</pre></details>
   </article>;
 }

@@ -57,6 +57,26 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
     await page.getByText('Ready', { exact: true }).waitFor();
     await page.locator('.message img').waitFor();
     const png = await sharp({ create: { width: 50, height: 40, channels: 3, background: 'blue' } }).png().toBuffer();
+    const imageBlock = { type: 'image', mimeType: 'image/png', data: png.toString('base64') };
+    event({ type: 'tool_execution_end', toolCallId: 'image-preview', toolName: 'read', isError: false, result: { content: [imageBlock] } });
+    const imageUrl = workspace.state.messages.at(-1)!.tool!.images![0].url;
+    let externalRequests = 0;
+    page.on('request', request => { if (request.url().includes('external.invalid')) externalRequests++; });
+    const markdown = `**Image result**\n\n![Blue chart](${imageUrl})\n\n![Tracking](https://external.invalid/pixel.png)\n\n[unsafe](javascript:alert(1))\n\n<img src="https://external.invalid/raw.png" onerror="alert(1)">`;
+    event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: markdown } });
+    await page.locator('.markdown strong').waitFor();
+    event({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: markdown }] } });
+    await page.waitForFunction(() => { const img = document.querySelector('.markdown img') as HTMLImageElement; return img?.complete && img.naturalWidth > 0; });
+    assert.equal(await page.locator('.markdown img').count(), 1);
+    assert.equal(await page.getByRole('link', { name: 'Tracking (external image)' }).count(), 1);
+    assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
+    assert.equal(externalRequests, 0);
+    assert.equal(await page.getByRole('link', { name: 'Open full size: Blue chart' }).getAttribute('target'), '_blank');
+    event({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: `![Missing](/response-images/${'0'.repeat(64)})` }] } });
+    await page.getByText('Missing: image unavailable', { exact: true }).waitFor();
+    await page.reload();
+    await page.getByText('Ready', { exact: true }).waitFor();
+    await page.waitForFunction(() => { const img = document.querySelector('.markdown img') as HTMLImageElement; return img?.complete && img.naturalWidth > 0; });
     await input.fill('look at these');
     for (const kind of ['paste', 'drop']) {
       await page.evaluate(({ data, kind }) => {
