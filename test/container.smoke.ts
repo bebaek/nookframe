@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { containerEnvironment } from './container-runtime.js';
+import { photoId } from '../server/photos.js';
 
 test('isolated container: read-only non-root PTY and real offline pi TUI', { timeout: 60000 }, async () => {
   const image = process.env.TEST_IMAGE;
@@ -31,7 +32,7 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     }
     assert.equal((await fetch(origin + '/healthz')).status, 200);
     container('exec', name, 'sh', '-ec',
-      'for tool in git gh node npm python3 make g++ kubectl sops ssh age jq rsync chromium; do command -v "$tool"; done; ' +
+      'for tool in git gh node npm python3 make g++ kubectl sops ssh age jq rsync chromium imagectl; do command -v "$tool"; done; ' +
       'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
       'test "$BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium; ' +
       'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /workspace/compiler-smoke; /workspace/compiler-smoke');
@@ -45,6 +46,17 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     await page.goto(origin);
     await page.getByLabel('Access token').fill(token);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByText('Ready', { exact: true }).waitFor();
+    container('exec', name, 'test', '-r', '/app/skills/images/SKILL.md');
+    const imageCli = (...args: string[]) => container('exec', '-e', 'NOOKFRAME_IMAGE_STATE_DIR=/data/state', name, 'imagectl', ...args);
+    const imageContext = JSON.parse(imageCli('context'));
+    container('cp', 'test/fixtures/images/apollo17-earth.jpg', `${name}:${imageContext.directory}/earth.jpg`);
+    const published = JSON.parse(imageCli('publish', imageContext.thread, `${imageContext.directory}/earth.jpg`, 'Earth — NASA / Apollo 17'));
+    assert.equal((await page.request.get(origin + published.previewUrl)).status(), 200);
+    const original = await page.request.get(origin + published.downloadUrl);
+    assert.equal(original.status(), 200);
+    assert.equal(photoId(await original.body()), '27f1e962b444029c0f0924161c486ccad397f4011dbeedcad3355a0049b121be');
+    assert.equal((await fetch(origin + published.downloadUrl)).status, 401);
     await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
     await page.getByText('Connected', { exact: true }).waitFor();
     await page.locator('.xterm-helper-textarea').focus();

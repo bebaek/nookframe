@@ -36,6 +36,7 @@ COPY --chmod=0644 package.json LICENSE ./
 COPY skills ./skills
 COPY --chmod=0644 mail/README.md ./docs/mail.md
 COPY --chmod=0755 scripts/mailctl /usr/local/bin/mailctl
+COPY --chmod=0755 scripts/imagectl /usr/local/bin/imagectl
 COPY --chmod=0755 scripts/calendarctl /usr/local/bin/calendarctl
 COPY --chmod=0755 scripts/googlectl /usr/local/bin/googlectl
 COPY --chmod=0644 google/README.md ./docs/google.md
