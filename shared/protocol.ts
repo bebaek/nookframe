@@ -1,4 +1,14 @@
+export interface ToolOperation {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  output: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'interrupted';
+  startedAt?: number;
+  endedAt?: number;
+}
 export interface ChatMessage {
+  tool?: ToolOperation;
   id: number;
   role: string;
   text: string;
@@ -12,7 +22,7 @@ export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {
   messages: ChatMessage[];
   liveText: string;
-  tools: Record<string, { name: string; output: string }>;
+  tools: Record<string, ToolOperation>;
   busy: boolean;
   available: boolean;
   model: string;

@@ -44,6 +44,16 @@ small { color: #9aabbe; font-size: 12px; overflow-wrap: anywhere; }
 button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #a1dfcb; outline-offset: 2px; }
 .message { margin: 0 0 20px; padding: 16px; border: 1px solid #29333f; border-radius: 12px; background: #171e26; }
 .message.user { background: #1b2a38; margin-left: 36px; }
+.tool-heading { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tool-heading strong { flex: 1; min-width: 0; font-family: monospace; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-status, .tool-card small { color: #9aabbe; font-size: 12px; }
+.tool-card small { display: block; margin-top: 8px; }
+.tool-card { padding: 12px 16px; }
+.tool-failed, .tool-interrupted { border-color: #a96b57; }
+.tool-preview { margin: 10px 0; }
+.diff-add { color: #a4e6b3; background: #193529; }
+.diff-remove { color: #ffb4b4; background: #39252b; }
+.tool-expand { font-size: 12px; padding: 5px 8px; }
 .message label { display: block; color: #9aabbe; font-size: 12px; margin-bottom: 8px; text-transform: uppercase; }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 360px; overflow-y: auto; }

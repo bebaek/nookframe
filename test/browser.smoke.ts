@@ -86,6 +86,10 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     await page.getByText('Creating your first workspace file…', { exact: true }).waitFor();
     await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement).value === '');
     assert.equal(prompts, 1);
+    await page.getByRole('article', { name: 'write running', exact: true }).waitFor();
+    assert.equal(await page.getByText('Write hello.txt', { exact: true }).isVisible(), true);
+    assert.equal(await page.locator('.tool-preview').innerText(), 'hello from pi\n');
+    assert.equal(await page.locator('.tool-card').count(), 1);
     await page.reload();
     await page.getByText('Working', { exact: true }).waitFor();
     await page.getByText('Creating your first workspace file…', { exact: true }).waitFor();
@@ -119,7 +123,7 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
       await page.waitForFunction(marker => document.querySelector('.xterm-screen')?.textContent?.includes(marker), expected);
     }
     await page.getByRole('tab', { name: 'Chat', exact: true }).click();
-    assert.equal(workspace.state.messages.length, 1, 'Terminal commands never become chat messages');
+    assert.equal(workspace.state.messages.length, 2, 'Only the user message and tool operation are in history; terminal commands never become chat messages');
     assert.equal((await page.locator('.transcript').textContent())?.includes('terminal_ready'), false);
     assert.equal(workspace.state.busy, true, 'Opening the terminal must not stop chat work');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
@@ -143,6 +147,19 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     await page.waitForFunction(() => document.querySelector('.xterm-screen')?.textContent?.includes('(auto)'));
     await page.getByRole('button', { name: 'Ctrl+D', exact: true }).click();
     await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+    await page.getByRole('article', { name: 'write interrupted', exact: true }).waitFor();
+    const edits = { path: 'example.ts', edits: [{ oldText: 'const old = 1;', newText: 'const updated = 2;' }, { oldText: 'before', newText: 'after' }] };
+    event({ type: 'tool_execution_start', toolCallId: 'edit-preview', toolName: 'edit', args: edits });
+    const editCard = page.getByRole('article', { name: 'edit running', exact: true });
+    await editCard.waitFor();
+    assert.equal(await editCard.locator('.diff-add').count(), 2);
+    assert.equal(await editCard.locator('.diff-remove').count(), 2);
+    event({ type: 'tool_execution_end', toolCallId: 'edit-preview', toolName: 'edit', isError: true, result: { content: [{ type: 'text', text: 'Replacement did not match' }] } });
+    event({ type: 'message_end', message: { role: 'toolResult', toolCallId: 'edit-preview', toolName: 'edit', isError: true, content: [{ type: 'text', text: 'Replacement did not match' }] } });
+    await page.getByRole('article', { name: 'edit failed', exact: true }).waitFor();
+    assert.equal(await page.getByText('Replacement did not match', { exact: true }).isVisible(), true);
+    assert.equal(await page.locator('.tool-card').count(), 2);
+    await page.screenshot({ path: '.local/tool-cards-mobile.png', fullPage: false });
     event({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'Reading view\n\n' + Array.from({ length: 12 }, (_, i) => `Section ${i + 1}\nThis is a synthetic long reply for checking comfortable reading. Workspace controls stay out of the way, and tool details can be opened when needed.`).join('\n\n') }] } });
     await page.getByText('Reading view', { exact: false }).waitFor();
     await page.locator('.transcript').evaluate(el => { el.scrollTop = 0; });

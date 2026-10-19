@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RpcClient, JsonAgentSessionEvent } from '@earendil-works/pi-coding-agent';
-import type { ChatMessage, Snapshot } from '../shared/protocol.js';
+import type { ChatMessage, Snapshot, ToolOperation } from '../shared/protocol.js';
 import { saveModelSelection, type ModelSelection } from './models.js';
 import type { ThreadStore } from './threads.js';
 import { photoId, type PhotoContent } from './photos.js';
@@ -17,11 +17,10 @@ export function displayMessage(message: unknown, id: number): ChatMessage | unde
   if (!message || typeof message !== 'object') return;
   const m = message as Record<string, unknown>;
   if (m.role === 'system' || m.display === false) return;
-  const calls = Array.isArray(m.content) ? m.content.filter(b => b.type === 'toolCall') : [];
   return {
     id, role: String(m.role ?? 'message'),
     text: contentText(m.content) || String(m.summary ?? m.output ?? ''),
-    details: clip(calls.map(b => `${b.name}\n${JSON.stringify(b.arguments, null, 2)}`).join('\n\n')),
+    details: '',
     error: typeof m.errorMessage === 'string' ? m.errorMessage : m.isError ? 'Tool failed' : undefined,
   };
 }
@@ -101,6 +100,7 @@ export class Workspace {
     for (const entry of branch.reverse()) {
       if (entry.type === 'message') this.append(entry.message);
     }
+    this.interruptTools();
   }
 
   assertThread(id: unknown) {
@@ -152,7 +152,43 @@ export class Workspace {
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private changed() { for (const listener of this.listeners) listener(); }
+  private operation(id: string, name: string, args: unknown = {}): ToolOperation {
+    const existing = this.state.messages.find(m => m.tool?.id === id)?.tool;
+    if (existing) return existing;
+    let budget = 48000;
+    const bounded = (value: unknown, depth = 0): unknown => {
+      if (budget <= 0) return '[display truncated]';
+      if (typeof value === 'string') {
+        const text = value.slice(0, Math.min(24000, budget));
+        budget -= text.length;
+        return text.length < value.length ? text + '\n[display truncated]' : text;
+      }
+      if (depth > 6) return '[display truncated]';
+      if (Array.isArray(value)) return value.slice(0, 100).map(v => bounded(v, depth + 1));
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 100).map(([k, v]) => [k, bounded(v, depth + 1)]));
+      return value;
+    };
+    const tool: ToolOperation = { id, name, args: bounded(args && typeof args === 'object' && !Array.isArray(args) ? args : {}) as Record<string, unknown>, output: '', status: 'pending' };
+    this.state.messages = [...this.state.messages, { id: ++this.nextId, role: 'tool', text: '', details: '', tool }].slice(-200);
+    return tool;
+  }
+  private interruptTools() {
+    for (const message of this.state.messages) {
+      if (message.tool && ['pending', 'running'].includes(message.tool.status)) {
+        message.tool.status = 'interrupted';
+        if (message.tool.startedAt) message.tool.endedAt = Date.now();
+      }
+    }
+    this.state.tools = {};
+  }
   private append(message: unknown) {
+    const raw = message as { role?: string; toolCallId?: string; toolName?: string; isError?: boolean; content?: unknown };
+    if (raw?.role === 'toolResult' && raw.toolCallId) {
+      const tool = this.operation(raw.toolCallId, raw.toolName ?? 'Tool');
+      tool.output = contentText(raw.content);
+      tool.status = raw.isError ? 'failed' : 'succeeded';
+      return;
+    }
     const display = displayMessage(message, ++this.nextId);
     if (display) {
       const content = (message as { content?: unknown }).content;
@@ -167,7 +203,14 @@ export class Workspace {
         }
         if (photos.length) display.photos = photos;
       }
-      this.state.messages = [...this.state.messages, display].slice(-200);
+      if (display.text || display.photos?.length || display.error || display.role !== 'assistant') {
+        this.state.messages = [...this.state.messages, display].slice(-200);
+      }
+      if (raw.role === 'assistant' && Array.isArray(raw.content)) {
+        for (const block of raw.content) {
+          if (block.type === 'toolCall') this.operation(block.id, block.name, block.arguments);
+        }
+      }
       const retained = new Set(this.state.messages.flatMap(m => m.photos?.map(p => p.id) ?? []));
       for (const id of this.photos.keys()) if (!retained.has(id)) this.photos.delete(id);
     }
@@ -175,6 +218,7 @@ export class Workspace {
   private fail() {
     this.state.available = false;
     this.state.busy = false;
+    this.interruptTools();
     this.state.notice = 'Pi is unavailable. The run may be interrupted; restart the service and inspect files before retrying.';
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.changed();
@@ -204,18 +248,31 @@ export class Workspace {
         this.append(event.message);
         if (event.message.role === 'assistant') { this.state.liveText = ''; this.blocks.clear(); }
         break;
-      case 'tool_execution_start':
-        this.state.tools[event.toolCallId] = { name: event.toolName, output: clip(JSON.stringify(event.args, null, 2)) };
+      case 'tool_execution_start': {
+        const tool = this.operation(event.toolCallId, event.toolName, event.args);
+        tool.status = 'running';
+        tool.startedAt = Date.now();
+        this.state.tools[event.toolCallId] = tool;
         break;
-      case 'tool_execution_update':
-        this.state.tools[event.toolCallId] = { name: event.toolName, output: contentText(event.partialResult.content) };
+      }
+      case 'tool_execution_update': {
+        const tool = this.state.tools[event.toolCallId];
+        if (tool) tool.output = contentText(event.partialResult.content);
         break;
-      case 'tool_execution_end': delete this.state.tools[event.toolCallId]; break;
+      }
+      case 'tool_execution_end': {
+        const tool = this.operation(event.toolCallId, event.toolName);
+        tool.output = contentText(event.result.content);
+        tool.status = event.isError ? 'failed' : 'succeeded';
+        tool.endedAt = Date.now();
+        delete this.state.tools[event.toolCallId];
+        break;
+      }
       case 'agent_settled':
         this.state.busy = false;
         this.state.liveText = '';
         this.blocks.clear();
-        this.state.tools = {};
+        this.interruptTools();
         if (existsSync(this.marker)) unlinkSync(this.marker);
         break;
     }

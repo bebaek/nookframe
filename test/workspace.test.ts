@@ -52,6 +52,60 @@ test('one run, streamed blocks, authoritative final message, settled not agent_e
   } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('tool cards retain arguments, reconcile results, and mark unfinished calls interrupted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-tools-test-'));
+  const fake = fakeAgent();
+  const workspace = new Workspace(fake.agent, dir);
+  try {
+    await workspace.initialize();
+    const args = { path: 'example.ts', edits: [{ oldText: 'before', newText: 'after' }] };
+    fake.emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'edit-1', name: 'edit', arguments: args }] } });
+    assert.equal(workspace.state.messages.length, 1, 'no empty assistant card');
+    fake.emit({ type: 'tool_execution_start', toolCallId: 'edit-1', toolName: 'edit', args });
+    fake.emit({ type: 'tool_execution_update', toolCallId: 'edit-1', toolName: 'edit', partialResult: { content: [{ type: 'text', text: 'editing' }] } });
+    const tool = workspace.state.messages[0].tool!;
+    assert.deepEqual(tool.args, args);
+    assert.equal(tool.output, 'editing');
+    assert.equal(tool.status, 'running');
+    fake.emit({ type: 'tool_execution_end', toolCallId: 'edit-1', toolName: 'edit', isError: false, result: { content: [{ type: 'text', text: 'Done' }] } });
+    fake.emit({ type: 'message_end', message: { role: 'toolResult', toolCallId: 'edit-1', toolName: 'edit', content: [{ type: 'text', text: 'Done' }] } });
+    assert.equal(workspace.state.messages.length, 1);
+    assert.equal(tool.status, 'succeeded');
+    assert.ok(tool.endedAt! >= tool.startedAt!);
+    assert.deepEqual(workspace.state.tools, {});
+    fake.emit({ type: 'tool_execution_start', toolCallId: 'bash-1', toolName: 'bash', args: { command: 'sleep 10' } });
+    fake.emit({ type: 'agent_settled', aborted: true });
+    assert.equal(workspace.state.messages[1].tool?.status, 'interrupted');
+    assert.equal(tool.status, 'succeeded');
+    fake.emit({ type: 'message_end', message: { role: 'toolResult', toolCallId: 'orphan', toolName: 'custom', isError: true, content: [{ type: 'text', text: 'Failed' }] } });
+    assert.equal(workspace.state.messages[2].tool?.status, 'failed');
+  } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('history reconstructs joined tool cards without inventing execution times', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-tool-history-test-'));
+  const fake = fakeAgent();
+  fake.agent.getEntries = async () => ({ leafId: 'b', entries: [
+    { id: 'a', parentId: null, type: 'message', message: { role: 'assistant', content: [
+      { type: 'toolCall', id: 'complete', name: 'read', arguments: { path: 'file.ts' } },
+      { type: 'toolCall', id: 'unfinished', name: 'custom', arguments: {} },
+    ] } },
+    { id: 'b', parentId: 'a', type: 'message', message: { role: 'toolResult', toolCallId: 'complete', toolName: 'read', content: [{ type: 'text', text: 'file content' }] } },
+  ] }) as Awaited<ReturnType<Agent['getEntries']>>;
+  const workspace = new Workspace(fake.agent, dir);
+  try {
+    await workspace.initialize();
+    assert.equal(workspace.state.messages.length, 2);
+    const tool = workspace.state.messages[0].tool!;
+    assert.equal(tool.status, 'succeeded');
+    assert.equal(tool.output, 'file content');
+    assert.equal(tool.args.path, 'file.ts');
+    assert.equal(tool.startedAt, undefined);
+    assert.equal(tool.endedAt, undefined);
+    assert.equal(workspace.state.messages[1].tool?.status, 'interrupted');
+  } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('restart exposes interruption marker without resubmitting', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-workspace-test-'));
   const first = new Workspace(fakeAgent().agent, dir);
