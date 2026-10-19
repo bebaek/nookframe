@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Snapshot, ServerMessage, ModelChoice } from '../shared/protocol';
 import './style.css';
+import { ToolCard } from './ToolCard';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
 const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ default: module.TerminalPane })));
 
@@ -191,9 +192,8 @@ function App() {
       <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
       <main className="transcript" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2><p>Try: “Create a hello.txt file in the workspace.”</p></div>}
-        {state?.messages.map(message => <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : <div className="text">{message.text}</div>}<PhotoPreviews photos={message.photos} />{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
+        {state?.messages.map(message => message.tool ? <ToolCard key={`${state.threadId}:${message.tool.id}`} tool={message.tool} /> : <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : <div className="text">{message.text}</div>}<PhotoPreviews photos={message.photos} />{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><div className="text">{state.liveText}</div></article>}
-        {Object.entries(state?.tools ?? {}).map(([id, tool]) => <article className="message" key={id}><details><summary>{tool.name} · running</summary><pre>{tool.output}</pre></details></article>)}
         <div ref={bottom} />
       </main>
       <footer onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker photos={photos} disabled={!connected || !state || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
