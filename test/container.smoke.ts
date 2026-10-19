@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { execFileSync } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { containerEnvironment } from './container-runtime.js';
 import { photoId } from '../server/photos.js';
@@ -17,7 +17,8 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${port}`;
   const name = `pi-terminal-test-${process.pid}`;
-  const container = (...args: string[]) => execFileSync(process.env.CONTAINER_RUNTIME || 'podman', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000, env: containerEnvironment() });
+  const runContainer = (args: string[], input?: Buffer) => execFileSync(process.env.CONTAINER_RUNTIME || 'podman', args, { encoding: 'utf8', input, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'], timeout: 20000, env: containerEnvironment() });
+  const container = (...args: string[]) => runContainer(args);
   const token = 'terminal-smoke-fixture-not-a-real-token';
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
@@ -50,7 +51,11 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     container('exec', name, 'test', '-r', '/app/skills/images/SKILL.md');
     const imageCli = (...args: string[]) => container('exec', '-e', 'NOOKFRAME_IMAGE_STATE_DIR=/data/state', name, 'imagectl', ...args);
     const imageContext = JSON.parse(imageCli('context'));
-    container('cp', 'test/fixtures/images/apollo17-earth.jpg', `${name}:${imageContext.directory}/earth.jpg`);
+    // docker cp cannot access this runtime tmpfs mount. Stream into an exec
+    // process instead, preserving the read-only root and non-root fixture owner.
+    runContainer(['exec', '-i', name, 'node', '-e',
+      'const fs = require("node:fs"); fs.writeFileSync(process.argv[1], fs.readFileSync(0), { mode: 0o600, flag: "wx" });',
+      `${imageContext.directory}/earth.jpg`], await readFile('test/fixtures/images/apollo17-earth.jpg'));
     const published = JSON.parse(imageCli('publish', imageContext.thread, `${imageContext.directory}/earth.jpg`, 'Earth — NASA / Apollo 17'));
     assert.equal((await page.request.get(origin + published.previewUrl)).status(), 200);
     const original = await page.request.get(origin + published.downloadUrl);
