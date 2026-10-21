@@ -13,7 +13,9 @@ import { MailScheduler } from '../mail/scheduler.js';
 import { calendarRuntime } from '../calendar/runtime.js';
 import { googleStore } from '../google/runtime.js';
 import { allowedBrowserOrigins } from './origins.js';
+import { piExtensionArgs } from './pi-extensions.js';
 
+const extensionArgs = piExtensionArgs(process.env.NOOKFRAME_PI_EXTENSIONS);
 const root = process.cwd();
 const workspaceDir = resolve(process.env.WORKSPACE_DIR ?? join(root, '.local/workspace'));
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(root, '.local/agent'));
@@ -41,7 +43,7 @@ const client = new RpcClient({
   env: { NOOKFRAME_IMAGE_STATE_DIR: stateDir, PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
   provider: selection.model?.provider,
   model: selection.model?.id,
-  args: ['--session', initialThread, '--session-dir', threads.directory, '--no-extensions', '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')],
+  args: ['--session', initialThread, '--session-dir', threads.directory, ...extensionArgs, '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')],
 });
 const workspace = new Workspace(client, stateDir, selection, threads);
 try {
