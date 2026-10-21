@@ -405,6 +405,7 @@ namespace. Don't use `chmod 777` as a workaround.
 | `PORT` | `3000` |
 | `WORKSPACE_DIR` | `.local/workspace`; `/workspace` in image |
 | `PI_CODING_AGENT_DIR` | `.local/agent`; `/data/agent` in image |
+| `NOOKFRAME_PI_EXTENSIONS` | Optional JSON array of explicitly loaded Pi extensions; defaults to `[]` |
 | `STATE_DIR` | `.local/state`; `/data/state` in image |
 | `MAIL_DIR` | Sibling `mail` directory beside `STATE_DIR`; `/data/mail` in image |
 | `AGENT_PROVIDER`, `AGENT_MODEL` | Optional paired override: provider plus exact model ID; locks the web selector |
@@ -424,6 +425,37 @@ data. For Kubernetes, use one replica with `Recreate`, disable automounted servi
 account credentials, and provision the access token through a private secret
 management system. Keep cluster manifests and operational runbooks outside this
 repository; the application does not apply cluster resources.
+
+### Explicit Pi extensions and MCP
+
+Deployments can opt in to trusted extensions for web chat:
+
+```sh
+NOOKFRAME_PI_EXTENSIONS='["builtin:mcp"]'
+```
+
+Nookframe keeps `--no-extensions` and adds one `--extension` argument per entry;
+configured/discovered extensions remain disabled. Entries may be Pi built-in names
+or extension file/directory paths. Prefer absolute paths for mounted extensions;
+relative paths resolve from `WORKSPACE_DIR`. Empty or whitespace-padded entries,
+control characters, CLI flags, and invalid JSON fail startup without echoing the
+configuration. An unset variable or `[]` preserves the default behavior.
+
+For MCP, mount a deployment-managed `mcp.json` at
+`$PI_CODING_AGENT_DIR/mcp.json` (`/data/agent/mcp.json` in the image). Keep server
+URLs and tool exposure there, and supply credentials through deployment secrets;
+Pi supports environment references such as `${HA_MCP_BEARER_TOKEN}` in headers.
+Use `direct` exposure for a small tool set. For `codemode` or `deferred` exposure,
+also explicitly load `builtin:codemode` or `builtin:tool-search`, respectively.
+Restart the Nookframe process after configuration changes. Integration manifests
+and credentials belong in the deployment repository, not this application.
+
+Extensions execute with the agent's permissions. Tool exposure is not a security
+boundary against shell access. Web chat does not support extension dialogs or
+slash commands; choose extensions that work without interactive UI. The existing
+`--no-approve` flag ignores project-local trust-gated resources; it is not a
+per-tool action approval mechanism. This variable does not configure independent
+Pi sessions launched in the terminal.
 
 ## Behavior and scope
 
@@ -456,7 +488,8 @@ repository; the application does not apply cluster resources.
   variables and recreate the container to enable web selection. An override does
   not replace an existing saved web preference. To reset a stale preference, stop
   the server and back up/remove only `$STATE_DIR/model.json`, then restart.
-- Extensions are disabled and project-local trust-gated resources are ignored.
+- Extension discovery is disabled; deployments can explicitly opt in with
+  `NOOKFRAME_PI_EXTENSIONS`. Project-local trust-gated resources are ignored.
   The bundled mail skill is explicitly loaded despite those restrictions.
   In web chat, slash commands, extension dialogs, uploads, in-session branching,
   steering/follow-up controls, and file browsing are intentionally deferred.
