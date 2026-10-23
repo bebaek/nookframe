@@ -90,11 +90,17 @@ imagectl context
 imagectl publish THREAD /absolute/path/to/image.png "Image description"
 ```
 
-`context` returns the current thread ID and a private per-thread output directory.
+Each chat agent receives a fixed `NOOKFRAME_IMAGE_THREAD_ID` binding. `context`
+returns that agent's thread ID and a private per-thread output directory; changing
+threads in a browser cannot redirect another agent's images. The shared terminal
+has no selected thread: use `imagectl --thread THREAD context` and
+`imagectl --thread THREAD publish THREAD FILE DESCRIPTION`, taking the thread
+filename from the chat URL fragment. An agent cannot override its binding with
+`--thread`. The legacy global `active-thread.json` is never used for publishing.
 Create or explicitly download the desired image into that directory, then pass
 that exact thread ID to `publish`. The command returns JSON with ready-to-use
 `markdown`, a preview URL, a full-size view URL, and a download URL. Files outside
-that directory, symlinks, and stale thread IDs are rejected. There is no arbitrary
+that directory, symlinks, and thread IDs mismatching the binding are rejected. There is no arbitrary
 filesystem endpoint or server-side URL-fetching proxy. Public image sources
 should be credited and their licenses respected.
 
@@ -117,9 +123,9 @@ The staging/source folder `STATE_DIR/image-output` is not the durable source and
 is not included in the artifact quota. Sources may be removed after publication.
 
 For a native checkout, the equivalent command is
-`NOOKFRAME_IMAGE_STATE_DIR=/path/to/state npm run image -- context` (or `publish`
-with the same arguments). The agent and terminal receive this state-directory
-setting automatically when launched by Nookframe. This is not a filesystem
+`NOOKFRAME_IMAGE_STATE_DIR=/path/to/state npm run image -- --thread THREAD context`
+(or `publish` with the same binding and arguments). Agents receive the state
+directory and thread binding automatically; terminals receive only the state directory. This is not a filesystem
 sandbox: the agent still has its normal shell access.
 
 The public-image publishing tests use a checked-in 330 × 330 thumbnail of NASA's

@@ -43,7 +43,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
   const selection = resolveModelSelection(existsSync(join(threadStateDir, 'model.json')) ? threadStateDir : stateDir, agentDir, process.env);
   const client = new RpcClient({
     cliPath, cwd: workspaceDir,
-    env: { NOOKFRAME_IMAGE_STATE_DIR: stateDir, PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
+    env: { NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
     provider: selection.model?.provider,
     model: selection.model?.id,
     args: ['--session', file, '--session-dir', threads.directory, ...extensionArgs, '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')],
@@ -59,7 +59,7 @@ const app = createApp(workspace, {
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-    NOOKFRAME_IMAGE_STATE_DIR: stateDir, PI_CODING_AGENT_DIR: agentDir, MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin,
+    NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: '', PI_CODING_AGENT_DIR: agentDir, MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin,
     PATH: `${join(root, 'node_modules/.bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
   }),
 });

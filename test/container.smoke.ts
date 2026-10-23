@@ -49,7 +49,11 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByText('Ready', { exact: true }).waitFor();
     container('exec', name, 'test', '-r', '/app/skills/images/SKILL.md');
-    const imageCli = (...args: string[]) => container('exec', '-e', 'NOOKFRAME_IMAGE_STATE_DIR=/data/state', name, 'imagectl', ...args);
+    // Exec/terminal processes have no selected chat. Bind the CLI explicitly;
+    // real chat agents receive this identity in NOOKFRAME_IMAGE_THREAD_ID.
+    const threadId = await page.getByLabel('Thread', { exact: true }).inputValue();
+    assert.ok(threadId.endsWith('.jsonl'));
+    const imageCli = (...args: string[]) => container('exec', '-e', 'NOOKFRAME_IMAGE_STATE_DIR=/data/state', name, 'imagectl', '--thread', threadId, ...args);
     const imageContext = JSON.parse(imageCli('context'));
     // docker cp cannot access this runtime tmpfs mount. Stream into an exec
     // process instead, preserving the read-only root and non-root fixture owner.

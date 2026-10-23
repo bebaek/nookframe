@@ -10,7 +10,11 @@ DO NOT render inline in Nookframe. Never invent a browser URL for a local file.
 For native checkouts without `imagectl` on PATH, invoke
 `node <this-skill-directory>/../../dist/server/image-cli.js` with the same
 arguments. Resolve that path from this skill's location, not the current working
-directory; Nookframe supplies `NOOKFRAME_IMAGE_STATE_DIR` in either environment.
+directory; Nookframe supplies `NOOKFRAME_IMAGE_STATE_DIR` and the fixed
+`NOOKFRAME_IMAGE_THREAD_ID` for each chat agent. Browser thread selection does
+not change that binding. Never override it to publish into another conversation.
+The shared terminal has no automatic thread selection; human operators must use
+`imagectl --thread THREAD context` and the same `--thread THREAD` for publishing.
 
 1. Run `imagectl context`. It returns the current `thread` and a dedicated output
    `directory`. Keep this thread ID for the entire operation.
@@ -21,7 +25,7 @@ directory; Nookframe supplies `NOOKFRAME_IMAGE_STATE_DIR` in either environment.
    (for example `curl --fail --location --max-time 60 --max-filesize 20971520`).
    The selected URL and redirect destinations must be appropriate public sources.
 3. Run `imagectl publish 'THREAD' '/absolute/path/to/image.png' 'Description'`.
-   Pass exactly the thread ID from step 1. A changed thread is rejected; do not
+   Pass exactly the thread ID from step 1. A mismatched thread is rejected; do not
    automatically publish an earlier task's image into another thread.
 4. Include the returned `markdown` verbatim in your final response. It contains
    an inline preview and a full-resolution download link. Credit public sources

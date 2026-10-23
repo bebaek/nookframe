@@ -23,7 +23,7 @@ test('public image browser: CLI publishing, inline preview, original download, t
   const history = new Map<string, any[]>();
   let event: (value: any) => void = () => {};
   let published: PublishedImage;
-  const cli = (...args: string[]) => exec(process.execPath, ['dist/server/image-cli.js', ...args], { env: { ...process.env, NOOKFRAME_IMAGE_STATE_DIR: dir } });
+  const cli = (...args: string[]) => exec(process.execPath, ['dist/server/image-cli.js', ...args], { env: { ...process.env, NOOKFRAME_IMAGE_STATE_DIR: dir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(sessionFile) } });
   const agent = {
     onEvent(fn: typeof event) { event = fn; return () => {}; },
     async getState() { return { sessionFile }; }, async getAvailableModels() { return []; },

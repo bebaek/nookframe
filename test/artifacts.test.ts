@@ -16,9 +16,8 @@ const fixture = resolve('test/fixtures/images/apollo17-earth.jpg');
 const exec = promisify(execFile);
 test('public image publishing: CLI, exact original, preview, authentication and persistence', { timeout: 30000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-artifacts-'));
-  const store = new ArtifactStore(dir);
-  await writeFile(join(dir, 'active-thread.json'), JSON.stringify({ file: 'thread-a.jsonl' }));
-  const cli = (...args: string[]) => exec(process.execPath, ['dist/server/image-cli.js', ...args], { env: { ...process.env, NOOKFRAME_IMAGE_STATE_DIR: dir } });
+  const store = new ArtifactStore(dir, 'thread-a.jsonl');
+  const cli = (...args: string[]) => exec(process.execPath, ['dist/server/image-cli.js', ...args], { env: { ...process.env, NOOKFRAME_IMAGE_STATE_DIR: dir, NOOKFRAME_IMAGE_THREAD_ID: 'thread-a.jsonl' } });
   const workspace = new Workspace({ onEvent() { return () => {}; }, async stop() {} } as unknown as Agent, dir);
   const origin = 'http://localhost:3000', token = 'artifact-test-'.repeat(4);
   let app = createApp(workspace, { token, origin, stateDir: dir, webDir: resolve('dist/web') });
@@ -71,8 +70,7 @@ test('public image publishing: CLI, exact original, preview, authentication and 
 test('high-resolution preview resizes while original dimensions and transparency are preserved', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-image-resize-'));
   try {
-    const store = new ArtifactStore(dir);
-    await writeFile(join(dir, 'active-thread.json'), JSON.stringify({ file: 'resize.jsonl' }));
+    const store = new ArtifactStore(dir, 'resize.jsonl');
     const context = await store.context();
     const source = join(context.directory, 'large.png');
     // Highly compressible runtime fixture: no large binary needs tracking.
@@ -89,14 +87,13 @@ test('high-resolution preview resizes while original dimensions and transparency
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('publishing rejects stale threads, path escapes, symlinks, invalid images and full stores', { timeout: 30000 }, async () => {
+test('publishing rejects mismatched threads, path escapes, symlinks, invalid images and full stores', { timeout: 30000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-artifact-security-'));
   try {
-    const store = new ArtifactStore(dir);
-    await assert.rejects(store.context());
-    await writeFile(join(dir, 'active-thread.json'), JSON.stringify({ file: 'thread.jsonl' }));
+    const store = new ArtifactStore(dir, 'thread.jsonl');
+    await assert.rejects(new ArtifactStore(dir).context(), /No image thread binding/);
     const context = await store.context();
-    await assert.rejects(store.publish('stale.jsonl', fixture, 'Earth'), /thread changed/);
+    await assert.rejects(store.publish('stale.jsonl', fixture, 'Earth'), /thread mismatch/);
     await assert.rejects(store.publish(context.thread, fixture, 'Earth'), /inside the directory/);
     await symlink(fixture, join(context.directory, 'linked.jpg'));
     await assert.rejects(store.publish(context.thread, join(context.directory, 'linked.jpg'), 'Earth'), /Symlinks/);
@@ -113,17 +110,46 @@ test('publishing rejects stale threads, path escapes, symlinks, invalid images a
     await assert.rejects(store.read('../escape', '0'.repeat(64), 'preview'));
     await copyFile(fixture, join(context.directory, 'earth.jpg'));
     const publishing = store.publish(context.thread, join(context.directory, 'earth.jpg'), 'Earth');
-    const rejected = assert.rejects(publishing, /thread changed/);
+    // Legacy global selection changes must not redirect or interrupt a bound agent.
     for (let i = 0; i < 100; i++) {
       if ((await readdir(store.directory)).some(name => name.startsWith('.publishing-'))) break;
       await new Promise(resolve => setTimeout(resolve, 5));
     }
     await writeFile(join(dir, 'active-thread.json'), JSON.stringify({ file: 'other-thread.jsonl' }));
-    await rejected;
-    await writeFile(join(dir, 'active-thread.json'), JSON.stringify({ file: context.thread }));
+    const published = await publishing;
+    assert.ok(published.previewUrl.includes(photoId(Buffer.from(context.thread))));
+    // Use distinct bytes for the quota check rather than the deduplicated artifact.
+    await writeFile(join(context.directory, 'earth.jpg'), await sharp(fixture).png().toBuffer());
     const key = photoId(Buffer.from(context.thread));
     for (let i = 0; i < 256; i++) await mkdir(join(store.directory, key, i.toString(16).padStart(64, '0')), { recursive: true });
     await assert.rejects(store.publish(context.thread, join(context.directory, 'earth.jpg'), 'Earth'), /store is full/);
     assert.ok(!(await readdir(store.directory)).some(name => name.startsWith('.publishing-')));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('image CLI binds concurrent agents independently and requires an explicit terminal thread', { timeout: 30000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'nookframe-image-bindings-'));
+  const cli = (thread: string | undefined, ...args: string[]) => exec(process.execPath, ['dist/server/image-cli.js', ...args], {
+    env: { ...process.env, NOOKFRAME_IMAGE_STATE_DIR: dir, NOOKFRAME_IMAGE_THREAD_ID: thread },
+  });
+  try {
+    // No active-thread.json exists, as on a fresh multitasking server.
+    const [a, b] = await Promise.all(['a.jsonl', 'b.jsonl'].map(async thread => JSON.parse((await cli(thread, 'context')).stdout)));
+    assert.equal(a.thread, 'a.jsonl'); assert.equal(b.thread, 'b.jsonl');
+    assert.notEqual(a.directory, b.directory);
+    await assert.rejects(cli(undefined, 'context'), /No image thread binding/);
+    await writeFile(join(dir, 'active-thread.json'), JSON.stringify({ file: 'wrong.jsonl' }));
+    await assert.rejects(cli(undefined, 'context'), /No image thread binding/, 'never guess from a stale global selection');
+    const terminal = JSON.parse((await cli(undefined, '--thread', b.thread, 'context')).stdout);
+    assert.deepEqual(terminal, b);
+    await assert.rejects(cli(a.thread, '--thread', b.thread, 'context'), /must match/);
+    await assert.rejects(cli('../escape.jsonl', 'context'), /Invalid image thread/);
+    for (const context of [a, b]) {
+      const source = join(context.directory, 'earth.jpg'); await copyFile(fixture, source);
+      const image = JSON.parse((await cli(context.thread, 'publish', context.thread, source, 'Earth')).stdout);
+      assert.ok(image.previewUrl.startsWith(`/artifacts/${photoId(Buffer.from(context.thread))}/`));
+      await assert.rejects(cli(context.thread, 'publish', 'wrong.jsonl', source, 'Wrong thread'), /thread mismatch/);
+    }
+    assert.deepEqual(JSON.parse((await cli(a.thread, 'context')).stdout), a);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
