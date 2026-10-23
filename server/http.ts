@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Workspace } from './workspace.js';
+import { Workspaces, type WorkspaceLease } from './workspaces.js';
 import type { TerminalSession } from './terminal.js';
 import type { ServerMessage } from '../shared/protocol.js';
 import { BrowserSessions, SESSION_SECONDS } from './browser-sessions.js';
@@ -15,8 +16,12 @@ import { allowedBrowserOrigins } from './origins.js';
 import { PhotoStore, validPhotoId, MAX_PHOTO_BYTES, type PhotoContent } from './photos.js';
 import { ArtifactStore } from './artifacts.js';
 
-export function createApp(workspace: Workspace, config: { token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
+  const pool = workspace instanceof Workspaces ? workspace : undefined;
+  const single = pool ? undefined : workspace as Workspace;
+  const selected = new Map<WebSocket, WorkspaceLease>();
+  const snapshot = (ws: WebSocket) => pool ? pool.snapshot(selected.get(ws)?.workspace) : single!.state;
   const allowedOrigins = allowedBrowserOrigins(config.origin, config.allowedOrigins);
   const acceptsOrigin = (value: string | undefined) => value !== undefined && allowedOrigins.has(value);
   const origin = new URL(config.origin).origin;
@@ -151,7 +156,7 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
       return;
     }
     if (req.method !== 'GET') { res.writeHead(405).end(); return; }
-    if (req.url === '/healthz') { res.writeHead(workspace.state.available ? 200 : 503).end(workspace.state.available ? 'ok' : 'unavailable'); return; }
+    if (req.url === '/healthz') { const available = pool ? true : single!.state.available; res.writeHead(available ? 200 : 503).end(available ? 'ok' : 'unavailable'); return; }
     const path = req.url === '/' ? '/index.html' : req.url ?? '';
     // Serve only build artifacts, never the workspace, config, or arbitrary paths.
     if (path !== '/index.html' && !/^\/assets\/[a-zA-Z0-9_.-]+\.(js|css)$/.test(path)) { res.writeHead(404).end(); return; }
@@ -177,17 +182,25 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
     if (ws.bufferedAmount > 2 * 1024 * 1024) { ws.close(1013, 'Reconnect to refresh'); return; }
     ws.send(JSON.stringify(message));
   }
-  // Coalesce streaming updates; every browser receives a replaceable snapshot.
+  // Coalesce streams; only subscribers receive conversation snapshots.
+  // Other clients receive the shared catalog/running indicators.
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const unsubscribe = workspace.subscribe(() => {
+  const dirty = new Set<Workspace>();
+  const unsubscribe = workspace.subscribe((changed?: Workspace) => {
+    if (changed) dirty.add(changed);
     timer ??= setTimeout(() => {
       timer = undefined;
-      for (const ws of authenticated) send(ws, { type: 'snapshot', state: workspace.state });
+      for (const ws of authenticated) {
+        if (!pool || dirty.has(selected.get(ws)?.workspace!)) send(ws, { type: 'snapshot', state: snapshot(ws) });
+        else send(ws, { type: 'threads', threads: pool.snapshot().threads });
+      }
+      dirty.clear();
     }, 50);
   });
   wss.on('connection', (ws, request) => {
     const isTerminal = request.url === '/terminal';
     let authorized = false;
+    let authenticating = false;
     let detachTerminal: (() => void) | undefined;
     const timeout = setTimeout(() => ws.close(1008, 'Authentication required'), 5000);
     let commandPending = false;
@@ -200,13 +213,14 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
       else { alive = false; ws.ping(); }
     }, 30000);
     ws.on('error', () => { /* Socket close cleans up; never stop the agent. */ });
-    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); browserSockets.delete(ws); detachTerminal?.(); });
+    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); browserSockets.delete(ws); selected.get(ws)?.release(); selected.delete(ws); detachTerminal?.(); });
     ws.on('message', async (raw, binary) => {
       let id: string | undefined;
       try {
         if (binary) throw new Error('Text JSON required');
         const command = JSON.parse(raw.toString());
         if (!command || typeof command !== 'object') throw new Error('Invalid command');
+        if (authenticating) throw new Error('Authentication is pending');
         if (!authorized) {
           const session = sessions.identify(request.headers.cookie, cookieName);
           // Raw token frames remain available to trusted CLI clients. Browsers
@@ -215,13 +229,25 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
             ws.close(1008, 'Sign-in required; session expired or cookies unavailable'); return;
           }
           if (session) browserSockets.set(ws, session);
-          authorized = true;
+          authenticating = true;
           clearTimeout(timeout);
           if (isTerminal) detachTerminal = config.terminal!.attach(event => send(ws, event));
           else {
+            if (pool) {
+              try {
+                if (command.threadId !== undefined && (typeof command.threadId !== 'string' || command.threadId.length > 255)) throw new Error('Invalid thread');
+                const lease = await pool.connect(command.threadId);
+                if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
+                selected.set(ws, lease);
+              } catch (error) {
+                send(ws, { type: 'error', message: error instanceof Error ? error.message : 'Thread unavailable' });
+              }
+            }
+            if (ws.readyState !== WebSocket.OPEN) return;
             authenticated.add(ws);
-            send(ws, { type: 'snapshot', state: workspace.state });
+            send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
           }
+          authorized = true; authenticating = false;
           return;
         }
         const session = browserSockets.get(ws);
@@ -237,7 +263,9 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
         id = command.id;
         if (commandPending) throw new Error('A command is pending');
         if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread'].includes(command.type)) throw new Error('Unsupported command');
-        workspace.assertThread(command.threadId);
+        const current = selected.get(ws)?.workspace ?? single;
+        if (pool && command.threadId !== (current?.state.threadId ?? '')) throw new Error('The selected thread changed. Review it before retrying.');
+        current?.assertThread(command.threadId);
         if (command.type === 'switch_thread' && (typeof command.targetId !== 'string' || !command.targetId || command.targetId.length > 255)) throw new Error('Thread ID required');
         if (command.type === 'set_model' && (typeof command.provider !== 'string' || !command.provider || command.provider.length > 200 || typeof command.modelId !== 'string' || !command.modelId || command.modelId.length > 500)) throw new Error('Provider and model ID required');
         if (command.type === 'prompt') {
@@ -254,14 +282,21 @@ export function createApp(workspace: Workspace, config: { token: string; origin:
               try { data = await photos.read(id); } catch { throw new Error('Photo expired or unavailable; attach it again'); }
               images.push({ type: 'image', data: data.toString('base64'), mimeType: 'image/jpeg' });
             }
-            workspace.assertThread(command.threadId);
-            await workspace.prompt(command.text, images);
+            if (!current) throw new Error('Select a thread first');
+            current.assertThread(command.threadId);
+            await current.prompt(command.text, images);
           }
-          else if (command.type === 'set_model') await workspace.setModel(command.provider, command.modelId);
-          else if (command.type === 'new_thread') await workspace.switchThread();
-          else if (command.type === 'switch_thread') await workspace.switchThread(command.targetId);
-          else await workspace.abort();
-          send(ws, { type: 'snapshot', state: workspace.state });
+          else if (command.type === 'new_thread' || command.type === 'switch_thread') {
+            if (pool) {
+              const lease = await pool.connect(command.targetId, command.type === 'new_thread');
+              if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
+              selected.get(ws)?.release(); selected.set(ws, lease);
+            } else await single!.switchThread(command.type === 'new_thread' ? undefined : command.targetId);
+          }
+          else if (!current) throw new Error('Select a thread first');
+          else if (command.type === 'set_model') await current.setModel(command.provider, command.modelId);
+          else await current.abort();
+          send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
           send(ws, { type: 'ack', id: command.id });
         } finally { commandPending = false; }
       } catch (error) {

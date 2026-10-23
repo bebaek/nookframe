@@ -17,7 +17,7 @@ Use **Attach photos** (phone library or desktop picker), **Camera** on touch dev
 
 Pi receives standard image content blocks and persists processed images in its session JSONL. Sessions are the durable source for sent photos; deleting an upload-cache entry does not delete its session copy. History rebuilds image references from the active branch and serves images for the displayed last 200 messages without embedding base64 in browser snapshots. Existing session backups therefore contain sent photos. No new public file-serving route or third-party image service is used.
 
-Photo upload requires a valid browser session, an allowed Origin, and a matching active-thread ID. Image downloads require a valid browser session. Both use `Cache-Control: no-store`. All signed-in users share this workspace's access, as with chat itself.
+Photo upload requires a valid browser session, an allowed Origin, and a valid thread ID in the workspace catalog. Image downloads require a valid browser session. Both use `Cache-Control: no-store`. All signed-in users share this workspace's access, as with chat itself.
 
 Draft photos stay associated with their thread in the current browser page. Upload/send errors retain the draft for review. Drafts are not persisted across page reloads, and uncertain sends are never automatically replayed. Expired uploads must be removed and attached again.
 

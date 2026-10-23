@@ -72,7 +72,7 @@ there is no automatic fallback to an in-cluster service-account credential.
 Use one shared checkout from one instance at a time. For simultaneous work, use
 separate Git worktrees and branches; do not run concurrent Git/index operations
 or dependency installs in one checkout. Chat/session concurrency is a separate
-[known limitation](session-concurrency.md).
+[thread ownership and lifecycle concern](session-concurrency.md).
 
 ## Builds and deployment
 

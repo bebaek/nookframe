@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { Snapshot, ServerMessage, ModelChoice } from '../shared/protocol';
+import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice } from '../shared/protocol';
 import './style.css';
 import { ToolCard } from './ToolCard';
 import { MessageContent, ResponseImages } from './MessageContent';
@@ -14,6 +14,8 @@ function App() {
   const [authPending, setAuthPending] = useState(false);
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<Snapshot>();
+  const [unread, setUnread] = useState<Set<string>>(new Set());
+  const catalog = useRef<ThreadChoice[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const draft = drafts[state?.threadId ?? ''] ?? '';
   const [photoDrafts, setPhotoDrafts] = useState<Record<string, DraftPhoto[]>>({});
@@ -25,6 +27,7 @@ function App() {
   const [tab, setTab] = useState<'chat' | 'terminal'>('chat');
   const [terminalOpened, setTerminalOpened] = useState(false);
   const socket = useRef<WebSocket | null>(null);
+  const activeThread = useRef(new URLSearchParams(location.hash.slice(1)).get('thread') ?? undefined);
   const sent = useRef<{ id: string; text?: string; threadId: string; photos?: string[] } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -35,6 +38,7 @@ function App() {
     setTerminalOpened(false); setTab('chat'); setToken('');
     sent.current = null; setPending(false);
     upload.current?.abort(); setPhotoDrafts({});
+    catalog.current = []; setUnread(new Set());
   }
 
   useEffect(() => {
@@ -72,15 +76,35 @@ function App() {
     let disposed = false;
     let retry: ReturnType<typeof setTimeout>;
     let delay = 1000;
+    function trackThreads(threads: ThreadChoice[], selected: string | undefined) {
+      const previous = new Map(catalog.current.map(thread => [thread.id, thread]));
+      catalog.current = threads;
+      setUnread(current => {
+        const next = new Set(current);
+        for (const thread of threads) {
+          const old = previous.get(thread.id);
+          if (thread.id === selected) next.delete(thread.id);
+          else if (old && (old.updatedAt !== thread.updatedAt || (old.busy && !thread.busy))) next.add(thread.id);
+        }
+        return next;
+      });
+    }
     function connect() {
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
       socket.current = ws;
-      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth' })); };
+      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth', threadId: activeThread.current })); };
       ws.onmessage = event => {
         if (disposed) return;
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'snapshot') {
+          if (activeThread.current !== undefined && message.state.threadId !== activeThread.current && !message.selected) return;
+          activeThread.current = message.state.threadId || undefined;
+          history.replaceState(null, '', `${location.pathname}${location.search}${message.state.threadId ? `#thread=${encodeURIComponent(message.state.threadId)}` : ''}`);
+          trackThreads(message.state.threads, activeThread.current);
           setConnected(true); delay = 1000; setState(message.state);
+        } else if (message.type === 'threads') {
+          trackThreads(message.threads, activeThread.current);
+          setState(current => current ? { ...current, threads: message.threads } : current);
         } else if (message.type === 'ack' && message.id === sent.current?.id) {
           const { text: acknowledgedText, threadId, photos: acknowledgedPhotos } = sent.current;
           if (acknowledgedPhotos) setPhotoDrafts(current => ({ ...current, [threadId]: (current[threadId] ?? []).filter(p => !acknowledgedPhotos.includes(p.key)) }));
@@ -171,13 +195,14 @@ function App() {
     {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
       <section id="workspace-controls" popover="auto" aria-label="Workspace controls" className="workspace-controls">
       <div className="controls-heading"><h2>Workspace controls</h2><button type="button" className="secondary" aria-label="Close controls" popoverTarget="workspace-controls" popoverTargetAction="hide">×</button></div>
-      {state?.threadId && <section className="thread-picker">
+      {state && <section className="thread-picker">
         <label htmlFor="thread">Thread</label>
-        <select id="thread" value={state.threadId} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
-          {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
+        <select id="thread" value={state.threadId} disabled={!connected || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
+          {!state.threadId && <option value="" disabled>Choose a thread</option>}
+          {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.busy ? 'Working · ' : ''}{unread.has(thread.id) ? 'New · ' : ''}{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
         </select>
-        <button type="button" disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
-        <small>{state.threadChanging ? 'Switching…' : 'Shared active thread across browsers · separate histories, same files'}</small>
+        <button type="button" disabled={!connected || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
+        <small>{state.threadChanging ? 'Switching…' : 'Selected in this tab only · other threads keep running · same files'}</small>
       </section>}
       {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} onChange={e => {
         const choice = state.models.find(m => `${m.provider}/${m.id}` === e.target.value);
@@ -185,7 +210,7 @@ function App() {
       }}>
         {!state.models.some(m => `${m.provider}/${m.id}` === state.model) && <option value={state.model}>{state.model}</option>}
         {state.models.map(m => <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.provider}/{m.id}</option>)}
-      </select><small>{state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for future sessions and restarts' : 'Pi default · select a model to save your preference'}</small></section>}
+      </select><small>{state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for this thread and restarts' : 'Pi default · select a model to save your preference'}</small></section>}
       <p className="controls-note">One workspace · last 200 messages in this thread</p>
       <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>
       </section>
