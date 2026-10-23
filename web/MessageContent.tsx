@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ResponseImage } from '../shared/protocol';
 
 export function inlineImageUrl(url: string) {
@@ -21,7 +22,8 @@ export function ResponseImages({ images }: { images?: ResponseImage[] }) {
   return images?.length ? <div className="response-images">{images.map(image => <ImagePreview key={image.id} url={image.url} description={image.description || 'Response image'} />)}</div> : null;
 }
 export function MessageContent({ text }: { text: string }) {
-  return <div className="markdown"><Markdown skipHtml urlTransform={safeLink} components={{
+  return <div className="markdown"><Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={safeLink} components={{
+    table: ({ children }) => <div className="markdown-table" role="region" aria-label="Markdown table" tabIndex={0}><table>{children}</table></div>,
     a: ({ href, children }) => href ? <a href={href} target="_blank" rel="noreferrer">{children}</a> : <span>{children}</span>,
     img: ({ src, alt }) => <ImagePreview key={typeof src === 'string' ? src : ''} url={typeof src === 'string' ? src : ''} description={alt || 'Response image'} />,
   }}>{text}</Markdown></div>;

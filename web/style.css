@@ -4,6 +4,14 @@
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 .markdown pre { overflow-x: auto; white-space: pre; }
+.markdown-table { max-width: 100%; overflow-x: auto; margin: 1em 0; }
+.markdown-table:focus-visible { outline: 2px solid #9dcfff; outline-offset: 2px; }
+.markdown table { border-collapse: collapse; width: 100%; }
+.markdown th, .markdown td { border: 1px solid #46576a; padding: 8px 12px; text-align: left; min-width: 6rem; }
+.markdown [align="center"] { text-align: center; }
+.markdown [align="right"] { text-align: right; }
+.markdown th { background: #29333f; }
+.markdown tbody tr:nth-child(even) { background: #1b2a38; }
 .markdown a, .response-images a { color: #9dcfff; }
 .response-images { display: flex; flex-wrap: wrap; gap: 12px; }
 .response-image { display: inline-flex; flex-direction: column; max-width: 100%; gap: 4px; }
