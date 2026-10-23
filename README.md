@@ -415,9 +415,18 @@ namespace. Don't use `chmod 777` as a workaround.
 | `WORKSPACE_DIR` | `.local/workspace`; `/workspace` in image |
 | `PI_CODING_AGENT_DIR` | `.local/agent`; `/data/agent` in image |
 | `NOOKFRAME_PI_EXTENSIONS` | Optional JSON array of explicitly loaded Pi extensions; defaults to `[]` |
+| `NOOKFRAME_PROMPT_EXAMPLES` | Optional JSON array of new-thread prompt examples; defaults to the hello.txt example; `[]` hides examples |
 | `STATE_DIR` | `.local/state`; `/data/state` in image |
 | `MAIL_DIR` | Sibling `mail` directory beside `STATE_DIR`; `/data/mail` in image |
 | `AGENT_PROVIDER`, `AGENT_MODEL` | Optional paired override: provider plus exact model ID; locks the web selector |
+
+New-thread examples are operator-authored plain text, not automatic skill discovery.
+For example, set `NOOKFRAME_PROMPT_EXAMPLES='["Summarize my unread mail.","What is on my calendar today?","Generate an image of a cozy reading corner."]'`.
+Up to 8 non-empty strings of 500 characters each are accepted; invalid configuration
+fails startup without echoing its contents. Restart after changing the setting.
+Examples only appear in empty threads. Clicking one fills and focuses the composer
+without sending, and never replaces an existing draft or attached photos. They do
+not enable skills or grant permissions; choose examples supported by your instance.
 
 Use an HTTPS reverse proxy with WebSocket upgrade support before remote access.
 `ALLOWED_ORIGINS` is an Origin-header security allowlist, not CORS configuration.

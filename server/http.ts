@@ -16,12 +16,17 @@ import { allowedBrowserOrigins } from './origins.js';
 import { PhotoStore, validPhotoId, MAX_PHOTO_BYTES, type PhotoContent } from './photos.js';
 import { ArtifactStore } from './artifacts.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+import { defaultPromptExamples } from './prompt-examples.js';
+
+export function createApp(workspace: Workspace | Workspaces, config: { promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   const single = pool ? undefined : workspace as Workspace;
   const selected = new Map<WebSocket, WorkspaceLease>();
-  const snapshot = (ws: WebSocket) => pool ? pool.snapshot(selected.get(ws)?.workspace) : single!.state;
+  const snapshot = (ws: WebSocket) => ({
+    ...(pool ? pool.snapshot(selected.get(ws)?.workspace) : single!.state),
+    promptExamples: config.promptExamples ?? defaultPromptExamples,
+  });
   const allowedOrigins = allowedBrowserOrigins(config.origin, config.allowedOrigins);
   const acceptsOrigin = (value: string | undefined) => value !== undefined && allowedOrigins.has(value);
   const origin = new URL(config.origin).origin;
