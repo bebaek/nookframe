@@ -27,7 +27,10 @@ if (input.toString('ascii', 4, 8) === 'ftyp' && ['heic', 'heix', 'hevc', 'hevx',
   const metadata = await image.metadata();
   if (!['jpeg', 'png', 'webp'].includes(metadata.format ?? '') || (metadata.pages ?? 1) > 1) throw new Error('Unsupported image');
 }
+const dimensions = await image.metadata();
+const resized = Math.max(dimensions.width ?? 0, dimensions.height ?? 0) > 2048;
 // HEIF transforms are applied by libheif; rotate applies EXIF for other formats.
 const output = await image.rotate().resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).flatten({ background: '#ffffff' }).jpeg({ quality: 90 }).toBuffer();
 if (output.length > 4 * 1024 * 1024) throw new Error('Processed image too large');
 await writeFile(process.argv[3], output, { mode: 0o600 });
+process.stdout.write(JSON.stringify({ resized }));

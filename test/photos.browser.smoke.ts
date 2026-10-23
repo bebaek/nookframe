@@ -63,9 +63,44 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
     let externalRequests = 0;
     page.on('request', request => { if (request.url().includes('external.invalid')) externalRequests++; });
     const markdown = `**Image result**\n\n![Blue chart](${imageUrl})\n\n![Tracking](https://external.invalid/pixel.png)\n\n[unsafe](javascript:alert(1))\n\n<img src="https://external.invalid/raw.png" onerror="alert(1)">`;
-    event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: markdown } });
-    await page.locator('.markdown strong').waitFor();
-    event({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: markdown }] } });
+    const tableMarkdown = '\n\n| Left | Center | Right | Empty | Unicode | Wide |\n| :--- | :---: | ---: | --- | --- | --- |\n| **Bold** | `code` | 456 | | 한글 🎉 | Long text that should wrap naturally in a table cell. |\n| Left \\| Right | [Example](https://example.com) | 23 | | 日本語 | More text |';
+    const content = markdown + tableMarkdown;
+    let releaseImage!: () => void;
+    const imageGate = new Promise<void>(resolve => { releaseImage = resolve; });
+    await page.route(`**${imageUrl}`, async route => {
+      await imageGate;
+      await route.continue();
+    });
+    event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: content } });
+    await page.locator('.markdown strong').filter({ hasText: 'Image result' }).waitFor();
+    await page.getByRole('table').waitFor();
+    const loading = page.locator('.markdown .image-loading');
+    await loading.waitFor();
+    assert.equal(await loading.evaluate(el => getComputedStyle(el).position), 'absolute');
+    releaseImage();
+    await loading.waitFor({ state: 'hidden' });
+    const streamedImage = await page.locator('.markdown img').elementHandle();
+    const tableY = await page.getByRole('table').evaluate(el => el.getBoundingClientRect().top - el.closest('.markdown')!.getBoundingClientRect().top);
+    event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '\n\nImage rendering complete.' } });
+    await page.getByText('Image rendering complete.', { exact: true }).waitFor();
+    assert.equal(await page.locator('.markdown img').evaluate((el, original) => el === original, streamedImage), true);
+    assert.equal(await loading.count(), 0);
+    assert.equal(await page.getByRole('table').evaluate(el => el.getBoundingClientRect().top - el.closest('.markdown')!.getBoundingClientRect().top), tableY);
+    event({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: content + '\n\nImage rendering complete.\n\nFinal image result.' }] } });
+    await page.getByText('Final image result.', { exact: true }).waitFor();
+    const table = page.getByRole('table');
+    assert.equal(await table.locator('th').count(), 6);
+    assert.equal(await table.locator('tbody tr').count(), 2);
+    assert.equal(await table.locator('tbody tr').first().locator('td').nth(3).textContent(), '');
+    assert.equal(await table.getByText('Left | Right', { exact: true }).count(), 1);
+    assert.equal(await table.locator('strong').textContent(), 'Bold');
+    assert.equal(await table.locator('code').textContent(), 'code');
+    assert.equal(await table.getByRole('link', { name: 'Example' }).getAttribute('href'), 'https://example.com');
+    for (const [index, alignment] of ['left', 'center', 'right'].entries()) {
+      for (const selector of ['th', 'tbody tr:first-child td']) {
+        assert.equal(await table.locator(selector).nth(index).evaluate(el => getComputedStyle(el).textAlign), alignment);
+      }
+    }
     await page.waitForFunction(() => { const img = document.querySelector('.markdown img') as HTMLImageElement; return img?.complete && img.naturalWidth > 0; });
     assert.equal(await page.locator('.markdown img').count(), 1);
     assert.equal(await page.getByRole('link', { name: 'Tracking (external image)' }).count(), 1);
@@ -88,6 +123,15 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
       await page.getByText('Uploading and processing photos…', { exact: true }).waitFor({ state: 'hidden' });
     }
     assert.equal(await page.locator('.draft-photo img').count(), 2);
+    assert.equal(await page.locator('.photo-picker small').textContent(), 'Photos are converted to JPEG and stripped of metadata. Originals are not retained. Unsent uploads expire after 24 hours.');
+    const large = await sharp({ create: { width: 2400, height: 100, channels: 3, background: 'blue' } }).png().toBuffer();
+    await picker.setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: large });
+    const resizeNotice = page.getByText('Resized to fit within 2048 × 2048 pixels.', { exact: true });
+    await resizeNotice.waitFor();
+    assert.equal(await resizeNotice.count(), 1);
+    assert.equal(await page.locator('.draft-photo').filter({ has: resizeNotice }).locator('img').getAttribute('alt'), 'large.png');
+    await page.getByRole('button', { name: 'Remove large.png', exact: true }).click();
+    assert.equal(await resizeNotice.count(), 0);
     await page.getByRole('button', { name: 'Remove paste.png', exact: true }).click();
     await picker.setInputFiles({ name: 'invalid.heic', mimeType: 'image/heic', buffer: Buffer.from('invalid') });
     await page.getByRole('button', { name: 'Retry uploads' }).waitFor();
@@ -109,6 +153,11 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
     await mobile.getByText('Ready', { exact: true }).waitFor();
     assert.equal(await mobile.getByRole('button', { name: 'Camera', exact: true }).isVisible(), true);
     assert.equal(await mobile.locator('input[capture]').getAttribute('capture'), 'environment');
+    await mobile.getByRole('table').waitFor();
+    assert.equal(await mobile.getByRole('table').getByText('한글 🎉', { exact: true }).count(), 1);
+    const scrollRegion = mobile.getByRole('region', { name: 'Markdown table' });
+    assert.equal(await scrollRegion.evaluate(el => el.scrollWidth > el.clientWidth), true);
+    assert.equal(await scrollRegion.evaluate(el => { el.scrollLeft = 100; return el.scrollLeft > 0; }), true);
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   } finally {
     await browser.close(); await app.close(); await workspace.close(); await rm(dir, { recursive: true, force: true });

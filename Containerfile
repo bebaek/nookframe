@@ -19,6 +19,7 @@ FROM docker.io/library/node:24-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash git curl ca-certificates ripgrep python3 python3-yaml make g++ pkg-config \
     gh openssh-client age jq rsync less procps unzip chromium \
+    fonts-noto-cjk fonts-noto-color-emoji \
     tini isync notmuch libsasl2-modules-kdexoauth2 \
     && rm -rf /var/lib/apt/lists/*
 # This image is published for linux/amd64. Pin standalone tools by version and hash.

@@ -62,16 +62,23 @@ export class PhotoStore {
       const source = join(temporary, 'source');
       const result = join(temporary, 'result.jpg');
       await writeFile(source, Buffer.concat(chunks), { mode: 0o600 });
-      await new Promise<void>((resolve, reject) => {
+      const resized = await new Promise<boolean>((resolve, reject) => {
         const sourceMode = import.meta.url.endsWith('.ts');
         execFile(process.execPath, ['--max-old-space-size=256', ...(sourceMode ? ['--import', 'tsx'] : []), fileURLToPath(new URL(sourceMode ? './photo-worker.ts' : './photo-worker.js', import.meta.url)), source, result],
           { timeout: 30_000, killSignal: 'SIGKILL', maxBuffer: 16 * 1024, env: { PATH: process.env.PATH } },
-          error => error ? reject(new Error('Cannot process photo. Use a valid JPEG, PNG, WebP, or HEIC/HEIF image (up to 50 megapixels).')) : resolve());
+          (error, stdout) => {
+            if (error) return reject(new Error('Cannot process photo. Use a valid JPEG, PNG, WebP, or HEIC/HEIF image (up to 50 megapixels).'));
+            try {
+              const result = JSON.parse(stdout);
+              if (typeof result.resized !== 'boolean') throw new Error('Invalid photo processing result');
+              resolve(result.resized);
+            } catch (error) { reject(error); }
+          });
       });
       const data = await readFile(result);
       const id = photoId(data);
       await rename(result, join(this.directory, `${id}.jpg`));
-      return { id, url: `/photos/${id}` };
+      return { id, url: `/photos/${id}`, resized };
     } finally {
       clearTimeout(deadline);
       try { if (temporary) await rm(temporary, { recursive: true, force: true }); }
