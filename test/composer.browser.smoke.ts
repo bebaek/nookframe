@@ -27,7 +27,8 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
   const address = reservation.address(); assert.ok(address && typeof address !== 'string');
   const port = address.port; await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${port}`, token = 'composer-fixture-'.repeat(4);
-  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web') });
+  const example = 'Summarize my unread mail <safely>.';
+  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web'), promptExamples: [example] });
   app.server.listen(port, '127.0.0.1'); await once(app.server, 'listening');
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
   try {
@@ -39,6 +40,12 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.getByText('Ready', { exact: true }).waitFor();
       const input = page.getByLabel('Message', { exact: true });
       const send = page.getByRole('button', { name: 'Send', exact: true });
+      const exampleButton = page.getByRole('button', { name: example, exact: true });
+      await exampleButton.click();
+      assert.equal(await input.inputValue(), example);
+      assert.equal(await input.evaluate(el => el === document.activeElement), true);
+      assert.equal(await exampleButton.isDisabled(), true);
+      assert.deepEqual(prompts, []);
       await input.fill('hello');
       if (mobile) {
         await input.press('Enter');

@@ -217,7 +217,14 @@ function App() {
       <section className="chat-pane" hidden={tab !== 'chat'}>
       <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
       <main className="transcript" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
-        {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2><p>Try: “Create a hello.txt file in the workspace.”</p></div>}
+        {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2>
+          {!!state?.promptExamples?.length && <div className="prompt-examples" aria-label="Prompt examples">{state.promptExamples.map((example, index) =>
+            <button key={index} type="button" className="secondary" disabled={!connected || !state.available || state.busy || state.threadChanging || pending || uploading || !!draft.trim() || photos.length > 0} onClick={() => {
+              setDrafts(current => ({ ...current, [state.threadId]: example }));
+              composer.current?.focus();
+            }}>{example}</button>
+          )}</div>}
+        </div>}
         {state?.messages.map(message => message.tool ? <ToolCard key={`${state.threadId}:${message.tool.id}`} tool={message.tool} /> : <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : message.role === 'assistant' ? <MessageContent text={message.text} /> : <div className="text">{message.text}</div>}<PhotoPreviews photos={message.photos} /><ResponseImages images={message.images} />{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><MessageContent text={state.liveText} /></article>}
         <div ref={bottom} />

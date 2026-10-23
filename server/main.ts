@@ -16,8 +16,10 @@ import { calendarRuntime } from '../calendar/runtime.js';
 import { googleStore } from '../google/runtime.js';
 import { allowedBrowserOrigins } from './origins.js';
 import { piExtensionArgs } from './pi-extensions.js';
+import { parsePromptExamples } from './prompt-examples.js';
 
 const extensionArgs = piExtensionArgs(process.env.NOOKFRAME_PI_EXTENSIONS);
+const promptExamples = parsePromptExamples(process.env.NOOKFRAME_PROMPT_EXAMPLES);
 const root = process.cwd();
 const workspaceDir = resolve(process.env.WORKSPACE_DIR ?? join(root, '.local/workspace'));
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? join(root, '.local/agent'));
@@ -54,7 +56,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
 await workspace.initialize();
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
 const app = createApp(workspace, {
-  token, origin: publicOrigin, allowedOrigins,
+  token, origin: publicOrigin, allowedOrigins, promptExamples,
   mail: mailOAuth, calendar: calendar.oauth,
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
