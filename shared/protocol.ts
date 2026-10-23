@@ -19,7 +19,7 @@ export interface ChatMessage {
   error?: string;
   photos?: { id: string; url: string }[];
 }
-export interface ThreadChoice { id: string; title: string; updatedAt: string }
+export interface ThreadChoice { id: string; title: string; updatedAt: string; busy?: boolean }
 export interface ModelChoice { provider: string; id: string; images?: boolean }
 export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {
@@ -38,7 +38,7 @@ export interface Snapshot {
   threadChanging: boolean;
 }
 export type ClientCommand =
-  | { type: 'auth'; token: string }
+  | { type: 'auth'; token?: string; threadId?: string }
   | { type: 'prompt'; id: string; text: string; threadId: string; photos?: string[] }
   | { type: 'stop'; id: string; threadId: string }
   | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
@@ -50,6 +50,7 @@ export type TerminalEvent =
   | { type: 'terminal_exit'; code: number };
 export type ServerMessage =
   | TerminalEvent
-  | { type: 'snapshot'; state: Snapshot }
+  | { type: 'threads'; threads: ThreadChoice[] }
+  | { type: 'snapshot'; state: Snapshot; selected?: boolean }
   | { type: 'ack'; id: string }
   | { type: 'error'; id?: string; message: string };

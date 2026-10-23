@@ -40,7 +40,7 @@ export class Workspace {
   private stopping = false;
   private heartbeat?: ReturnType<typeof setInterval>;
 
-  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore) {
+  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore, private managed = false) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     this.marker = join(stateDir, 'run-active');
     if (existsSync(this.marker)) this.state.notice = 'The previous run was interrupted. Inspect files before retrying; nothing was automatically resubmitted.';
@@ -68,7 +68,7 @@ export class Workspace {
     this.state.model = state.model ? `${state.model.provider}/${state.model.id}` : 'No model configured';
     if (this.threads) {
       if (!state.sessionFile) throw new Error('Pi has no persistent session');
-      this.threads.remember(state.sessionFile);
+      if (!this.managed) this.threads.remember(state.sessionFile);
       this.state.threadId = this.threads.id(state.sessionFile);
       this.state.threads = await this.threads.list();
     }
@@ -107,12 +107,14 @@ export class Workspace {
     this.pruneImages();
   }
 
+  get idle() { return !this.state.busy && !this.stopping && !this.state.modelChanging && !this.state.threadChanging; }
+
   assertThread(id: unknown) {
     if (this.threads && id !== this.state.threadId) throw new Error('The active thread changed. Review the selected thread before retrying.');
   }
 
   async switchThread(targetId?: string) {
-    if (!this.threads) throw new Error('Thread switching is unavailable');
+    if (!this.threads || this.managed) throw new Error('Thread switching is unavailable');
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('Wait until the current operation finishes before switching threads');
     // Validate client filenames before issuing any RPC; never accept arbitrary paths.
@@ -348,7 +350,15 @@ export class Workspace {
     finally { this.stopping = false; }
   }
 
-  async close() {
+  ownershipLost() {
+    this.fail();
+    void this.close().catch(() => { /* Keep unavailable; never resume after losing ownership. */ });
+  }
+
+  private closePromise?: Promise<void>;
+  close(): Promise<void> { return this.closePromise ??= this.shutdown(); }
+  private async shutdown() {
+    this.state.available = false;
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.state.busy) {
       try { await this.abort(); } catch { /* Keep interruption marker. */ }

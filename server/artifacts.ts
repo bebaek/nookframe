@@ -17,14 +17,14 @@ export interface PublishedImage extends Metadata { id: string; previewUrl: strin
 export class ArtifactStore {
   readonly directory: string;
   readonly outputDirectory: string;
-  constructor(private stateDir: string) {
+  constructor(stateDir: string, private thread?: string) {
     this.directory = join(stateDir, 'image-artifacts');
     this.outputDirectory = join(stateDir, 'image-output');
   }
-  private async activeThread() {
-    const value = JSON.parse(await readFile(join(this.stateDir, 'active-thread.json'), 'utf8'));
-    if (typeof value.file !== 'string' || basename(value.file) !== value.file || !value.file.endsWith('.jsonl')) throw new Error('No active thread');
-    return value.file as string;
+  private activeThread() {
+    if (!this.thread) throw new Error('No image thread binding. Run inside a chat agent, or use imagectl --thread THREAD context in the terminal.');
+    if (basename(this.thread) !== this.thread || !this.thread.endsWith('.jsonl') || this.thread.length > 255) throw new Error('Invalid image thread');
+    return this.thread;
   }
   private threadKey(thread: string) { return photoId(Buffer.from(thread)); }
   async context() {
@@ -34,7 +34,7 @@ export class ArtifactStore {
     return { thread, directory };
   }
   private async assertThread(thread: string) {
-    if (thread !== await this.activeThread()) throw new Error('Active thread changed; request imagectl context again');
+    if (thread !== this.activeThread()) throw new Error('Image thread mismatch; request imagectl context in the originating agent');
   }
   private async boundedRead(path: string, limit: number) {
     if (await realpath(path) !== resolve(path)) throw new Error('Symlinks are not allowed');

@@ -4,7 +4,7 @@ Licensed under the [MIT License](LICENSE). Third-party dependencies retain their
 own licenses.
 
 A single-user, persistent personal workspace with mobile web chat and a private terminal tab. One Node server owns
-one long-lived `pi --mode rpc` subprocess. Closing a browser does not stop a task.
+a lazily started `pi --mode rpc` subprocess per open chat thread (up to four). Closing a browser does not stop a task.
 Includes an optional Gmail/IMAP CLI with local drafts, explicit sending, and a
 chat-discoverable mail skill.
 
@@ -90,11 +90,17 @@ imagectl context
 imagectl publish THREAD /absolute/path/to/image.png "Image description"
 ```
 
-`context` returns the current thread ID and a private per-thread output directory.
+Each chat agent receives a fixed `NOOKFRAME_IMAGE_THREAD_ID` binding. `context`
+returns that agent's thread ID and a private per-thread output directory; changing
+threads in a browser cannot redirect another agent's images. The shared terminal
+has no selected thread: use `imagectl --thread THREAD context` and
+`imagectl --thread THREAD publish THREAD FILE DESCRIPTION`, taking the thread
+filename from the chat URL fragment. An agent cannot override its binding with
+`--thread`. The legacy global `active-thread.json` is never used for publishing.
 Create or explicitly download the desired image into that directory, then pass
 that exact thread ID to `publish`. The command returns JSON with ready-to-use
 `markdown`, a preview URL, a full-size view URL, and a download URL. Files outside
-that directory, symlinks, and stale thread IDs are rejected. There is no arbitrary
+that directory, symlinks, and thread IDs mismatching the binding are rejected. There is no arbitrary
 filesystem endpoint or server-side URL-fetching proxy. Public image sources
 should be credited and their licenses respected.
 
@@ -117,9 +123,9 @@ The staging/source folder `STATE_DIR/image-output` is not the durable source and
 is not included in the artifact quota. Sources may be removed after publication.
 
 For a native checkout, the equivalent command is
-`NOOKFRAME_IMAGE_STATE_DIR=/path/to/state npm run image -- context` (or `publish`
-with the same arguments). The agent and terminal receive this state-directory
-setting automatically when launched by Nookframe. This is not a filesystem
+`NOOKFRAME_IMAGE_STATE_DIR=/path/to/state npm run image -- --thread THREAD context`
+(or `publish` with the same binding and arguments). Agents receive the state
+directory and thread binding automatically; terminals receive only the state directory. This is not a filesystem
 sandbox: the agent still has its normal shell access.
 
 The public-image publishing tests use a checked-in 330 × 330 thumbnail of NASA's
@@ -165,26 +171,29 @@ The layout uses the browser's native Popover API (current Chrome/Safari/Firefox)
 
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
 Each thread has its own pi JSONL history; all threads share workspace files,
-credentials, and one agent process. Thread titles come from the first user message
+and credentials, but use separate agent processes. Thread titles come from the first user message
 (or an existing pi session name). Switching itself makes no model request.
 
-- Only one web thread is active at a time, shared across browsers. Finish or stop
-  a task before switching; model/thread changes and prompts are serialized.
-- Commands carry the expected thread ID. A stale browser cannot accidentally send
-  a prompt into a thread selected by another browser.
+- Thread selection is local to each tab. Switch or create a thread while another
+  runs; the picker shows running threads. Tabs viewing the same thread share its agent.
+- Commands carry the expected thread ID. Stale commands cannot act on a different
+  thread. Prompts and model changes are serialized within each thread.
 - Drafts are kept separately per thread in that browser's memory; refreshing clears
   drafts. Switching does not move an unsent draft into a different conversation.
-- The last selection is saved atomically in `$STATE_DIR/active-thread.json`.
+- The selection is stored in the tab's URL fragment and restored on reload.
   Empty threads get a header-only JSONL file, so they survive restart without
   synthetic messages or an initial model call.
 - The existing `workspace` conversation is selected on first upgrade; its file is
-  retained. Subsequent starts restore the saved selection. Missing/corrupt saved
-  selections fail closed rather than silently opening another conversation.
+  retained. The old `active-thread.json` is used only as a landing-thread preference.
+  Missing/corrupt legacy preferences still fail closed at server startup.
 - The web's saved model/environment override remains in effect when resuming old
   threads. Without a configured choice, pi's normal session model behavior applies.
 - The picker only includes the server-owned `workspace-sessions` directory, not
   independent terminal pi sessions. No delete, fork, or in-thread branch UI yet.
-- Include these sessions and the active-selection file in your private backups.
+- Include the entire sessions directory (including `.nookframe` thread settings)
+  and legacy preferences in your private backups. See [ownership and lifecycle](docs/session-concurrency.md).
+- At most four agents are resident; unviewed idle agents are reclaimed. Shared
+  filesystem access is not isolated: use separate worktrees for parallel coding.
 
 ## Photo attachments
 
@@ -379,7 +388,7 @@ Use `podman stop pi-workspace` to shut down. Start the same command again to
 restore the session and files. Named volumes are retained when the container is
 removed. Multiple servers may share the profile, but concurrent access to the
 same conversation is not coordinated, and an idle server can retain stale state.
-See [shared-profile concurrency and future work](docs/session-concurrency.md).
+See [thread ownership and multitasking](docs/session-concurrency.md).
 Only `/workspace` and `/data` persist; bake additional installed software into
 `Containerfile`.
 
@@ -459,8 +468,8 @@ Pi sessions launched in the terminal.
 
 ## Behavior and scope
 
-- One active web thread with normal read/bash/edit/write tools; multiple persisted
-  conversations can be selected without spawning extra agent processes.
+- Independent web threads with normal read/bash/edit/write tools; separate agents
+  allow concurrent conversations. Tabs on the same thread deliberately share it.
 - Pi's JSONL session is authoritative; the bridge only keeps a bounded live view.
 - Reconnects receive a replacement snapshot, including current streaming text
   and tool activity. Commands are **never automatically retried** after disconnect.
@@ -471,23 +480,24 @@ Pi sessions launched in the terminal.
   or checkpoint engine. Partial model output may be lost on process termination.
 - Pi defers writing a brand-new session until the first assistant message. A crash
   before that point can leave no transcript; the interruption warning still works.
-- An RPC failure makes the bridge unavailable; inspect/restart rather than silently
-  resubmitting possibly accepted work. `/healthz` then reports 503.
+- An RPC failure makes that thread unavailable; inspect/restart rather than silently
+  resubmitting possibly accepted work. Other threads and `/healthz` stay available.
 - The **Model** selector in **⋯ Workspace controls** uses pi's available model catalog. Changes are allowed
   only while idle, applied through RPC, and atomically saved in
-  `$STATE_DIR/model.json` (container: `/data/state/model.json`). The active model is
-  shown in the header and shared across browser tabs. Switching does not send a
+  `workspace-sessions/.nookframe/<thread-filename-hash>/model.json`. The active model is
+  shown in the header and shared only by tabs viewing that thread. Switching does not send a
   model request or clear conversation history.
 - Model precedence: paired `AGENT_PROVIDER` + `AGENT_MODEL` environment override →
-  saved web choice → pi's saved default. With no configured choice/default, pi
+  saved thread choice → legacy `$STATE_DIR/model.json` → pi's saved default. With no configured choice/default, pi
   uses its normal startup/session selection. Exact configured IDs are validated;
-  an unavailable saved choice fails startup rather than silently using another
+  an unavailable saved choice fails thread opening rather than silently using another
   model. Provider authentication still uses the pi CLI; restart after changing
   credentials to refresh the available catalog.
 - Environment overrides lock the selector and are labeled in the UI. Remove both
   variables and recreate the container to enable web selection. An override does
   not replace an existing saved web preference. To reset a stale preference, stop
-  the server and back up/remove only `$STATE_DIR/model.json`, then restart.
+  the server and back up/remove the affected thread's `model.json` (or the legacy
+  `$STATE_DIR/model.json` fallback), then restart.
 - Extension discovery is disabled; deployments can explicitly opt in with
   `NOOKFRAME_PI_EXTENSIONS`. Project-local trust-gated resources are ignored.
   The bundled mail skill is explicitly loaded despite those restrictions.

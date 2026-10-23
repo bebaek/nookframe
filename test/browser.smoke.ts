@@ -72,7 +72,7 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     assert.ok(readingHeight > 650, `Phone reading area should exceed 650px, got ${readingHeight}`);
     await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await page.getByLabel('Model', { exact: true }).selectOption('test/second');
-    await page.getByText('Saved for future sessions and restarts', { exact: true }).waitFor();
+    await page.getByText('Saved for this thread and restarts', { exact: true }).waitFor();
     assert.equal(model.id, 'second');
     await page.screenshot({ path: '.local/controls-mobile-smoke.png', fullPage: false });
     await page.keyboard.press('Escape');
