@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-export interface DraftPhoto { key: string; file: File; id?: string; url?: string; error?: string }
+export interface DraftPhoto { key: string; file: File; id?: string; url?: string; resized?: boolean; error?: string }
 export function PhotoPreviews({ photos }: { photos?: { id: string; url: string }[] }) {
   if (!photos?.length) return null;
   return <div className="photo-previews">{photos.map((photo, i) => <a key={`${photo.id}-${i}`} href={photo.url} target="_blank" rel="noreferrer"><img src={photo.url} alt={`Attached photo ${i + 1}; open full size`} loading="lazy" /></a>)}</div>;
@@ -19,8 +19,9 @@ export function PhotoPicker({ photos, disabled, uploading, add, remove, retry }:
     {photos.some(p => p.error) && <button type="button" disabled={disabled || uploading} onClick={retry}>Retry uploads</button>}</div>
     {photos.length > 0 && <><div className="photo-previews">{photos.map(photo => <div className="draft-photo" key={photo.key}>
       {photo.url ? <img src={photo.url} alt={photo.file.name || 'Attached photo'} /> : <span>{photo.file.name || 'Photo'}<br />{photo.error || 'Processing…'}</span>}
+      {photo.resized && <small>Resized to fit within 2048 × 2048 pixels.</small>}
       <button type="button" aria-label={`Remove ${photo.file.name || 'photo'}`} disabled={disabled} onClick={() => remove(photo.key)}>×</button>
-    </div>)}</div><small>Photos are resized to 2048 pixels, converted to JPEG, and stripped of metadata. Originals are not retained. Unsent uploads expire after 24 hours.</small></>}
+    </div>)}</div><small>Photos are converted to JPEG and stripped of metadata. Originals are not retained. Unsent uploads expire after 24 hours.</small></>}
     {uploading && <p role="status">Uploading and processing photos…</p>}
   </section>;
 }

@@ -123,6 +123,15 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
       await page.getByText('Uploading and processing photos…', { exact: true }).waitFor({ state: 'hidden' });
     }
     assert.equal(await page.locator('.draft-photo img').count(), 2);
+    assert.equal(await page.locator('.photo-picker small').textContent(), 'Photos are converted to JPEG and stripped of metadata. Originals are not retained. Unsent uploads expire after 24 hours.');
+    const large = await sharp({ create: { width: 2400, height: 100, channels: 3, background: 'blue' } }).png().toBuffer();
+    await picker.setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: large });
+    const resizeNotice = page.getByText('Resized to fit within 2048 × 2048 pixels.', { exact: true });
+    await resizeNotice.waitFor();
+    assert.equal(await resizeNotice.count(), 1);
+    assert.equal(await page.locator('.draft-photo').filter({ has: resizeNotice }).locator('img').getAttribute('alt'), 'large.png');
+    await page.getByRole('button', { name: 'Remove large.png', exact: true }).click();
+    assert.equal(await resizeNotice.count(), 0);
     await page.getByRole('button', { name: 'Remove paste.png', exact: true }).click();
     await picker.setInputFiles({ name: 'invalid.heic', mimeType: 'image/heic', buffer: Buffer.from('invalid') });
     await page.getByRole('button', { name: 'Retry uploads' }).waitFor();

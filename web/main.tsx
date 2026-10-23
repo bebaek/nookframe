@@ -163,7 +163,7 @@ function App() {
             throw new Error(result.error || `Photo upload failed (${response.status})`);
           }
           const result = await response.json();
-          update(item.key, { id: result.id, url: result.url });
+          update(item.key, { id: result.id, url: result.url, resized: result.resized === true });
         } catch (error) {
           if (!controller.signal.aborted) update(item.key, { error: error instanceof Error ? error.message : 'Photo upload failed' });
         }

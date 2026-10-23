@@ -48,7 +48,8 @@ test('photos: authenticated conversion, HEIC, limits, prompt delivery, and durab
     const original = await sharp({ create: { width: 3000, height: 100, channels: 3, background: 'red' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
     const uploaded = await send(original);
     assert.equal(uploaded.status, 200);
-    const photo = await uploaded.json() as { id: string; url: string };
+    const { resized, ...photo } = await uploaded.json() as { id: string; url: string; resized: boolean };
+    assert.equal(resized, true);
     assert.equal((await fetch(base + photo.url)).status, 401);
     const image = Buffer.from(await (await fetch(base + photo.url, { headers: { cookie } })).arrayBuffer());
     const metadata = await sharp(image).metadata();
@@ -60,7 +61,8 @@ test('photos: authenticated conversion, HEIC, limits, prompt delivery, and durab
     const heic = await readFile('test/fixtures/photos/red.heic');
     const heicReply = await send(heic);
     assert.equal(heicReply.status, 200, await heicReply.clone().text());
-    const converted = await heicReply.json() as { url: string };
+    const converted = await heicReply.json() as { url: string; resized: boolean };
+    assert.equal(converted.resized, false);
     const heicImage = Buffer.from(await (await fetch(base + converted.url, { headers: { cookie } })).arrayBuffer());
     assert.equal((await sharp(heicImage).metadata()).format, 'jpeg');
     assert.equal((await sharp(heicImage).metadata()).width, 32);
@@ -68,7 +70,10 @@ test('photos: authenticated conversion, HEIC, limits, prompt delivery, and durab
     const webp = await sharp({ create: { width: 16, height: 16, channels: 4, background: '#00000000' } }).webp().toBuffer();
     const webpReply = await send(webp);
     assert.equal(webpReply.status, 200);
-    const webpPhoto = await webpReply.json() as { url: string };
+    const webpPhoto = await webpReply.json() as { url: string; resized: boolean };
+    assert.equal(webpPhoto.resized, false);
+    const boundary = await sharp({ create: { width: 2048, height: 20, channels: 3, background: 'red' } }).png().toBuffer();
+    assert.equal((await (await send(boundary)).json() as { resized: boolean }).resized, false);
     const flattened = Buffer.from(await (await fetch(base + webpPhoto.url, { headers: { cookie } })).arrayBuffer());
     const pixels = await sharp(flattened).raw().toBuffer();
     assert.equal(pixels[0], 255, 'transparency flattened to white');
