@@ -289,7 +289,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { promptExa
             }
             if (!current) throw new Error('Select a thread first');
             current.assertThread(command.threadId);
-            await current.prompt(command.text, images);
+            await current.prompt(command.text, images, command.clientContext);
           }
           else if (command.type === 'new_thread' || command.type === 'switch_thread') {
             if (pool) {

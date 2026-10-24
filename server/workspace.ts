@@ -6,6 +6,7 @@ import { saveModelSelection, type ModelSelection } from './models.js';
 import type { ThreadStore } from './threads.js';
 import { photoId, type PhotoContent } from './photos.js';
 import { ResponseImages } from './response-images.js';
+import { parseClientContext, type ClientContext } from '../shared/client-context.js';
 
 export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
 const clip = (text: string) => text.length > 24000 ? text.slice(0, 24000) + '\n[display truncated]' : text;
@@ -40,7 +41,7 @@ export class Workspace {
   private stopping = false;
   private heartbeat?: ReturnType<typeof setInterval>;
 
-  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore, private managed = false) {
+  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore, private managed = false, private setClientContext?: (context: ClientContext | undefined) => Promise<void>) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     this.marker = join(stateDir, 'run-active');
     if (existsSync(this.marker)) this.state.notice = 'The previous run was interrupted. Inspect files before retrying; nothing was automatically resubmitted.';
@@ -323,7 +324,8 @@ export class Workspace {
     }
   }
 
-  async prompt(text: string, images: PhotoContent[] = []) {
+  async prompt(text: string, images: PhotoContent[] = [], clientContext?: ClientContext) {
+    const context = parseClientContext(clientContext);
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('A run, model change, or thread change is already active');
     if (images.length && !this.state.models.some(m => `${m.provider}/${m.id}` === this.state.model && m.images)) throw new Error('This model cannot accept photos. Choose an image-capable model.');
@@ -333,7 +335,10 @@ export class Workspace {
     this.state.busy = true;
     this.state.notice = '';
     this.changed();
-    try { await this.agent.prompt(text, images.length ? images : undefined); }
+    try {
+      await this.setClientContext?.(context);
+      await this.agent.prompt(text, images.length ? images : undefined);
+    }
     catch {
       // A timeout can mean pi accepted the prompt: fail closed, never auto-resend.
       this.fail();

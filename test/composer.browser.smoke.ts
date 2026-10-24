@@ -7,10 +7,12 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { createApp } from '../server/http.js';
+import type { ClientContext } from '../shared/client-context.js';
 
 test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { timeout: 30000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pi-composer-'));
   const prompts: string[] = [];
+  const contexts: (ClientContext | undefined)[] = [];
   const model = { provider: 'test', id: 'fixture' };
   const workspace = new Workspace({
     onEvent() { return () => {}; },
@@ -19,7 +21,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
     async getEntries() { return { entries: [], leafId: null }; },
     async prompt(text: string) { prompts.push(text); },
     async stop() {},
-  } as unknown as Agent, dir);
+  } as unknown as Agent, dir, undefined, undefined, false, async context => { contexts.push(context); });
   await workspace.initialize();
   const { createServer } = await import('node:net');
   const reservation = createServer();
@@ -33,7 +35,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
   try {
     for (const mobile of [true, false]) {
-      const page = await browser.newPage({ isMobile: mobile, hasTouch: mobile });
+      const page = await browser.newPage({ isMobile: mobile, hasTouch: mobile, timezoneId: 'Asia/Seoul' });
       await page.goto(origin);
       await page.getByLabel('Access token').fill(token);
       await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -64,16 +66,51 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await input.fill('   ');
       await input.press('Enter');
       assert.equal(await send.isDisabled(), true);
+      await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+      await page.getByLabel('Timezone override (optional)').fill('Invalid/Place');
+      assert.equal(await send.isDisabled(), true);
+      await page.getByLabel('Timezone override (optional)').fill('');
+      await page.getByLabel('Share approximate city').check();
+      await page.getByLabel('City (optional)', { exact: true }).fill('Seoul');
+      await page.reload();
+      await page.getByText('Ready', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+      assert.equal(await page.getByLabel('City (optional)', { exact: true }).inputValue(), 'Seoul');
+      await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await input.fill('hello\nworld');
       await input.press('Enter');
       await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
       assert.deepEqual(prompts, ['hello\nworld']);
+      assert.deepEqual(contexts, [{ timezone: 'Asia/Seoul', timezoneSource: 'browser', city: 'Seoul' }]);
       await input.fill('keep while busy');
       await input.press('Enter');
       assert.equal(await send.isDisabled(), true);
       assert.equal(await input.inputValue(), 'keep while busy');
       await page.waitForTimeout(100);
       assert.equal(prompts.length, 1);
+      // A subsequent browser request must replace, not inherit, shared hints.
+      workspace.state.busy = false;
+      await page.reload();
+      await page.getByText('Ready', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+      await page.getByLabel('Share approximate city').uncheck();
+      await page.getByLabel('Timezone override (optional)').fill('America/New_York');
+      await page.getByRole('button', { name: 'Close controls', exact: true }).click();
+      await input.fill('manual timezone');
+      await send.click();
+      await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
+      assert.deepEqual(contexts[1], { timezone: 'America/New_York', timezoneSource: 'manual' });
+      workspace.state.busy = false;
+      await page.reload();
+      await page.getByText('Ready', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+      await page.getByLabel('Share timezone', { exact: true }).uncheck();
+      await page.getByRole('button', { name: 'Close controls', exact: true }).click();
+      await input.fill('nothing shared');
+      await send.click();
+      await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
+      assert.equal(contexts.length, 3);
+      assert.equal(contexts[2], undefined);
       await page.close();
     }
   } finally {
