@@ -32,6 +32,11 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal((await fetch(origin + '/healthz')).status, 200);
+    // Read as the image's default non-root user, including parent traversal.
+    assert.equal(container('exec', name, 'id', '-un').trim(), 'node');
+    container('exec', name, 'node', '-e',
+      'const fs = require("node:fs"); for (const guide of ["mail", "google", "calendar"]) {' +
+      'if (!fs.readFileSync(`/app/docs/${guide}.md`, "utf8").trim()) throw new Error(`Empty guide: ${guide}`); }');
     container('exec', name, 'sh', '-ec',
       'for tool in git gh node npm python3 make g++ kubectl sops ssh age jq rsync chromium imagectl; do command -v "$tool"; done; ' +
       'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
