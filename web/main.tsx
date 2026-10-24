@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice } from '../shared/protocol';
 import './style.css';
 import { ToolCard } from './ToolCard';
+import { useTranscriptScroll } from './useTranscriptScroll';
 import { AgentPresence } from './AgentPresence';
 import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
@@ -32,9 +33,8 @@ function App() {
   const socket = useRef<WebSocket | null>(null);
   const activeThread = useRef(new URLSearchParams(location.hash.slice(1)).get('thread') ?? undefined);
   const sent = useRef<{ id: string; text?: string; threadId: string; photos?: string[] } | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const follow = useRef(true);
+  const scroll = useTranscriptScroll(signedIn && !checkingAuth && tab === 'chat', state?.threadId);
 
   function lock() {
     setSignedIn(false); setConnected(false); setState(undefined); setDrafts({});
@@ -136,14 +136,9 @@ function App() {
   }, [signedIn]);
 
   useEffect(() => {
-    if (follow.current) bottom.current?.scrollIntoView({ behavior: 'instant' });
-  }, [state]);
-
-  useEffect(() => {
     if (tab !== 'chat' || !composer.current) return;
     composer.current.style.height = '0px';
     composer.current.style.height = `${Math.min(144, Math.max(44, composer.current.scrollHeight + 2))}px`;
-    if (follow.current) bottom.current?.scrollIntoView({ behavior: 'instant' });
   }, [draft, tab, signedIn]);
 
   async function uploadPhotos(items: DraftPhoto[], retry = false) {
@@ -225,7 +220,8 @@ function App() {
       <section className="chat-pane" hidden={tab !== 'chat'}>
       <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
       <AgentPresence threadId={state?.threadId} />
-      <main className="transcript" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
+      <main className="transcript" ref={scroll.transcript} onScroll={scroll.onScroll}>
+        <div ref={scroll.content}>
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2>
           {!!state?.promptExamples?.length && <div className="prompt-examples" aria-label="Prompt examples">{state.promptExamples.map((example, index) =>
             <button key={index} type="button" className="secondary" disabled={!connected || !state.available || state.busy || state.threadChanging || pending || uploading || !!draft.trim() || photos.length > 0} onClick={() => {
@@ -236,7 +232,7 @@ function App() {
         </div>}
         {state?.messages.map(message => message.tool ? <ToolCard key={`${state.threadId}:${message.tool.id}`} tool={message.tool} /> : <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : message.role === 'assistant' ? <MessageContent text={message.text} /> : <div className="text">{message.text}</div>}<PhotoPreviews photos={message.photos} /><ResponseImages images={message.images} />{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><MessageContent text={state.liveText} /></article>}
-        <div ref={bottom} />
+        </div>
       </main>
       <footer onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !state || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
         // Keep mobile Enter and IME confirmation native (229 covers Safari IME).
