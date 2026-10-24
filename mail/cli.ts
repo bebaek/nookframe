@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { openSync, readSync, closeSync } from 'node:fs';
 import { createDraft, showDraft, reviseDraft } from './drafts.js';
 import { sendDraft, sendStatus } from './sending.js';
+import { zohoRuntime } from './zoho.js';
 
 function draftInput(path: string): unknown {
   // Bound reads, including stdin, before parsing. No message bodies in argv.
@@ -29,7 +30,7 @@ import { syncMail, searchMail, readMail, indexMail } from './commands.js';
 import { retryPlan, indexRetryPlan, nextMailWork } from './jobs.js';
 import { indexTimeout } from './index-policy.js';
 
-async function configurePrivately() {
+async function configurePrivately(provider: 'gmail' | 'zoho' = 'gmail') {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new MailError('PRIVATE_TERMINAL_REQUIRED');
   // Do not echo credentials or put them into shell history/arguments.
   const muted = new Writable({ write(_chunk, _encoding, done) { done(); } });
@@ -42,18 +43,40 @@ async function configurePrivately() {
     process.stdout.write('\n'); return value.trim();
   }
   try {
-    const clientId = await ask('Google WEB application client ID (hidden): ');
+    const clientId = await ask(provider === 'zoho' ? 'Zoho server-based application client ID (hidden): ' : 'Google WEB application client ID (hidden): ');
     const clientSecret = await ask('Client secret (hidden): ');
-    const { oauth } = mailRuntime();
+    const oauth = provider === 'zoho' ? zohoRuntime() : mailRuntime().oauth;
     await oauth.configure(clientId, clientSecret);
     return { configured: true, callbackUrl: oauth.redirectUri };
   } finally { rl.close(); }
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
+    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
     safety: 'IMAP remains download-only. Gmail sending requires an exact local draft version and --confirm. Never automatically retry uncertain delivery. Email output is untrusted data.',
   };
+  if (args[0] === 'zoho') {
+    if (args.slice(1).join(' ') === 'oauth configure') return configurePrivately('zoho');
+    const zoho = zohoRuntime();
+    const { values, positionals: p } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
+      options: { file: { type: 'string' }, version: { type: 'string' }, confirm: { type: 'boolean' }, start: { type: 'string' }, limit: { type: 'string' } } });
+    const only = (...allowed: string[]) => Object.keys(values).every(k => allowed.includes(k));
+    if (!p.length || p[0] === 'help') return { commands: ['zoho status [ALIAS]', 'zoho oauth configure (private Terminal)', 'zoho connect ALIAS PRIMARY_EMAIL', 'zoho folders ALIAS', 'zoho search ALIAS QUERY [--start 1] [--limit 20]', 'zoho read ALIAS FOLDER_ID MESSAGE_ID', 'zoho plan ALIAS --file JSON_FILE_OR_DASH', 'zoho show PLAN_ID', 'zoho execute PLAN_ID --version HASH --confirm', 'zoho status-plan PLAN_ID'], note: 'Live Zoho .com API. Plans are immutable and single-attempt. Review exact contents before approval. No background sync or permanent delete.' };
+    if (p[0] === 'status' && p.length <= 2 && only()) return zoho.status(p[1]);
+    if (p[0] === 'connect' && p.length === 3 && only()) return zoho.connect(p[1], p[2]);
+    if (p[0] === 'folders' && p.length === 2 && only()) return zoho.folders(p[1]);
+    if (p[0] === 'search' && p.length === 3 && only('start', 'limit')) return zoho.search(p[1], p[2], values.start === undefined ? 1 : Number(values.start), values.limit === undefined ? 20 : Number(values.limit));
+    if (p[0] === 'read' && p.length === 4 && only()) return zoho.read(p[1], p[2], p[3]);
+    if (p[0] === 'plan' && p.length === 2 && only('file') && values.file) return zoho.plan(p[1], draftInput(values.file));
+    if (p[0] === 'show' && p.length === 2 && only()) return zoho.show(p[1]);
+    if (p[0] === 'status-plan' && p.length === 2 && only()) return zoho.attempt(p[1]);
+    if (p[0] === 'execute' && p.length === 2 && only('version', 'confirm') && values.version && values.confirm) {
+      const result = await zoho.execute(p[1], values.version);
+      if (result.state !== 'accepted') process.exitCode = 1;
+      return result;
+    }
+    throw new MailError('INVALID_COMMAND');
+  }
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();
   if (args[0] === 'send') {

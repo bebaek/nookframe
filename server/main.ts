@@ -13,6 +13,7 @@ import { TerminalSession } from './terminal.js';
 import { ThreadStore } from './threads.js';
 import { MailStore } from '../mail/store.js';
 import { MailOAuth } from '../mail/oauth.js';
+import { ZohoMail } from '../mail/zoho.js';
 import { MailScheduler } from '../mail/scheduler.js';
 import { calendarRuntime } from '../calendar/runtime.js';
 import { googleStore } from '../google/runtime.js';
@@ -87,7 +88,7 @@ const app = createApp(workspace, {
     config: () => ({ model: { ...explainModel(resolveModelSelection(stateDir, agentDir, process.env)), scope: 'legacy-thread-fallback' }, newThreads: modelOperations.defaults() }),
     sessions: () => workspace.operationSessions(),
   },
-  mail: mailOAuth, calendar: calendar.oauth,
+  mail: mailOAuth, zoho: new ZohoMail(join(mailStore.root, 'zoho'), publicOrigin), calendar: calendar.oauth,
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),

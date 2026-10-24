@@ -8,6 +8,7 @@ import type { TerminalSession } from './terminal.js';
 import type { ServerMessage } from '../shared/protocol.js';
 import { BrowserSessions, SESSION_SECONDS } from './browser-sessions.js';
 import type { MailOAuth } from '../mail/oauth.js';
+import type { ZohoMail } from '../mail/zoho.js';
 import { MailError } from '../mail/store.js';
 import type { CalendarOAuth } from '../calendar/oauth.js';
 import { CalendarError } from '../calendar/store.js';
@@ -21,7 +22,7 @@ import type { PresenceStore } from './agent-presence.js';
 import type { OperationsReader } from './operations.js';
 import type { ModelOperations } from './model-operations.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   const single = pool ? undefined : workspace as Workspace;
@@ -61,6 +62,22 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       const known = new Set(['INVALID_OR_EXPIRED_AUTHORIZATION', 'AUTHORIZATION_DENIED', 'OAUTH_CLIENT_CHANGED_RETRY', 'OAUTH_CALLBACK_CHANGED_RECONFIGURE', 'OAUTH_CLIENT_NOT_CONFIGURED', 'OAUTH_REQUEST_FAILED', 'INVALID_TOKEN_RESPONSE', 'CALENDAR_READ_SCOPES_REQUIRED', 'VERIFIED_IDENTITY_REQUIRED', 'WRONG_ACCOUNT_FOR_ALIAS', 'ACCOUNT_ALREADY_CONNECTED', 'REFRESH_TOKEN_REQUIRED_REAUTHORIZE', 'CALENDAR_BUSY', 'RECONNECT_ACCOUNT']);
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.end(status === 'connected' ? 'Calendar authorization stored. Run calendarctl account status to check. No calendar data has been fetched or changed.' : `Calendar authorization not completed (${known.has(status ?? '') ? status : 'AUTHORIZATION_FAILED'}). Request a fresh authorization link. Do not paste callback URLs or codes into chat.`); return;
+    }
+    if (config.zoho && req.method === 'GET' && (req.url === '/mail/zoho/oauth/callback' || req.url?.startsWith('/mail/zoho/oauth/callback?'))) {
+      // Cross-site OAuth callback: single-use state and confidential server client.
+      // Do not log callback URLs, codes, provider errors, or tokens.
+      let connected = false;
+      try {
+        if (req.url.length > 8192) throw new MailError('INVALID_OR_EXPIRED_AUTHORIZATION');
+        await config.zoho.callback(new URL(req.url, origin)); connected = true;
+      } catch { /* Only a fixed, non-sensitive outcome reaches the browser. */ }
+      res.writeHead(303, { Location: `/mail/zoho/oauth/result?status=${connected ? 'connected' : 'failed'}` }).end(); return;
+    }
+    if (config.zoho && req.method === 'GET' && req.url?.startsWith('/mail/zoho/oauth/result?')) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end(new URL(req.url, origin).searchParams.get('status') === 'connected'
+        ? 'Zoho connected. Return to chat to check mailctl zoho status. No messages have been fetched, sent, or changed.'
+        : 'Zoho authorization failed. Check the .com region, primary mailbox address, client configuration and scopes, then request a fresh link. Never paste callback URLs or codes into chat.'); return;
     }
     if (config.mail && req.method === 'GET' && (req.url === '/mail/oauth/callback' || req.url?.startsWith('/mail/oauth/callback?'))) {
       // OAuth returns via a cross-site navigation, so SameSite=Strict login cookies
