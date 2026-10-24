@@ -10,7 +10,7 @@ import { Workspace, type Agent } from '../server/workspace.js';
 import { createApp } from '../server/http.js';
 import type { PhotoContent } from '../server/photos.js';
 
-test('photos browser: HEIC preview, image-only send, paste/drop, failure retains draft, mobile picker', { timeout: 45000 }, async () => {
+test('photos browser: HEIC preview, image-only send, paste/drop, failure retains draft, desktop camera lifecycle, mobile picker', { timeout: 45000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-photo-browser-'));
   let event: (value: any) => void = () => {};
   const prompts: { text: string; images?: PhotoContent[] }[] = [];
@@ -36,7 +36,7 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
   const origin = `http://127.0.0.1:${port}`, token = 'photo-browser-fixture-'.repeat(4);
   const app = createApp(workspace, { token, origin, stateDir: dir, webDir: resolve('dist/web') });
   app.server.listen(port, '127.0.0.1'); await once(app.server, 'listening');
-  const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
+  const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
   try {
     const page = await browser.newPage();
     await page.goto(origin);
@@ -147,12 +147,76 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
     await send.click();
     await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
     assert.equal(prompts[1].text, 'look at these'); assert.equal(prompts[1].images?.length, 1);
+    // Exercise real getUserMedia with Chromium's fake camera; retain tracks to verify cleanup.
+    await page.evaluate(() => {
+      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      const camera = { tracks: [] as MediaStreamTrack[], mode: 'normal', release: undefined as (() => void) | undefined, requests: 0 };
+      (window as any).cameraTest = camera;
+      navigator.mediaDevices.getUserMedia = async constraints => {
+        camera.requests++;
+        if (camera.mode === 'denied') throw new DOMException('Denied', 'NotAllowedError');
+        if (camera.mode === 'missing') throw new DOMException('Missing', 'NotFoundError');
+        if (camera.mode === 'busy') throw new DOMException('Busy', 'NotReadableError');
+        const stream = await original(constraints);
+        camera.tracks.push(...stream.getTracks());
+        if (camera.mode === 'delayed') await new Promise<void>(resolve => { camera.release = resolve; });
+        return stream;
+      };
+    });
+    const cameraButton = page.getByRole('button', { name: 'Camera', exact: true });
+    const capture = page.getByRole('button', { name: 'Capture photo', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Take a photo' });
+    assert.equal(await cameraButton.isVisible(), true);
+    await cameraButton.click();
+    await capture.click();
+    await page.getByRole('img', { name: 'Captured photo', exact: true }).waitFor();
+    await page.waitForFunction(() => (window as any).cameraTest.tracks.every((track: MediaStreamTrack) => track.readyState === 'ended'));
+    await page.getByRole('button', { name: 'Retake', exact: true }).click();
+    await capture.click();
+    await page.getByRole('button', { name: 'Attach photo', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await page.locator('.draft-photo img').waitFor();
+    assert.equal(await page.locator('.draft-photo img').getAttribute('alt'), 'camera-photo.jpg');
+    await send.click();
+    await page.waitForFunction(() => !document.querySelector('.draft-photo'));
+    assert.equal(prompts[2].images?.length, 1);
+    assert.equal(prompts[2].images?.[0].mimeType, 'image/jpeg');
+    await cameraButton.click();
+    await page.waitForFunction(() => (document.querySelector('video') as HTMLVideoElement)?.videoWidth > 0);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => (window as any).cameraTest.tracks.every((track: MediaStreamTrack) => track.readyState === 'ended'));
+    assert.equal(await page.locator('.draft-photo').count(), 0);
+    assert.equal(await cameraButton.evaluate(element => element === document.activeElement), true);
+    for (const [mode, message] of [['denied', 'Camera permission was denied.'], ['missing', 'No camera was found.'], ['busy', 'The camera is busy or unavailable.']]) {
+      await page.evaluate(mode => { (window as any).cameraTest.mode = mode; }, mode);
+      await cameraButton.click();
+      await dialog.getByRole('alert').filter({ hasText: message }).waitFor();
+      assert.equal(await capture.isDisabled(), true);
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    }
+    await page.evaluate(() => { (window as any).cameraTest.mode = 'delayed'; });
+    await cameraButton.click();
+    await page.waitForFunction(() => !!(window as any).cameraTest.release);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.evaluate(() => (window as any).cameraTest.release());
+    await page.waitForFunction(() => (window as any).cameraTest.tracks.every((track: MediaStreamTrack) => track.readyState === 'ended'));
+    assert.equal(await dialog.count(), 0);
+    await picker.setInputFiles([0, 1, 2, 3].map(index => ({ name: `limit-${index}.png`, mimeType: 'image/png', buffer: png })));
+    await page.waitForFunction(() => document.querySelectorAll('.draft-photo img').length === 4);
+    assert.equal(await cameraButton.isDisabled(), true);
+    for (let index = 0; index < 4; index++) await page.getByRole('button', { name: `Remove limit-${index}.png`, exact: true }).click();
     const mobile = await browser.newPage({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
     await mobile.goto(origin); await mobile.getByLabel('Access token').fill(token);
     await mobile.getByRole('button', { name: 'Connect', exact: true }).click();
     await mobile.getByText('Ready', { exact: true }).waitFor();
     assert.equal(await mobile.getByRole('button', { name: 'Camera', exact: true }).isVisible(), true);
     assert.equal(await mobile.locator('input[capture]').getAttribute('capture'), 'environment');
+    await mobile.getByRole('button', { name: 'Camera', exact: true }).click();
+    const chooserPromise = mobile.waitForEvent('filechooser');
+    await mobile.getByRole('button', { name: 'Use photo picker', exact: true }).click();
+    const chooser = await chooserPromise;
+    assert.equal(await chooser.element().getAttribute('capture'), 'environment');
     await mobile.getByRole('table').waitFor();
     assert.equal(await mobile.getByRole('table').getByText('한글 🎉', { exact: true }).count(), 1);
     const scrollRegion = mobile.getByRole('region', { name: 'Markdown table' });

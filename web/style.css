@@ -102,6 +102,8 @@ button.secondary { background: #29333f; color: #e2e8ef; }
 .draft-photo { position: relative; flex-shrink: 0; width: 140px; min-height: 88px; padding-right: 28px; }
 .draft-photo span { display: block; font-size: 12px; overflow-wrap: anywhere; }
 .draft-photo button { position: absolute; right: 0; top: 0; padding: 0 8px; }
-.camera-button { display: none; }
-@media (pointer: coarse) { .camera-button { display: block; } }
+.camera-dialog { width: min(640px, 90vw); max-height: 90dvh; overflow: auto; border-radius: 12px; padding: 20px; background: var(--bg, #18202b); color: inherit; }
+.camera-dialog::backdrop { background: #0009; }
+.camera-preview { display: block; width: 100%; max-height: 60dvh; object-fit: contain; background: #000; margin-bottom: 12px; }
+.camera-dialog select { margin: 8px; max-width: 100%; }
 @media (max-height: 500px) { .conversation-context { display: none; } }
