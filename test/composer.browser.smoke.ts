@@ -40,6 +40,39 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.getByLabel('Access token').fill(token);
       await page.getByRole('button', { name: 'Connect', exact: true }).click();
       await page.getByText('Ready', { exact: true }).waitFor();
+      // Simulate delayed media/tool layout without a new server snapshot.
+      const transcript = page.locator('.transcript');
+      await transcript.evaluate(el => {
+        const fixture = document.createElement('div');
+        fixture.id = 'scroll-fixture';
+        fixture.style.height = '2000px';
+        el.firstElementChild!.append(fixture);
+      });
+      const atBottom = () => page.waitForFunction(() => {
+        const el = document.querySelector('.transcript')!;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+      });
+      await atBottom();
+      await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '3000px'; });
+      await atBottom();
+      await page.setViewportSize({ width: 900, height: 500 });
+      await atBottom();
+      await transcript.evaluate(el => { el.scrollTop -= 500; });
+      await page.waitForTimeout(100);
+      const readingTop = await transcript.evaluate(el => el.scrollTop);
+      await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '4000px'; });
+      await page.waitForTimeout(100);
+      assert.equal(await transcript.evaluate(el => el.scrollTop), readingTop, 'layout growth must not pull a reader down');
+      await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; });
+      await page.waitForTimeout(100);
+      await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '5000px'; });
+      await atBottom();
+      await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+      await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '6000px'; });
+      await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+      await atBottom();
+      await page.locator('#scroll-fixture').evaluate(el => el.remove());
+      await page.setViewportSize({ width: 1280, height: 720 });
       const input = page.getByLabel('Message', { exact: true });
       const send = page.getByRole('button', { name: 'Send', exact: true });
       const exampleButton = page.getByRole('button', { name: example, exact: true });
