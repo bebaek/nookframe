@@ -38,10 +38,16 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       'const fs = require("node:fs"); for (const guide of ["mail", "google", "calendar"]) {' +
       'if (!fs.readFileSync(`/app/docs/${guide}.md`, "utf8").trim()) throw new Error(`Empty guide: ${guide}`); }');
     container('exec', name, 'sh', '-ec',
-      'for tool in git gh node npm python3 make g++ kubectl sops ssh age jq rsync chromium imagectl; do command -v "$tool"; done; ' +
+      'for tool in git gh node npm python python3 make g++ kubectl sops ssh age jq rsync chromium imagectl; do command -v "$tool"; done; ' +
       'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
       'test "$BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium; ' +
       'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /workspace/compiler-smoke; /workspace/compiler-smoke');
+    const pythonProbe = 'import json, os, sys; print(json.dumps({"executable": os.path.realpath(sys.executable), "major": sys.version_info.major, "sum": sum(json.loads("[1, 2, 3]"))}))';
+    const python3 = JSON.parse(container('exec', name, 'python3', '-c', pythonProbe));
+    const python = JSON.parse(container('exec', name, 'python', '-c', pythonProbe));
+    assert.equal(python3.major, 3);
+    assert.equal(python3.sum, 6);
+    assert.deepEqual(python, python3, 'python and python3 must resolve to the same Python 3 interpreter');
     assert.match(container('exec', name, 'chromium', '--headless', '--no-sandbox', '--disable-dev-shm-usage',
       '--dump-dom', 'data:text/html,<title>workstation-smoke</title>'), /<title>workstation-smoke<\/title>/);
     browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });

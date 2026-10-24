@@ -17,7 +17,7 @@ RUN npm run build && npm prune --omit=dev --ignore-scripts
 FROM docker.io/library/node:24-bookworm-slim
 # Trusted personal development/admin workstation; no container daemon or sudo.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash git curl ca-certificates ripgrep python3 python3-yaml make g++ pkg-config \
+    bash git curl ca-certificates ripgrep python3 python-is-python3 python3-yaml make g++ pkg-config \
     gh openssh-client age jq rsync less procps unzip chromium \
     fonts-noto-cjk fonts-noto-color-emoji \
     tini isync notmuch libsasl2-modules-kdexoauth2 \
