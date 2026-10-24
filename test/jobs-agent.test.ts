@@ -29,7 +29,7 @@ test('real RPC background profile declares only read tools and rejects model-req
   // Configured tools and executable resources must not widen the profile.
   const extension = join(dir, 'unexpected-extension.js');
   await writeFile(extension, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(forbidden)}, 'loaded'); export default () => {};`);
-  await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultTools: ['bash', 'write', 'edit'], extensions: [extension] }));
+  await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultTools: ['bash', 'write', 'edit'], extensions: [extension], skills: [resolve('skills/jobs/SKILL.md')] }));
   const client = new ConfirmedRpcClient({ cliPath: resolve('dist/server/jobs/pi-worker.js'), cwd: dir, env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1', PI_TELEMETRY: '0' }, provider: 'fixture', model: 'fixture', args: ['--no-session', ...backgroundArgs] });
   try {
     await client.start();

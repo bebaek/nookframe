@@ -40,7 +40,7 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       'const fs = require("node:fs"); for (const guide of ["mail", "google", "calendar"]) {' +
       'if (!fs.readFileSync(`/app/docs/${guide}.md`, "utf8").trim()) throw new Error(`Empty guide: ${guide}`); }');
     container('exec', name, 'sh', '-ec',
-      'for tool in git gh node npm python python3 make g++ kubectl sops ssh age jq rsync chromium imagectl; do command -v "$tool"; done; ' +
+      'for tool in git gh node npm python python3 make g++ kubectl sops ssh age jq rsync chromium imagectl nookframe; do command -v "$tool"; done; ' +
       'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
       'test "$BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium; ' +
       'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /workspace/compiler-smoke; /workspace/compiler-smoke');
@@ -62,6 +62,10 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByText('Ready', { exact: true }).waitFor();
     container('exec', name, 'test', '-r', '/app/skills/images/SKILL.md');
+    container('exec', name, 'test', '-r', '/app/skills/jobs/SKILL.md');
+    const jobsStatus = JSON.parse(container('exec', name, 'nookframe', 'jobs', 'status'));
+    assert.equal(jobsStatus.schedulingAvailable, false);
+    assert.equal(jobsStatus.runnerLiveness, 'unknown');
     // Exec/terminal processes have no selected chat. Bind the CLI explicitly;
     // real chat agents receive this identity in NOOKFRAME_IMAGE_THREAD_ID.
     const threadId = await page.getByLabel('Thread', { exact: true }).inputValue();

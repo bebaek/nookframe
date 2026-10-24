@@ -26,13 +26,14 @@ test('real pi RPC writes a file and restores persisted session after replacement
     cliPath: join(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent/rpc-entry'))), 'cli.js'),
     cwd,
     env: { NOOKFRAME_PRESENCE_DIR: join(dir, 'presence'), NOOKFRAME_PRESENCE_THREAD_ID: 'workspace', PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_OFFLINE: '1', PI_TELEMETRY: '0' },
-    args: ['--session-id', 'workspace', '--session-dir', join(dir, 'sessions'), '--no-extensions', '--extension', join(process.cwd(), 'dist/server/client-context-extension.js'), '--extension', join(process.cwd(), 'dist/server/agent-presence-extension.js'), '--extension', join(process.cwd(), 'test/fixtures/presence-probe.ts'), '--no-approve', '--skill', join(process.cwd(), 'skills/mail/SKILL.md'), '--skill', join(process.cwd(), 'skills/calendar/SKILL.md')],
+    args: ['--session-id', 'workspace', '--session-dir', join(dir, 'sessions'), '--no-extensions', '--extension', join(process.cwd(), 'dist/server/client-context-extension.js'), '--extension', join(process.cwd(), 'dist/server/agent-presence-extension.js'), '--extension', join(process.cwd(), 'test/fixtures/presence-probe.ts'), '--no-approve', '--skill', join(process.cwd(), 'skills/mail/SKILL.md'), '--skill', join(process.cwd(), 'skills/calendar/SKILL.md'), '--skill', join(process.cwd(), 'skills/jobs/SKILL.md')],
   };
   let client = new RpcClient(options);
   try {
     await client.start();
     assert.ok((await client.getCommands()).some(command => command.name === 'skill:mail'), 'Mail skill is discoverable with extensions/project resources disabled');
     assert.ok((await client.getCommands()).some(command => command.name === 'skill:calendar'), 'Calendar skill is discoverable');
+    assert.ok((await client.getCommands()).some(command => command.name === 'skill:jobs'), 'Jobs skill is available to interactive agents');
     assert.ok((await client.getCommands()).some(command => command.name === clientContextCommand));
     assert.equal(await client.prompt('/presence-probe'), 'handled');
     assert.equal(JSON.parse(await readFile(join(cwd, 'presence-probe.json'), 'utf8')).registered, true, 'Presence tool loads through the real Pi extension loader');
