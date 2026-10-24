@@ -192,6 +192,15 @@ export function createApp(workspace: Workspace | Workspaces, config: { promptExa
   let timer: ReturnType<typeof setTimeout> | undefined;
   const dirty = new Set<Workspace>();
   const unsubscribe = workspace.subscribe((changed?: Workspace) => {
+    if (pool) {
+      const ids = new Set(pool.snapshot().threads.map(thread => thread.id));
+      for (const [ws, lease] of selected) {
+        if (!ids.has(lease.workspace.state.threadId)) {
+          lease.release(); selected.delete(ws);
+          send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
+        }
+      }
+    }
     if (changed) dirty.add(changed);
     timer ??= setTimeout(() => {
       timer = undefined;
@@ -267,11 +276,12 @@ export function createApp(workspace: Workspace | Workspaces, config: { promptExa
         if (typeof command.id !== 'string' || command.id.length > 100) throw new Error('Request ID required');
         id = command.id;
         if (commandPending) throw new Error('A command is pending');
-        if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread'].includes(command.type)) throw new Error('Unsupported command');
+        if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread', 'delete_thread'].includes(command.type)) throw new Error('Unsupported command');
         const current = selected.get(ws)?.workspace ?? single;
         if (pool && command.threadId !== (current?.state.threadId ?? '')) throw new Error('The selected thread changed. Review it before retrying.');
         current?.assertThread(command.threadId);
         if (command.type === 'switch_thread' && (typeof command.targetId !== 'string' || !command.targetId || command.targetId.length > 255)) throw new Error('Thread ID required');
+        if (command.type === 'delete_thread' && (!pool || !current || command.targetId !== current.state.threadId)) throw new Error('Select the thread to delete first');
         if (command.type === 'set_model' && (typeof command.provider !== 'string' || !command.provider || command.provider.length > 200 || typeof command.modelId !== 'string' || !command.modelId || command.modelId.length > 500)) throw new Error('Provider and model ID required');
         if (command.type === 'prompt') {
           if (command.photos !== undefined && (!Array.isArray(command.photos) || command.photos.length > 4 || !command.photos.every(validPhotoId))) throw new Error('Attach at most four valid photos');
@@ -291,6 +301,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { promptExa
             current.assertThread(command.threadId);
             await current.prompt(command.text, images, command.clientContext);
           }
+          else if (command.type === 'delete_thread') await pool!.deleteThread(command.targetId);
           else if (command.type === 'new_thread' || command.type === 'switch_thread') {
             if (pool) {
               const lease = await pool.connect(command.targetId, command.type === 'new_thread');

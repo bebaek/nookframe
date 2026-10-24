@@ -189,7 +189,11 @@ and credentials, but use separate agent processes. Thread titles come from the f
 - The web's saved model/environment override remains in effect when resuming old
   threads. Without a configured choice, pi's normal session model behavior applies.
 - The picker only includes the server-owned `workspace-sessions` directory, not
-  independent terminal pi sessions. No delete, fork, or in-thread branch UI yet.
+  independent terminal pi sessions. **Delete thread** permanently removes the
+  selected idle thread after confirmation, including its saved conversation and
+  per-thread settings. Tabs viewing it return to an empty selection. Running
+  threads and threads owned by another server cannot be deleted. Shared workspace
+  files, upload caches, and backups are not deleted. No fork or in-thread branch UI yet.
 - Include the entire sessions directory (including `.nookframe` thread settings)
   and legacy preferences in your private backups. See [ownership and lifecycle](docs/session-concurrency.md).
 - At most four agents are resident; unviewed idle agents are reclaimed. Shared

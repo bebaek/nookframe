@@ -55,6 +55,13 @@ export class ThreadStore {
       renameSync(temporary, this.preference);
     } finally { if (existsSync(temporary)) unlinkSync(temporary); }
   }
+  delete(id: string) {
+    const file = this.path(id);
+    // Clear legacy selection first: a failed unlink must not leave a dangling
+    // preference that prevents startup. Other sessions remain discoverable.
+    if (existsSync(this.preference) && JSON.parse(readFileSync(this.preference, 'utf8')).file === id) unlinkSync(this.preference);
+    unlinkSync(file);
+  }
   async list(): Promise<ThreadChoice[]> {
     const sessions = await SessionManager.list(this.cwd, this.directory);
     return sessions.flatMap(session => {

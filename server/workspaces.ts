@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import lockfile from 'proper-lockfile';
 import type { Snapshot, ThreadChoice } from '../shared/protocol.js';
@@ -6,7 +7,7 @@ import { Workspace } from './workspace.js';
 import type { ThreadStore } from './threads.js';
 
 export interface WorkspaceLease { workspace: Workspace; release(): void }
-type Entry = { workspace: Workspace; refs: number; used: number; releaseLock: () => Promise<void>; unsubscribe: () => void };
+type Entry = { workspace: Workspace; refs: number; used: number; ownsLock: () => boolean; releaseLock: () => Promise<void>; unsubscribe: () => void };
 
 // One writer per session file, and one selection per connection. Opening/evicting
 // is serialized, but independent agents run concurrently after acquisition.
@@ -17,7 +18,7 @@ export class Workspaces {
   private closing = false;
   private catalog: ThreadChoice[] = [];
   private timer: ReturnType<typeof setInterval>;
-  constructor(readonly threads: ThreadStore, readonly defaultId: string,
+  constructor(readonly threads: ThreadStore, public defaultId: string,
     private factory: (file: string, stateDir: string) => { workspace: Workspace; start(): Promise<void> },
     private maxAgents = 4, private idleMs = 5 * 60_000) {
     this.timer = setInterval(() => { void this.serial(async () => {
@@ -80,7 +81,7 @@ export class Workspaces {
           if (workspace.state.threadId !== key) throw new Error('Thread load was not confirmed');
           if (compromised) { workspace.ownershipLost(); throw new Error('Thread ownership was lost'); }
           this.catalog = await this.threads.list();
-          entry = { workspace, refs: 0, used: Date.now(), releaseLock, unsubscribe: workspace.subscribe(() => {
+          entry = { workspace, refs: 0, used: Date.now(), ownsLock: () => !compromised, releaseLock, unsubscribe: workspace.subscribe(() => {
             if (entry) entry.used = Date.now();
             this.changed(workspace);
           }) };
@@ -99,6 +100,38 @@ export class Workspaces {
         if (released) return;
         released = true; entry.refs--; entry.used = Date.now();
       } };
+    });
+  }
+  deleteThread(id: string): Promise<void> {
+    return this.serial(async () => {
+      if (this.closing) throw new Error('Workspace is shutting down');
+      const file = this.threads.path(id);
+      const entry = this.entries.get(id);
+      if (entry && (!entry.workspace.state.available || !entry.ownsLock())) throw new Error('Thread ownership or run status is uncertain. Restart and inspect it before deleting it.');
+      if (entry && !entry.workspace.idle) throw new Error('Wait until the thread finishes running before deleting it');
+      // Retain exclusive ownership through stop and unlink. close() marks the
+      // workspace unavailable synchronously, preventing new prompts in other tabs.
+      let release: () => Promise<void>;
+      if (entry) {
+        await entry.workspace.close();
+        if (!entry.ownsLock()) throw new Error('Thread ownership was lost; deletion cancelled');
+        release = entry.releaseLock;
+      } else {
+        try { release = await lockfile.lock(file, { retries: 0, stale: 30_000, update: 10_000 }); }
+        catch { throw new Error('This thread is owned by another server. Close it there before deleting it.'); }
+      }
+      try {
+        this.threads.delete(id);
+        // Only per-thread preferences/markers; shared uploads and workspace
+        // files are deliberately untouched.
+        rmSync(join(this.threads.directory, '.nookframe', createHash('sha256').update(id).digest('hex')), { recursive: true, force: true });
+      } finally {
+        await release();
+        if (entry) { entry.unsubscribe(); this.entries.delete(id); }
+        this.catalog = await this.threads.list();
+        if (!this.catalog.some(thread => thread.id === this.defaultId)) this.defaultId = this.catalog[0]?.id ?? '';
+        this.changed();
+      }
     });
   }
   assertThread(id: unknown) {

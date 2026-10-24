@@ -109,6 +109,18 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     assert.equal(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await mkdir('.local', { recursive: true });
     await a.screenshot({ path: '.local/threads-mobile-smoke.png', fullPage: false });
+    await a.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    a.once('dialog', dialog => void dialog.dismiss());
+    await a.getByRole('button', { name: 'Delete thread', exact: true }).click();
+    await selected(a, second);
+    a.once('dialog', dialog => void dialog.accept());
+    await a.getByRole('button', { name: 'Delete thread', exact: true }).click();
+    await selected(a, ''); await selected(b, '');
+    assert.equal(await a.locator('#thread option').count(), 3, 'two remaining threads plus placeholder');
+    assert.equal(await b.locator('article.message').count(), 0);
+    assert.equal((await store.list()).some(thread => thread.id === second), false);
+    await a.getByRole('button', { name: 'New thread', exact: true }).click();
+    await a.waitForFunction(() => !!(document.querySelector('#thread') as HTMLSelectElement)?.value);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await app.close(); await workspace.close(); await rm(dir, { recursive: true, force: true }); }
 });

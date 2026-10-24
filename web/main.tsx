@@ -176,7 +176,7 @@ function App() {
   const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
-  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread', model?: ModelChoice, targetId?: string) {
+  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread', model?: ModelChoice, targetId?: string) {
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
     const id = crypto.randomUUID();
     const threadId = state?.threadId ?? '';
@@ -204,6 +204,10 @@ function App() {
           {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.busy ? 'Working · ' : ''}{unread.has(thread.id) ? 'New · ' : ''}{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
         </select>
         <button type="button" disabled={!connected || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
+        <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || state.modelChanging || state.threadChanging} onClick={() => {
+          const title = state.threads.find(thread => thread.id === state.threadId)?.title || 'this thread';
+          if (window.confirm(`Permanently delete “${title}”? This removes its saved conversation, not shared workspace files. This cannot be undone.`)) command('delete_thread', undefined, state.threadId);
+        }}>Delete thread</button>
         <small>{state.threadChanging ? 'Switching…' : 'Selected in this tab only · other threads keep running · same files'}</small>
       </section>}
       {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} onChange={e => {
