@@ -1,5 +1,10 @@
 :root { color-scheme: dark; font-family: system-ui, sans-serif; color: #e2e8ef; background: #101419; }
 * { box-sizing: border-box; }
+.agent-presence { padding: 6px 16px; border-bottom: 1px solid #46576a; font-size: .85rem; overflow-wrap: anywhere; flex-shrink: 0; }
+.agent-presence details[open] { max-height: 30vh; overflow-y: auto; }
+.agent-presence article { border-top: 1px solid #46576a; padding: 8px 0; }
+.agent-presence p { margin: 4px 0; }
+.agent-presence summary { cursor: pointer; }
 .markdown { line-height: 1.6; overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }

@@ -17,8 +17,9 @@ import { PhotoStore, validPhotoId, MAX_PHOTO_BYTES, type PhotoContent } from './
 import { ArtifactStore } from './artifacts.js';
 
 import { defaultPromptExamples } from './prompt-examples.js';
+import type { PresenceStore } from './agent-presence.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   const single = pool ? undefined : workspace as Workspace;
@@ -106,6 +107,15 @@ export function createApp(workspace: Workspace | Workspaces, config: { promptExa
         }
         res.end(JSON.stringify({ ok: true }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
+      return;
+    }
+    if (req.url === '/agent-presence') {
+      if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+      if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+      res.setHeader('Content-Type', 'application/json');
+      if (!config.presence) { res.writeHead(404).end(); return; }
+      try { res.end(JSON.stringify(config.presence.list())); }
+      catch { res.writeHead(503).end(JSON.stringify({ error: 'Agent presence unavailable; do not assume resources are free' })); }
       return;
     }
     if (req.url?.startsWith('/artifacts/')) {

@@ -20,6 +20,7 @@ import { allowedBrowserOrigins } from './origins.js';
 import { piExtensionArgs } from './pi-extensions.js';
 import { parsePromptExamples } from './prompt-examples.js';
 import { clientContextCommand } from './client-context-extension.js';
+import { PresenceStore } from './agent-presence.js';
 
 const extensionArgs = piExtensionArgs(process.env.NOOKFRAME_PI_EXTENSIONS);
 const promptExamples = parsePromptExamples(process.env.NOOKFRAME_PROMPT_EXAMPLES);
@@ -43,16 +44,20 @@ resolveModelSelection(stateDir, agentDir, process.env);
 // The published CLI lives beside the exported bundled RPC entry, not dist/cli.js.
 const cliPath = join(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent/rpc-entry'))), 'cli.js');
 const threads = new ThreadStore(join(agentDir, 'workspace-sessions'), workspaceDir, stateDir);
+// The shared agent directory is the existing single-owner trust boundary, not
+// the per-slot state directory. Never share this registry across tenants.
+const presenceDir = process.env.NOOKFRAME_AGENT_PRESENCE === '0' ? '' : join(agentDir, 'agent-presence');
+const presence = presenceDir ? new PresenceStore(presenceDir) : undefined;
 const initialThread = await threads.initial();
 const jobStore = new JobStore(resolve(process.env.NOOKFRAME_JOBS_DIR ?? join(stateDir, 'jobs')));
 const workspace = new Workspaces(threads, threads.id(initialThread), (file, threadStateDir, background) => {
   const selection = resolveModelSelection(existsSync(join(threadStateDir, 'model.json')) ? threadStateDir : stateDir, agentDir, process.env);
   const client = new ConfirmedRpcClient({
     cliPath: background ? fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './jobs/pi-worker.ts' : './jobs/pi-worker.js', import.meta.url)) : cliPath, cwd: workspaceDir,
-    env: { NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
+    env: { NOOKFRAME_PRESENCE_DIR: background ? '' : presenceDir, NOOKFRAME_PRESENCE_THREAD_ID: threads.id(file), NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
     provider: selection.model?.provider,
     model: selection.model?.id,
-    args: ['--session', file, '--session-dir', threads.directory, ...(background ? backgroundArgs : [...extensionArgs, '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './client-context-extension.ts' : './client-context-extension.js', import.meta.url)), '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')])],
+    args: ['--session', file, '--session-dir', threads.directory, ...(background ? backgroundArgs : [...extensionArgs, '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './agent-presence-extension.ts' : './agent-presence-extension.js', import.meta.url)), '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './client-context-extension.ts' : './client-context-extension.js', import.meta.url)), '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')])],
   });
   const controller = new Workspace(client, threadStateDir, selection, threads, true, background ? undefined : async context => {
     const disposition = await client.prompt(`/${clientContextCommand} ${JSON.stringify(context ?? null)}`);
@@ -72,7 +77,7 @@ const jobRunner = process.env.NOOKFRAME_JOBS_SLOT && process.env.NOOKFRAME_JOBS_
 await jobRunner?.start();
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
 const app = createApp(workspace, {
-  token, origin: publicOrigin, allowedOrigins, promptExamples,
+  token, origin: publicOrigin, allowedOrigins, promptExamples, presence,
   mail: mailOAuth, calendar: calendar.oauth,
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {

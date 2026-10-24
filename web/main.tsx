@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice } from '../shared/protocol';
 import './style.css';
 import { ToolCard } from './ToolCard';
+import { AgentPresence } from './AgentPresence';
 import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
@@ -223,6 +224,7 @@ function App() {
       </section>
       <section className="chat-pane" hidden={tab !== 'chat'}>
       <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
+      <AgentPresence threadId={state?.threadId} />
       <main className="transcript" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2>
           {!!state?.promptExamples?.length && <div className="prompt-examples" aria-label="Prompt examples">{state.promptExamples.map((example, index) =>
