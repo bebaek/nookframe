@@ -40,6 +40,7 @@ COPY --chmod=0755 scripts/mailctl /usr/local/bin/mailctl
 COPY --chmod=0755 scripts/imagectl /usr/local/bin/imagectl
 COPY --chmod=0755 scripts/calendarctl /usr/local/bin/calendarctl
 COPY --chmod=0755 scripts/googlectl /usr/local/bin/googlectl
+COPY --chmod=0755 scripts/nookframe /usr/local/bin/nookframe
 COPY --chmod=0644 google/README.md ./docs/google.md
 COPY --chmod=0644 calendar/README.md ./docs/calendar.md
 COPY --chmod=0755 scripts/pi-mail-token /usr/local/libexec/pi-mail-token

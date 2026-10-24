@@ -20,6 +20,7 @@
     "mail": "tsx mail/cli.ts",
     "calendar": "tsx calendar/cli.ts",
     "google": "tsx google/cli.ts",
+    "jobs": "tsx server/jobs/cli.ts jobs",
     "test:mail-container": "node scripts/run-tests.mjs --container test/mail.container.smoke.ts"
   },
   "dependencies": {
