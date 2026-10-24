@@ -6,9 +6,9 @@ import { JobStore, activeRun } from './jobs/store.js';
 import { JobRunner } from './jobs/runner.js';
 import { Workspace } from './workspace.js';
 import { Workspaces } from './workspaces.js';
-import { existsSync } from 'node:fs';
 import { createApp } from './http.js';
 import { resolveModelSelection } from './models.js';
+import { ModelOperations, selectThreadModel } from './model-operations.js';
 import { TerminalSession } from './terminal.js';
 import { ThreadStore } from './threads.js';
 import { MailStore } from '../mail/store.js';
@@ -51,8 +51,8 @@ const presenceDir = process.env.NOOKFRAME_AGENT_PRESENCE === '0' ? '' : join(age
 const presence = presenceDir ? new PresenceStore(presenceDir) : undefined;
 const initialThread = await threads.initial();
 const jobStore = new JobStore(resolve(process.env.NOOKFRAME_JOBS_DIR ?? join(stateDir, 'jobs')));
-const workspace = new Workspaces(threads, threads.id(initialThread), (file, threadStateDir, background) => {
-  const selection = resolveModelSelection(existsSync(join(threadStateDir, 'model.json')) ? threadStateDir : stateDir, agentDir, process.env);
+const workspace = new Workspaces(threads, threads.id(initialThread), (file, threadStateDir, background, newlyCreated) => {
+  const selection = selectThreadModel(stateDir, threadStateDir, agentDir, process.env, newlyCreated);
   const client = new ConfirmedRpcClient({
     cliPath: background ? fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './jobs/pi-worker.ts' : './jobs/pi-worker.js', import.meta.url)) : cliPath, cwd: workspaceDir,
     env: { NOOKFRAME_PRESENCE_DIR: background ? '' : presenceDir, NOOKFRAME_PRESENCE_THREAD_ID: threads.id(file), NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
@@ -77,12 +77,14 @@ await workspace.initialize();
 const jobRunner = process.env.NOOKFRAME_JOBS_SLOT && process.env.NOOKFRAME_JOBS_SLOT === process.env.NOOKFRAME_SLOT ? new JobRunner(jobStore, workspace) : undefined;
 await jobRunner?.start();
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
+const modelOperations = new ModelOperations(stateDir, agentDir, process.env, id => workspace.operationWorkspace(id));
 const app = createApp(workspace, {
+  modelOperations,
   token, origin: publicOrigin, allowedOrigins, promptExamples, presence,
   operations: {
     status: () => ({ schemaVersion: 1, slot: process.env.NOOKFRAME_SLOT ?? null, uptimeSeconds: Math.floor(process.uptime()),
-      capabilities: { inspection: true, mutations: false, presence: !!presence, jobRunner: !!jobRunner } }),
-    config: () => ({ model: explainModel(resolveModelSelection(stateDir, agentDir, process.env)) }),
+      capabilities: { inspection: true, mutations: true, modelPlans: true, presence: !!presence, jobRunner: !!jobRunner } }),
+    config: () => ({ model: { ...explainModel(resolveModelSelection(stateDir, agentDir, process.env)), scope: 'legacy-thread-fallback' }, newThreads: modelOperations.defaults() }),
     sessions: () => workspace.operationSessions(),
   },
   mail: mailOAuth, calendar: calendar.oauth,
@@ -101,7 +103,7 @@ async function shutdown() {
   if (closing) return;
   closing = true;
   const deadline = setTimeout(() => process.exit(1), 15000);
-  try { await app.close(); await mailScheduler.close(); await jobRunner?.close(); await workspace.close(); }
+  try { modelOperations.close(); await app.close(); await mailScheduler.close(); await jobRunner?.close(); await workspace.close(); }
   finally { clearTimeout(deadline); process.exit(0); }
 }
 process.on('SIGTERM', () => { void shutdown(); });

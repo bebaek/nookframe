@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { RpcClient, JsonAgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { ChatMessage, Snapshot, ToolOperation } from '../shared/protocol.js';
@@ -30,6 +31,7 @@ export function displayMessage(message: unknown, id: number): ChatMessage | unde
 // One controller owns one pi session. Browser connections never own the agent.
 export class Workspace {
   state: Snapshot = { messages: [], liveText: '', tools: {}, busy: false, available: true, model: '', models: [], modelSource: 'pi', modelChanging: false, notice: '', threadId: '', threads: [], threadChanging: false };
+  modelRevision = randomUUID();
   private listeners = new Set<() => void>();
   private nextId = 0;
   private blocks = new Map<number, string>();
@@ -329,6 +331,7 @@ export class Workspace {
       this.state.model = `${provider}/${modelId}`;
       this.state.modelSource = 'saved';
       this.selection = { source: 'saved', model: { provider, id: modelId } };
+      this.modelRevision = randomUUID();
     } catch {
       // Switching may have succeeded even if RPC or the persistence write failed.
       // Do not allow a prompt under an uncertain model or silently lose the choice.
@@ -377,7 +380,7 @@ export class Workspace {
     this.stopping = true;
     try { await this.agent.clearQueue(); await this.agent.abort(); }
     catch { this.fail(); throw new Error('Could not confirm cancellation'); }
-    finally { this.stopping = false; }
+    finally { this.stopping = false; this.changed(); }
   }
 
   ownershipLost() {
