@@ -16,6 +16,18 @@ are also reclaimed after about five minutes. Busy agents and agents still viewed
 by a browser are never reclaimed. If all slots are occupied, close an idle tab or
 wait for background work to finish. Reopening a reclaimed thread reloads its JSONL.
 
+To transfer an idle thread to another slot immediately, choose **Release thread**
+under Workspace controls on the owning slot. This stops its agent, confirms exit,
+and releases ownership without the idle timeout. Saved messages, preferences,
+and job history are kept. Release is refused while work is active, ownership is
+uncertain, or another tab/lease is viewing the thread on that slot. Close other
+viewers first. Stop alone and ordinary navigation still retain the cached agent.
+
+Successful release leaves this tab at the thread chooser; refresh and reconnect
+keep it there until you explicitly select a thread. A lost acknowledgement is
+not retried and also leaves reconnect at the chooser, avoiding accidental
+reacquisition. Release does not force ownership away from another slot.
+
 Before starting/loading an agent, the server acquires a `proper-lockfile` lock on
 the validated session JSONL path (30-second stale timeout, 10-second heartbeat).
 Ownership lasts until the agent has stopped. A second server cannot load a

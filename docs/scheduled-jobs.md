@@ -123,6 +123,11 @@ they do not need to switch threads. The session lock is held continuously across
 this handoff—background ownership is relinquished by process exit without an
 unlocked interval in which another server could start a writer. Following up uses
 normal interactive permissions. The original run status and summary stay immutable.
+To move this completed thread to another slot, close other viewers and choose
+**Release thread** in Workspace controls on the owning slot. This stops the idle
+interactive agent and releases its lock immediately; it does not delete the
+conversation or change the job/run. Running, stopping, and uncertain jobs cannot
+be explicitly released.
 
 If termination or persistence is uncertain, no interactive replacement starts.
 The run stays blocked and is never automatically retried. On restart, dispatched

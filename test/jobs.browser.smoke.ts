@@ -78,10 +78,31 @@ test('background thread: two viewers, Stop, confirmed shutdown and same-thread c
       assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
     }
     assert.deepEqual(profiles, [true, false]);
+    await b.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await b.getByRole('button', { name: 'Release thread', exact: true }).click();
+    await b.getByText('Close other tabs viewing this thread on this slot before releasing it', { exact: true }).waitFor();
+    assert.equal(await b.getByLabel('Thread', { exact: true }).inputValue(), threadId);
+    await b.getByRole('button', { name: 'Close controls', exact: true }).click();
+    await a.close();
     await b.getByRole('button', { name: 'Send', exact: true }).click();
     await b.waitForFunction(() => document.querySelector('textarea')?.value === '');
     assert.deepEqual(prompts, ['Background review', 'Follow up']);
     assert.equal((await store.runs())[0].status, 'cancelled');
+    await b.getByRole('button', { name: 'Stop', exact: true }).click();
+    await b.getByText('Ready', { exact: true }).waitFor();
+    await b.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await b.getByRole('button', { name: 'Release thread', exact: true }).click();
+    await b.getByText('Thread released. You can open it on another slot now.', { exact: true }).waitFor();
+    assert.equal(await b.getByLabel('Thread', { exact: true }).inputValue(), '');
+    assert.equal(new URL(b.url()).hash, '');
+    await b.reload();
+    await b.getByText('Ready', { exact: true }).waitFor();
+    assert.equal(await b.getByLabel('Thread', { exact: true }).inputValue(), '');
+    assert.deepEqual(profiles, [true, false], 'refresh must not reacquire the released thread');
+    await b.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await b.getByLabel('Thread', { exact: true }).selectOption(threadId);
+    await b.waitForFunction(() => document.querySelector<HTMLSelectElement>('#thread')?.value !== '');
+    assert.deepEqual(profiles, [true, false, false]);
   } finally {
     releaseStops = true; finishStop?.(); await browser.close(); await app.close(); await runner.close(); await pool.close(); await rm(dir, { recursive: true, force: true });
   }
