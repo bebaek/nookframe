@@ -198,6 +198,12 @@ and credentials, but use separate agent processes. Thread titles come from the f
   and legacy preferences in your private backups. See [ownership and lifecycle](docs/session-concurrency.md).
 - At most four agents are resident; unviewed idle agents are reclaimed. Shared
   filesystem access is not isolated: use separate worktrees for parallel coding.
+- **Active runs** shows participating agents' explicit intent, advisory resource
+  claims, and conflicts across slots sharing the same agent directory. Agents use
+  the `agent_presence` tool to inspect and update these summaries; chats and tool
+  outputs are not copied. Stale/incomplete visibility does not mean resources are
+  free. Claims are not locks. See [presence and trust limits](docs/session-concurrency.md#agent-presence-and-advisory-claims).
+  Set `NOOKFRAME_AGENT_PRESENCE=0` to disable this integration.
 
 ## Client timezone and city
 

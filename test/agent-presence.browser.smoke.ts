@@ -1,0 +1,51 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { chromium } from 'playwright';
+import { PresenceStore, PRESENCE_STALE_MS } from '../server/agent-presence.js';
+import { Workspace, type Agent } from '../server/workspace.js';
+import { createApp } from '../server/http.js';
+
+test('browser shows cross-run conflicts, stale warnings, and escaped summaries', { timeout: 30000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'presence-browser-'));
+  let now = Date.now();
+  const presence = new PresenceStore(join(dir, 'presence'), () => now);
+  const a = presence.start({ threadId: 'a', slot: 'main', cwd: dir });
+  const b = presence.start({ threadId: 'b', slot: 'fallback', cwd: dir });
+  a.publish('<script>fixture injection</script>', [{ kind: 'resource', value: 'deploy:main' }]);
+  b.publish('Second run', [{ kind: 'resource', value: 'deploy:main' }]);
+  now += PRESENCE_STALE_MS; a.heartbeat();
+  const workspace = new Workspace({ onEvent() { return () => {}; }, async stop() {} } as unknown as Agent, join(dir, 'state'));
+  const { createServer } = await import('node:net');
+  const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
+  const address = reservation.address(); assert.ok(address && typeof address !== 'string');
+  const port = address.port; await new Promise<void>(resolve => reservation.close(() => resolve()));
+  const origin = `http://127.0.0.1:${port}`; const token = 'fixture-presence-token'.repeat(3);
+  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web'), stateDir: dir, presence });
+  const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
+  try {
+    app.server.listen(port, '127.0.0.1'); await once(app.server, 'listening');
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(origin);
+    assert.equal(await page.getByRole('region', { name: 'Agent presence' }).count(), 0);
+    await page.getByLabel('Access token').fill(token); await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Agent presence' });
+    await panel.getByText('Resource claim conflicts:', { exact: false }).waitFor();
+    await panel.getByText('Active runs (2)', { exact: true }).click();
+    await panel.getByText('Other thread · fallback · Stale / uncertain', { exact: true }).waitFor();
+    await panel.getByText('<script>fixture injection</script>', { exact: true }).waitFor();
+    assert.equal(await panel.locator('script').count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    b.close(); await panel.getByText('Active runs (1)', { exact: true }).waitFor();
+    assert.equal(await panel.getByRole('alert').count(), 0);
+    await page.route('**/agent-presence', route => route.fulfill({ status: 503, body: '' }));
+    await panel.getByText('Agent presence unavailable', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await page.getByLabel('Access token').waitFor();
+    assert.equal(await panel.count(), 0);
+  } finally { await browser.close(); await app.close(); await workspace.close(); await rm(dir, { recursive: true, force: true }); }
+});
