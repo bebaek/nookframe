@@ -420,7 +420,8 @@ See [thread ownership and multitasking](docs/session-concurrency.md).
 
 Background jobs are in progress: the [jobs CLI](docs/scheduled-jobs.md) supports
 opt-in manual read-only runs, history, cancellation, and same-thread continuation.
-Automatic scheduling and chat-management skills are not implemented yet.
+Interactive agents can manage jobs through the chat skill, with plain-text
+confirmation and the CLI as fallback. Automatic scheduling is not implemented yet.
 
 Only `/workspace` and `/data` persist; bake additional installed software into
 `Containerfile`.

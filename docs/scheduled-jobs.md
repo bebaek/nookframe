@@ -2,16 +2,37 @@
 
 Jobs are chat-first with a CLI fallback, not a dedicated Jobs UI. Definitions,
 manual background execution, durable run history, cancellation, and same-thread
-continuation are implemented. **Automatic scheduling, chat-management skills,
-service-specific read profiles, and attention-only delivery are not yet implemented.**
+continuation are implemented. Interactive agents load the jobs-management skill.
+**Automatic scheduling, service-specific read profiles, and attention-only delivery
+are not yet implemented.**
 Definitions remain paused; schedule previews do not dispatch work. The `notify`
 field is stored for future delivery, not currently acted on.
+
+## Chat workflow
+
+Ask naturally: “List my jobs”, “Save a weekday report-review job”, “Run that job
+now”, “Stop that run”, or “What happened on its last run?” The interactive jobs
+skill uses the same CLI/store as terminal users; no dedicated UI is added.
+
+Before creating, editing, deleting, or running, the agent presents the exact
+operation in plain text and asks for confirmation. An unambiguous Stop request
+is handled immediately. Ambiguous names and missing timezones are clarified.
+Confirmations are conversational skill instructions, not a new CLI authorization
+mechanism. The existing trusted-user security model is unchanged.
+
+The agent must explain that schedules remain paused and notification preferences
+are not delivered yet. Manual run submissions are reported as queued until the
+ledger says otherwise; a configured slot does not prove a runner is alive.
+Run IDs survive retries, revision conflicts require renewed review, and an
+uncertain outcome must never be bypassed by editing state or removing locks.
+The skill is not loaded into restricted background agents.
 
 ## CLI
 
 In the installed image:
 
 ```sh
+nookframe jobs status
 nookframe jobs list
 nookframe jobs create --file job.json
 nookframe jobs show JOB_ID
@@ -19,6 +40,7 @@ nookframe jobs preview JOB_ID
 nookframe jobs update JOB_ID --revision 1 --file changes.json
 nookframe jobs run JOB_ID --revision 2 --request-id UUID
 nookframe jobs runs JOB_ID
+nookframe jobs run-show RUN_ID
 nookframe jobs cancel RUN_ID
 nookframe jobs delete JOB_ID --revision 2
 ```
@@ -30,7 +52,11 @@ run (for example, `node -p 'crypto.randomUUID()'`). Repeating the same job/revis
 and request ID returns the original run, even after completion, rather than
 executing again. A new UUID means a new request. Run commands only enqueue work;
 inspect `runs` to find its actual status and thread ID. `runs` without an ID lists
-all history, including deleted jobs.
+all history, including deleted jobs. `run-show` retrieves one exact run, including
+its immutable job snapshot and recorded summary. `status` describes capabilities,
+configured/current slots and the tool profile; `runnerLiveness` is explicitly
+`unknown`, not a health probe. Create/update accept JSON on stdin with `--file -`
+as well as a file path (64 KiB maximum). Invalid JSON errors do not echo input.
 
 Example definition for the **current filesystem-read-only profile**:
 
@@ -125,7 +151,5 @@ not distributed fencing. Main/fallback still do not share live chat state.
 
 - Reviewed, least-privilege service-specific read profiles.
 - Schedule dispatch, deterministic occurrence IDs and missed-run policy.
-- Interactive chat skill/tools using the same service as the CLI, with plain-text
-  confirmation. Background agents cannot manage schedules.
 - Attention-only result delivery through existing chat, with visible failures.
 - Operator recovery workflow and run-history retention policy.

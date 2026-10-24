@@ -98,6 +98,11 @@ export class JobStore {
     }, true);
   }
   runs(jobId?: string) { return this.transaction(db => (db.runs ?? []).filter(r => !jobId || r.job.id === jobId)); }
+  async getRun(id: string) {
+    const run = (await this.runs()).find(r => r.id === id);
+    if (!run) throw new Error('Run not found');
+    return run;
+  }
   requestRun(jobId: string, revision: number, requestId: string) {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(requestId)) throw new Error('A UUID request ID is required');
     return this.transaction(db => {
