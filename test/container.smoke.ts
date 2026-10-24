@@ -32,6 +32,8 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal((await fetch(origin + '/healthz')).status, 200);
+    container('exec', name, 'sh', '-ec',
+      '. /etc/os-release; test "$ID" = debian; test "$VERSION_ID" = 13; test "$VERSION_CODENAME" = trixie');
     // Read as the image's default non-root user, including parent traversal.
     assert.equal(container('exec', name, 'id', '-un').trim(), 'node');
     container('exec', name, 'node', '-e',

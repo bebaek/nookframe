@@ -392,7 +392,8 @@ See [thread ownership and multitasking](docs/session-concurrency.md).
 Only `/workspace` and `/data` persist; bake additional installed software into
 `Containerfile`.
 
-The image includes development and homelab administration tools. Python 3 is
+The image uses Node.js 24 on Debian 13 (Trixie) for both build and runtime stages.
+It includes development and homelab administration tools. Python 3 is
 available as both `python3` and `python` (the same interpreter), with its standard
 library and PyYAML; pip is not included. See
 [development workstation setup](docs/development-workstation.md) for persistent
