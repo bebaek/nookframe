@@ -411,6 +411,10 @@ restore the session and files. Named volumes are retained when the container is
 removed. Multiple servers may share the profile, but concurrent access to the
 same conversation is not coordinated, and an idle server can retain stale state.
 See [thread ownership and multitasking](docs/session-concurrency.md).
+
+Scheduled agent jobs are in progress: the [jobs CLI](docs/scheduled-jobs.md)
+currently manages paused definitions and schedule previews only; it does not
+execute agents or dispatch scheduled work.
 Only `/workspace` and `/data` persist; bake additional installed software into
 `Containerfile`.
 

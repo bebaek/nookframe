@@ -1,0 +1,53 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
+import { JobStore, validateInput, type JobInput } from '../server/jobs/store.js';
+import { nextOccurrence } from '../server/jobs/schedules.js';
+const input: JobInput = { name: 'Health', prompt: 'Inspect health, do not change anything.', schedule: { kind: 'weekly', time: '08:00', timezone: 'Europe/Berlin', days: [1, 2, 3, 4, 5] }, notify: 'attention', timeoutSeconds: 300 };
+test('job store persists, serializes writers and rejects stale changes', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'jobs-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new JobStore(dir);
+  const jobs = await Promise.all(Array.from({ length: 8 }, () => new JobStore(dir).create(input)));
+  assert.equal((await store.list()).length, 8);
+  assert.equal(jobs[0].enabled, false);
+  assert.equal((await stat(join(dir, 'jobs.json'))).mode & 0o777, 0o600);
+  const job = await store.update(jobs[0].id, 1, { name: 'Updated' });
+  assert.equal(job.revision, 2);
+  await assert.rejects(store.update(job.id, 1, { name: 'Stale' }), /changed/);
+  await assert.rejects(store.delete(job.id, 1), /changed/);
+  await store.delete(job.id, 2);
+  await assert.rejects(store.get(job.id), /not found/);
+  await writeFile(join(dir, 'jobs.json'), '{broken');
+  await assert.rejects(store.create(input));
+});
+test('validation rejects unsafe or ambiguous configuration', () => {
+  for (const patch of [{ enabled: true }, { timeoutSeconds: 0 }, { notify: 'never' }, { prompt: '' }, { schedule: { kind: 'once', at: '2030-01-01T08:00:00' } }, { schedule: { kind: 'once', at: '2030-02-30T08:00:00Z' } }, { schedule: { ...input.schedule, timezone: 'Not/AZone' } }, { schedule: { ...input.schedule, days: [1, 1] } }]) assert.throws(() => validateInput({ ...input, ...patch }));
+});
+test('schedule preview handles weekdays, one-shot dates and DST', () => {
+  assert.equal(nextOccurrence(input.schedule, new Date('2026-01-02T07:00:00Z')), '2026-01-05T07:00:00.000Z');
+  assert.equal(nextOccurrence({ kind: 'once', at: '2030-01-01T08:00:00+01:00' }, new Date('2026-01-01Z')), '2030-01-01T07:00:00.000Z');
+  assert.equal(nextOccurrence({ kind: 'once', at: '2020-01-01T00:00:00Z' }, new Date()), null);
+  const sunday = { kind: 'weekly' as const, time: '02:30', timezone: 'Europe/Berlin', days: [0] };
+  assert.equal(nextOccurrence(sunday, new Date('2026-03-28T12:00:00Z')), '2026-04-05T00:30:00.000Z');
+  assert.equal(nextOccurrence(sunday, new Date('2026-10-24T12:00:00Z')), '2026-10-25T00:30:00.000Z');
+  assert.equal(nextOccurrence(sunday, new Date('2026-10-25T00:30:00Z')), '2026-11-01T01:30:00.000Z');
+});
+test('CLI round trip and unsupported execution fail closed', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'jobs-cli-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, 'input.json');
+  await writeFile(file, JSON.stringify(input));
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [resolve('dist/server/jobs/cli.js'), 'jobs', ...args], { env: { ...process.env, NOOKFRAME_JOBS_DIR: join(dir, 'state') } });
+  const job = JSON.parse((await run('create', '--file', file)).stdout);
+  assert.equal(JSON.parse((await run('show', job.id)).stdout).name, 'Health');
+  assert.equal(JSON.parse((await run('preview', job.id)).stdout).executionAvailable, false);
+  await assert.rejects(run('resume', job.id), /not implemented/);
+  await assert.rejects(run('delete', job.id), /Usage/);
+  await run('delete', job.id, '--revision', '1');
+  assert.deepEqual(JSON.parse((await run('list')).stdout), []);
+});
