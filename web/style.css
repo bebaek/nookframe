@@ -40,6 +40,9 @@ header:has(.tabs) > .badge { margin-left: 0; }
 .controls-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .controls-heading h2 { margin: 0; font-size: 17px; }
 .controls-heading button { font-size: 22px; padding: 4px 14px; }
+.client-context-settings { display: flex; flex-direction: column; gap: 10px; padding-block: 16px; border-top: 1px solid #29333f; }
+.client-context-settings h3 { margin: 0; font-size: 15px; }
+.client-context-settings input[type="checkbox"] { width: auto; margin-right: 6px; }
 .controls-note { color: #9aabbe; font-size: 12px; }
 .workspace-controls .thread-picker, .workspace-controls .model-picker { padding: 16px 0; }
 .conversation-context { display: flex; gap: 12px; flex-shrink: 0; padding: 6px 16px; color: #9aabbe; font-size: 12px; white-space: nowrap; overflow: hidden; }

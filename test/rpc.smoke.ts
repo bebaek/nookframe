@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { RpcClient, SessionManager } from '@earendil-works/pi-coding-agent';
 import { ThreadStore } from '../server/threads.js';
 import { Workspace } from '../server/workspace.js';
+import { clientContextCommand } from '../server/client-context-extension.js';
 
 test('real pi RPC writes a file and restores persisted session after replacement (no LLM)', { timeout: 45000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pi-workspace-rpc-'));
@@ -25,13 +26,18 @@ test('real pi RPC writes a file and restores persisted session after replacement
     cliPath: join(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent/rpc-entry'))), 'cli.js'),
     cwd,
     env: { PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_OFFLINE: '1', PI_TELEMETRY: '0' },
-    args: ['--session-id', 'workspace', '--session-dir', join(dir, 'sessions'), '--no-extensions', '--no-approve', '--skill', join(process.cwd(), 'skills/mail/SKILL.md'), '--skill', join(process.cwd(), 'skills/calendar/SKILL.md')],
+    args: ['--session-id', 'workspace', '--session-dir', join(dir, 'sessions'), '--no-extensions', '--extension', join(process.cwd(), 'dist/server/client-context-extension.js'), '--no-approve', '--skill', join(process.cwd(), 'skills/mail/SKILL.md'), '--skill', join(process.cwd(), 'skills/calendar/SKILL.md')],
   };
   let client = new RpcClient(options);
   try {
     await client.start();
     assert.ok((await client.getCommands()).some(command => command.name === 'skill:mail'), 'Mail skill is discoverable with extensions/project resources disabled');
     assert.ok((await client.getCommands()).some(command => command.name === 'skill:calendar'), 'Calendar skill is discoverable');
+    assert.ok((await client.getCommands()).some(command => command.name === clientContextCommand));
+    const beforeContext = await client.getEntries();
+    assert.equal(await client.prompt(`/${clientContextCommand} ${JSON.stringify({ city: 'Private fixture city' })}`), 'handled');
+    assert.deepEqual(await client.getEntries(), beforeContext, 'client metadata command is not persisted');
+    assert.equal(await client.prompt(`/${clientContextCommand} null`), 'handled');
     const state = await client.getState();
     assert.equal(state.sessionId, 'workspace');
     const result = await client.bash("printf 'hello from pi\\n' > hello.txt; printf 'hello from pi\\n'");

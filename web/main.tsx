@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice } from '../shared/protocol';
 import './style.css';
 import { ToolCard } from './ToolCard';
+import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
 const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ default: module.TerminalPane })));
 
 function App() {
+  const clientContext = useClientContext();
   const [token, setToken] = useState('');
   const [signedIn, setSignedIn] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -171,7 +173,7 @@ function App() {
     } finally { upload.current = null; setUploading(false); }
   }
   function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file }))); }
-  const canSend = connected && state?.available && !state.busy &&
+  const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
   function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread', model?: ModelChoice, targetId?: string) {
@@ -180,7 +182,7 @@ function App() {
     const threadId = state?.threadId ?? '';
     sent.current = { id, threadId, text: type === 'prompt' ? draft : undefined, photos: type === 'prompt' ? photos.map(p => p.key) : undefined };
     setPending(true); setError('');
-    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id) } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
+    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
   }
 
   return <div className="app">
@@ -211,6 +213,7 @@ function App() {
         {!state.models.some(m => `${m.provider}/${m.id}` === state.model) && <option value={state.model}>{state.model}</option>}
         {state.models.map(m => <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.provider}/{m.id}</option>)}
       </select><small>{state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for this thread and restarts' : 'Pi default · select a model to save your preference'}</small></section>}
+      {clientContext.settings}
       <p className="controls-note">One workspace · last 200 messages in this thread</p>
       <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>
       </section>

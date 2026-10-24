@@ -17,6 +17,7 @@ import { googleStore } from '../google/runtime.js';
 import { allowedBrowserOrigins } from './origins.js';
 import { piExtensionArgs } from './pi-extensions.js';
 import { parsePromptExamples } from './prompt-examples.js';
+import { clientContextCommand } from './client-context-extension.js';
 
 const extensionArgs = piExtensionArgs(process.env.NOOKFRAME_PI_EXTENSIONS);
 const promptExamples = parsePromptExamples(process.env.NOOKFRAME_PROMPT_EXAMPLES);
@@ -48,10 +49,18 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
     env: { NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
     provider: selection.model?.provider,
     model: selection.model?.id,
-    args: ['--session', file, '--session-dir', threads.directory, ...extensionArgs, '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')],
+    args: ['--session', file, '--session-dir', threads.directory, ...extensionArgs, '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './client-context-extension.ts' : './client-context-extension.js', import.meta.url)), '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md')],
   });
-  const controller = new Workspace(client, threadStateDir, selection, threads, true);
-  return { workspace: controller, start: () => client.start() };
+  const controller = new Workspace(client, threadStateDir, selection, threads, true, async context => {
+    const disposition = await client.prompt(`/${clientContextCommand} ${JSON.stringify(context ?? null)}`);
+    if (disposition !== 'handled') throw new Error('Client context command was not handled');
+  });
+  return { workspace: controller, start: async () => {
+    await client.start();
+    if (!(await client.getCommands()).some(command => command.name === clientContextCommand && command.source === 'extension')) {
+      throw new Error('Client context extension unavailable');
+    }
+  } };
 });
 await workspace.initialize();
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);

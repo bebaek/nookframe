@@ -52,6 +52,30 @@ test('one run, streamed blocks, authoritative final message, settled not agent_e
   } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('client context is validated before dispatch and reset for prompts without metadata', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-client-context-'));
+  const fake = fakeAgent();
+  const contexts: unknown[] = [];
+  const workspace: Workspace = new Workspace(fake.agent, dir, undefined, undefined, false, async context => {
+    assert.equal(workspace.state.busy, true, 'other clients cannot interleave metadata updates');
+    contexts.push(context);
+  });
+  try {
+    await workspace.initialize();
+    await assert.rejects(workspace.prompt('invalid', [], { timezone: 'bad', timezoneSource: 'browser' }), /Invalid client timezone/);
+    assert.deepEqual(fake.calls, []);
+    assert.deepEqual(contexts, []);
+    await workspace.prompt('hello', [], { city: 'Seoul' });
+    await assert.rejects(workspace.prompt('other browser', [], { city: 'Paris' }), /already active/);
+    assert.deepEqual(contexts, [{ city: 'Seoul' }]);
+    fake.emit({ type: 'agent_settled', aborted: false });
+    await workspace.prompt('no sharing');
+    assert.deepEqual(contexts, [{ city: 'Seoul' }, undefined]);
+    assert.deepEqual(fake.calls, ['hello', 'no sharing']);
+    assert.doesNotMatch(JSON.stringify(workspace.state), /Seoul|Paris/);
+  } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('tool cards retain arguments, reconcile results, and mark unfinished calls interrupted', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-tools-test-'));
   const fake = fakeAgent();

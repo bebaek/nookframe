@@ -195,6 +195,24 @@ and credentials, but use separate agent processes. Thread titles come from the f
 - At most four agents are resident; unviewed idle agents are reclaimed. Shared
   filesystem access is not isolated: use separate worktrees for parallel coding.
 
+## Client timezone and city
+
+Workspace controls includes browser-local context preferences. Timezone sharing is
+on by default, detected with `Intl.DateTimeFormat().resolvedOptions().timeZone`;
+leave the override blank to detect it again on each message. You can override it
+with an IANA timezone or disable sharing. Approximate city sharing is off by
+default and requires a manually entered city. No GPS or permission prompt is used.
+
+Preferences stay in this browser's local storage (including across sign-out).
+Only enabled fields accompany a prompt. A bundled Pi extension holds them in memory
+for that run and adds labeled, untrusted hints to model requests, not session entries,
+chat snapshots, or application logs. Missing context clears previous hints, and
+settlement/session replacement clears them too. A city is not verified live location;
+client timezone/location is distinct from the server or home location. The model
+provider receives shared hints, and answers or tool calls can mention them and thus
+persist in normal conversation history. Disabling sharing affects future messages,
+not already submitted runs or previous answers.
+
 ## Photo attachments
 
 Attach phone photos (including HEIC/HEIF), paste screenshots, or drop images onto
@@ -455,7 +473,8 @@ Deployments can opt in to trusted extensions for web chat:
 NOOKFRAME_PI_EXTENSIONS='["builtin:mcp"]'
 ```
 
-Nookframe keeps `--no-extensions` and adds one `--extension` argument per entry;
+Nookframe always loads its bundled ephemeral client-context extension, keeps
+`--no-extensions`, and adds one `--extension` argument per configured entry;
 configured/discovered extensions remain disabled. Entries may be Pi built-in names
 or extension file/directory paths. Prefer absolute paths for mounted extensions;
 relative paths resolve from `WORKSPACE_DIR`. Empty or whitespace-padded entries,
