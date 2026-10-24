@@ -91,6 +91,91 @@ test('session ownership blocks another server until stopped; invalid paths and s
   } finally { await other.close(); await f.close(); }
 });
 
+test('explicit release transfers ownership immediately and preserves saved preferences and catalog', async () => {
+  const f = fixture();
+  const other = new Workspaces(f.store, f.first, f.factory);
+  try {
+    await f.pool.initialize();
+    const lease = await f.pool.connect();
+    await lease.workspace.setModel('test', 'second');
+    await lease.releaseThread();
+    assert.ok(existsSync(f.store.path(f.first)));
+    assert.ok(f.pool.snapshot().threads.some(t => t.id === f.first));
+    const takeover = await other.connect();
+    assert.equal(takeover.workspace.state.model, 'test/second');
+    await assert.rejects(lease.releaseThread(), /selected thread changed/);
+    lease.release(); // Idempotent after explicit release.
+    takeover.release();
+  } finally { await other.close(); await f.close(); }
+});
+
+test('release rejects other viewers, busy/background/uncertain agents and detached leases', async () => {
+  const f = fixture();
+  try {
+    const a = await f.pool.connect(), b = await f.pool.connect();
+    await assert.rejects(a.releaseThread(), /other tabs/);
+    assert.equal(a.workspace.state.available, true);
+    b.release();
+    await assert.rejects(b.releaseThread(), /selected thread changed/);
+    await a.workspace.prompt('working');
+    await assert.rejects(a.releaseThread(), /finishes running/);
+    await a.workspace.abort();
+    a.workspace.background('job', async () => {});
+    await assert.rejects(a.releaseThread(), /finishes running/);
+    a.workspace.state.available = false;
+    await assert.rejects(a.releaseThread(), /uncertain/);
+    a.release();
+  } finally { await f.close(); }
+});
+
+test('release holds lock and blocks prompts until shutdown completes; failures retain ownership', async () => {
+  const f = fixture();
+  const other = new Workspaces(f.store, f.first, f.factory);
+  let finish!: () => void;
+  try {
+    const a = await f.pool.connect();
+    const close = a.workspace.close.bind(a.workspace);
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    let entered!: () => void;
+    const stopping = new Promise<void>(resolve => { entered = resolve; });
+    a.workspace.close = async () => { const stopped = close(); entered(); await gate; await stopped; throw new Error('exit uncertain'); };
+    const releasing = a.releaseThread();
+    const rejected = assert.rejects(releasing, /exit uncertain/);
+    await stopping;
+    await assert.rejects(a.workspace.prompt('race'), /unavailable/i);
+    await assert.rejects(other.connect(), /another server/);
+    finish(); await rejected;
+    await assert.rejects(other.connect(), /another server/);
+    a.workspace.close = close;
+    a.release();
+  } finally { finish?.(); await other.close(); await f.close(); }
+});
+
+test('release serializes with a new viewer and tolerates requester disconnect during shutdown', async () => {
+  const f = fixture();
+  let finish!: () => void;
+  try {
+    const a = await f.pool.connect();
+    const newViewer = f.pool.connect();
+    await assert.rejects(a.releaseThread(), /other tabs/);
+    (await newViewer).release();
+    const close = a.workspace.close.bind(a.workspace);
+    let entered!: () => void;
+    const stopping = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    a.workspace.close = async () => { const stopped = close(); entered(); await gate; await stopped; };
+    const releasing = a.releaseThread();
+    await stopping;
+    a.release(); // Socket disconnect while explicit shutdown is in flight.
+    const reopening = f.pool.connect();
+    finish(); await releasing;
+    const b = await reopening;
+    assert.notEqual(a.workspace, b.workspace);
+    assert.equal(b.workspace.state.available, true);
+    await b.releaseThread(); // No dangling/double-decremented references.
+  } finally { finish?.(); await f.close(); }
+});
+
 test('deletion rejects busy/foreign-owned threads, stops idle writers and persists across restart', async () => {
   const f = fixture();
   const other = new Workspaces(f.store, f.first, f.factory);
@@ -231,14 +316,32 @@ test('two websocket clients select independently; background runs, reconnect, ca
     b.send({ type: 'switch_thread', threadId: second, targetId: f.first, id: 'switch' });
     await b.wait(m => m.type === 'snapshot' && m.state.threadId === f.first);
     await b.wait(m => m.type === 'ack' && m.id === 'switch');
+    b.send({ type: 'release_thread', threadId: second, id: 'stale-release' });
+    await b.wait(m => m.type === 'error' && m.id === 'stale-release');
+    b.send({ type: 'release_thread', threadId: f.first, id: 'shared-release' });
+    await b.wait(m => m.type === 'error' && m.id === 'shared-release');
+    resumed.ws.close(); await once(resumed.ws, 'close');
+    b.send({ type: 'release_thread', threadId: f.first, id: 'release' });
+    await b.wait(m => m.type === 'ack' && m.id === 'release');
+    await b.wait(m => m.type === 'snapshot' && m.selected === true && m.state.threadId === '');
+    b.send({ type: 'prompt', threadId: f.first, id: 'released-prompt', text: 'stale' });
+    await b.wait(m => m.type === 'error' && m.id === 'released-prompt');
+    b.send({ type: 'release_thread', threadId: '', id: 'no-selection-release' });
+    await b.wait(m => m.type === 'error' && m.id === 'no-selection-release');
+    const chooser = await open('');
+    assert.equal(f.agents.get(f.first)!.stops, 1, 'empty selection must not reopen the default');
+    chooser.ws.close(); await once(chooser.ws, 'close');
+    b.send({ type: 'switch_thread', threadId: '', targetId: f.first, id: 'reopen' });
+    await b.wait(m => m.type === 'ack' && m.id === 'reopen');
+    const viewer = await open();
     b.send({ type: 'delete_thread', threadId: f.first, targetId: second, id: 'wrong-delete' });
     await b.wait(m => m.type === 'error' && m.id === 'wrong-delete');
     b.send({ type: 'delete_thread', threadId: f.first, targetId: f.first, id: 'delete' });
     await b.wait(m => m.type === 'ack' && m.id === 'delete');
-    await resumed.wait(m => m.type === 'snapshot' && m.selected === true && m.state.threadId === '');
+    await viewer.wait(m => m.type === 'snapshot' && m.selected === true && m.state.threadId === '');
     assert.equal(f.pool.snapshot().threads.some(t => t.id === f.first), false);
-    resumed.send({ type: 'prompt', threadId: f.first, id: 'deleted-prompt', text: 'stale' });
-    await resumed.wait(m => m.type === 'error' && m.id === 'deleted-prompt');
+    viewer.send({ type: 'prompt', threadId: f.first, id: 'deleted-prompt', text: 'stale' });
+    await viewer.wait(m => m.type === 'error' && m.id === 'deleted-prompt');
   } finally {
     for (const ws of sockets) ws.terminate();
     await app.close(); await f.close();

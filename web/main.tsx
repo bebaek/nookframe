@@ -10,6 +10,13 @@ import { MessageContent, ResponseImages } from './MessageContent';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
 const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ default: module.TerminalPane })));
 
+function initialThread() {
+  const thread = new URLSearchParams(location.hash.slice(1)).get('thread');
+  if (thread !== null) return thread;
+  try { return sessionStorage.getItem('nookframe.threadChooser') === 'true' ? '' : undefined; }
+  catch { return undefined; }
+}
+
 function App() {
   const clientContext = useClientContext();
   const [token, setToken] = useState('');
@@ -31,8 +38,18 @@ function App() {
   const [tab, setTab] = useState<'chat' | 'terminal'>('chat');
   const [terminalOpened, setTerminalOpened] = useState(false);
   const socket = useRef<WebSocket | null>(null);
-  const activeThread = useRef(new URLSearchParams(location.hash.slice(1)).get('thread') ?? undefined);
-  const sent = useRef<{ id: string; text?: string; threadId: string; photos?: string[] } | null>(null);
+  const activeThread = useRef(initialThread());
+  const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[] } | null>(null);
+  function rememberSelection(threadId: string, explicitRelease = false) {
+    activeThread.current = threadId;
+    let hash = threadId ? `#thread=${encodeURIComponent(threadId)}` : location.hash === '#thread=' ? '#thread=' : '';
+    try {
+      if (threadId) sessionStorage.removeItem('nookframe.threadChooser');
+      else if (explicitRelease) sessionStorage.setItem('nookframe.threadChooser', 'true');
+    }
+    catch { if (explicitRelease) hash = '#thread='; } // URL fallback when browser storage is unavailable.
+    history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
+  }
   const composer = useRef<HTMLTextAreaElement>(null);
   const scroll = useTranscriptScroll(signedIn && !checkingAuth && tab === 'chat', state?.threadId);
 
@@ -101,10 +118,10 @@ function App() {
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'snapshot') {
           if (activeThread.current !== undefined && message.state.threadId !== activeThread.current && !message.selected) return;
-          activeThread.current = message.state.threadId || undefined;
-          history.replaceState(null, '', `${location.pathname}${location.search}${message.state.threadId ? `#thread=${encodeURIComponent(message.state.threadId)}` : ''}`);
+          rememberSelection(message.state.threadId);
           trackThreads(message.state.threads, activeThread.current);
-          setConnected(true); delay = 1000; setState(message.state);
+          setConnected(true); delay = 1000;
+          setState(sent.current?.type === 'release_thread' && !message.state.threadId ? { ...message.state, notice: 'Thread released. You can open it on another slot now.' } : message.state);
         } else if (message.type === 'threads') {
           trackThreads(message.threads, activeThread.current);
           setState(current => current ? { ...current, threads: message.threads } : current);
@@ -115,7 +132,10 @@ function App() {
           sent.current = null; setPending(false);
         } else if (message.type === 'error') {
           setError(message.message);
-          if (message.id === sent.current?.id) { sent.current = null; setPending(false); }
+          if (sent.current && message.id === sent.current.id) {
+            if (sent.current.type === 'release_thread') rememberSelection(sent.current.threadId);
+            sent.current = null; setPending(false);
+          }
         }
       };
       ws.onclose = event => {
@@ -172,11 +192,13 @@ function App() {
   const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
-  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread', model?: ModelChoice, targetId?: string) {
+  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
     const id = crypto.randomUUID();
     const threadId = state?.threadId ?? '';
-    sent.current = { id, threadId, text: type === 'prompt' ? draft : undefined, photos: type === 'prompt' ? photos.map(p => p.key) : undefined };
+    sent.current = { id, type, threadId, text: type === 'prompt' ? draft : undefined, photos: type === 'prompt' ? photos.map(p => p.key) : undefined };
+    // Persist intent before dispatch so a lost acknowledgement cannot reopen the thread.
+    if (type === 'release_thread') rememberSelection('', true);
     setPending(true); setError('');
     socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
   }
@@ -204,6 +226,7 @@ function App() {
           const title = state.threads.find(thread => thread.id === state.threadId)?.title || 'this thread';
           if (window.confirm(`Permanently delete “${title}”? This removes its saved conversation, not shared workspace files. This cannot be undone.`)) command('delete_thread', undefined, state.threadId);
         }}>Delete thread</button>
+        <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => command('release_thread')} title="Stops this idle agent so another slot can open the conversation. Saved messages are kept.">{pending && sent.current?.type === 'release_thread' ? 'Releasing…' : 'Release thread'}</button>
         <small>{state.threadChanging ? 'Switching…' : 'Selected in this tab only · other threads keep running · same files'}</small>
       </section>}
       {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} onChange={e => {
