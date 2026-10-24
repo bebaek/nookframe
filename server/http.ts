@@ -19,8 +19,9 @@ import { ArtifactStore } from './artifacts.js';
 import { defaultPromptExamples } from './prompt-examples.js';
 import type { PresenceStore } from './agent-presence.js';
 import type { OperationsReader } from './operations.js';
+import type { ModelOperations } from './model-operations.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   const single = pool ? undefined : workspace as Workspace;
@@ -121,8 +122,39 @@ export function createApp(workspace: Workspace | Workspaces, config: { operation
       if (!sessions.identify(req.headers.cookie, cookieName) && !sessions.verifyToken(bearer)) {
         res.writeHead(401).end(JSON.stringify({ error: 'Authentication required' })); return;
       }
-      if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); res.writeHead(405).end(); return; }
       const operation = req.url.slice('/api/operations/'.length);
+      if (operation.startsWith('models')) {
+        if (!config.modelOperations) { res.writeHead(404).end(); return; }
+        const url = new URL(req.url!, origin);
+        const plan = /^\/api\/operations\/models\/plans\/([0-9a-f-]{36})(\/(?:apply|cancel))?$/.exec(url.pathname);
+        try {
+          if (req.method === 'GET' && url.pathname === '/api/operations/models') {
+            res.end(JSON.stringify(config.modelOperations.catalog(url.searchParams.get('threadId') ?? ''))); return;
+          }
+          if (req.method === 'GET' && plan && !plan[2]) {
+            res.end(JSON.stringify(config.modelOperations.get(plan[1]))); return;
+          }
+          if (req.method === 'POST' && (url.pathname === '/api/operations/models/plans' || plan?.[2])) {
+            // Cookie writes require an explicit allowed Origin. Native bearer
+            // clients can omit it; foreign origins were rejected above.
+            if (!sessions.verifyToken(bearer) && !acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(); return; }
+            if (req.headers['content-type']?.split(';')[0] !== 'application/json') { res.writeHead(415).end(); return; }
+            let body = '';
+            for await (const chunk of req) { body += chunk.toString(); if (Buffer.byteLength(body) > 4096) throw new Error('Request too large'); }
+            const input: unknown = JSON.parse(body);
+            // Recheck cookie expiry/revocation after receiving the request body.
+            if (!sessions.verifyToken(bearer) && !sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+            if (plan) {
+              if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) throw new Error('Apply requires an empty JSON object');
+              res.end(JSON.stringify(plan[2] === '/cancel' ? config.modelOperations.cancel(plan[1]) : await config.modelOperations.apply(plan[1])));
+            } else res.end(JSON.stringify(config.modelOperations.propose(input, sessions.verifyToken(bearer) ? 'token' : 'browser')));
+            return;
+          }
+          res.writeHead(405).end();
+        } catch { res.writeHead(409).end(JSON.stringify({ error: 'Model operation rejected; inspect the target and proposal before retrying' })); }
+        return;
+      }
+      if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); res.writeHead(405).end(); return; }
       if (!config.operations || !['status', 'config', 'sessions'].includes(operation)) { res.writeHead(404).end(); return; }
       try { res.end(JSON.stringify(config.operations[operation as keyof OperationsReader]())); }
       catch { res.writeHead(503).end(JSON.stringify({ error: 'Operation inspection unavailable' })); }

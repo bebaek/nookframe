@@ -20,7 +20,7 @@ export class Workspaces {
   private catalog: ThreadChoice[] = [];
   private timer: ReturnType<typeof setInterval>;
   constructor(readonly threads: ThreadStore, public defaultId: string,
-    private factory: (file: string, stateDir: string, background?: boolean) => { workspace: Workspace; start(): Promise<void> },
+    private factory: (file: string, stateDir: string, background?: boolean, newlyCreated?: boolean) => { workspace: Workspace; start(): Promise<void> },
     private maxAgents = 4, private idleMs = 5 * 60_000, private guardThread?: (id: string) => Promise<void>) {
     this.timer = setInterval(() => { void this.serial(async () => {
       for (const [id, entry] of this.entries) if (this.idle(entry) && Date.now() - entry.used >= this.idleMs) await this.remove(id, entry);
@@ -50,6 +50,13 @@ export class Workspaces {
       notice: 'Choose a thread or create a new one. Threads share files, not running agents.',
       threadId: '', threads, threadChanging: false,
     };
+  }
+  operationWorkspace(id: string): Workspace {
+    const entry = this.entries.get(id);
+    if (this.closing || !entry || !entry.ownsLock() || entry.pendingWorkspace || !entry.workspace.state.available) {
+      throw new Error('Target must be a loaded, available thread owned by this instance');
+    }
+    return entry.workspace;
   }
   operationSessions() {
     return {
@@ -90,7 +97,7 @@ export class Workspaces {
         try {
           const stateDir = join(this.threads.directory, '.nookframe', createHash('sha256').update(key).digest('hex'));
           if (background) await background.beforeStart(key);
-          const agent = this.factory(file, stateDir, !!background);
+          const agent = this.factory(file, stateDir, !!background, create);
           workspace = agent.workspace;
           await agent.start();
           await workspace.initialize();
