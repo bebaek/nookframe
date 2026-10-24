@@ -6,7 +6,7 @@ import type { Snapshot, ThreadChoice } from '../shared/protocol.js';
 import { Workspace } from './workspace.js';
 import type { ThreadStore } from './threads.js';
 
-export interface WorkspaceLease { workspace: Workspace; release(): void }
+export interface WorkspaceLease { workspace: Workspace; release(): void; releaseThread(): Promise<void> }
 export interface BackgroundOpen { id: string; cancel(): Promise<void>; beforeStart(threadId: string): Promise<void> }
 type Entry = { workspace: Workspace; pendingWorkspace?: Workspace; refs: number; used: number; ownsLock: () => boolean; releaseLock: () => Promise<void>; unsubscribe: () => void };
 
@@ -100,10 +100,20 @@ export class Workspaces {
       entry.refs++;
       this.changed();
       let released = false;
-      return { get workspace() { return entry!.workspace; }, release: () => {
+      const release = () => {
         if (released) return;
         released = true; entry.refs--; entry.used = Date.now();
-      } };
+      };
+      return { get workspace() { return entry!.workspace; }, release, releaseThread: () => this.serial(async () => {
+        if (this.closing) throw new Error('Workspace is shutting down');
+        if (released || this.entries.get(key!) !== entry) throw new Error('The selected thread changed. Review it before retrying.');
+        if (!entry.ownsLock() || !entry.workspace.state.available || entry.pendingWorkspace) throw new Error('Thread ownership or run status is uncertain. Inspect it before releasing it.');
+        if (!entry.workspace.idle) throw new Error('Wait until the thread finishes running before releasing it');
+        if (entry.refs !== 1) throw new Error('Close other tabs viewing this thread on this slot before releasing it');
+        // close() synchronously blocks prompts; keep ownership until exit is confirmed.
+        await this.remove(key!, entry);
+        release();
+      }) };
     });
   }
   // Keep the same session lock across handoff; no second writer can enter the

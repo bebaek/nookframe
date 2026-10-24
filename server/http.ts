@@ -260,9 +260,11 @@ export function createApp(workspace: Workspace | Workspaces, config: { presence?
             if (pool) {
               try {
                 if (command.threadId !== undefined && (typeof command.threadId !== 'string' || command.threadId.length > 255)) throw new Error('Invalid thread');
-                const lease = await pool.connect(command.threadId);
-                if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
-                selected.set(ws, lease);
+                if (command.threadId !== '') {
+                  const lease = await pool.connect(command.threadId);
+                  if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
+                  selected.set(ws, lease);
+                }
               } catch (error) {
                 send(ws, { type: 'error', message: error instanceof Error ? error.message : 'Thread unavailable' });
               }
@@ -286,7 +288,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { presence?
         if (typeof command.id !== 'string' || command.id.length > 100) throw new Error('Request ID required');
         id = command.id;
         if (commandPending) throw new Error('A command is pending');
-        if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread', 'delete_thread'].includes(command.type)) throw new Error('Unsupported command');
+        if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread', 'delete_thread', 'release_thread'].includes(command.type)) throw new Error('Unsupported command');
         const current = selected.get(ws)?.workspace ?? single;
         if (pool && command.threadId !== (current?.state.threadId ?? '')) throw new Error('The selected thread changed. Review it before retrying.');
         current?.assertThread(command.threadId);
@@ -310,6 +312,12 @@ export function createApp(workspace: Workspace | Workspaces, config: { presence?
             if (!current) throw new Error('Select a thread first');
             current.assertThread(command.threadId);
             await current.prompt(command.text, images, command.clientContext);
+          }
+          else if (command.type === 'release_thread') {
+            const lease = selected.get(ws);
+            if (!pool || !lease) throw new Error('Select the thread to release first');
+            await lease.releaseThread();
+            selected.delete(ws);
           }
           else if (command.type === 'delete_thread') await pool!.deleteThread(command.targetId);
           else if (command.type === 'new_thread' || command.type === 'switch_thread') {
