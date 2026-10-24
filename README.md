@@ -169,6 +169,16 @@ Send alongside it; Stop appears while working. Tool output starts collapsed,
 including running tools, and reading earlier messages prevents auto-scroll.
 The layout uses the browser's native Popover API (current Chrome/Safari/Firefox).
 
+Use **⋯ → Enable notifications** to opt in to browser notifications when an
+observed agent run ends outside the focused chat (including failed or stopped
+runs). Clicking the notification opens its conversation without discarding drafts.
+Notification text contains no conversation titles or content. Permission is only
+requested when you click Enable; **Disable notifications** turns them off again.
+This requires a supported browser on HTTPS or localhost, with the page open and
+connected; it is not push delivery after closing the page. Reloads/reconnections
+do not replay missed completions. Each enabled tab observes runs independently.
+There is no separate approval-needed or stalled-run detection yet.
+
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
 Each thread has its own pi JSONL history; all threads share workspace files,
 and credentials, but use separate agent processes. Thread titles come from the first user message
