@@ -47,6 +47,9 @@
     "typescript": "^5.9.3",
     "vite": "^7.1.0"
   },
+  "overrides": {
+    "undici": "8.12.2"
+  },
   "allowScripts": {
     "node-pty@1.1.0": true
   }

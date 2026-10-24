@@ -43,7 +43,7 @@ COPY --chmod=0755 scripts/googlectl /usr/local/bin/googlectl
 COPY --chmod=0644 google/README.md ./docs/google.md
 COPY --chmod=0644 calendar/README.md ./docs/calendar.md
 COPY --chmod=0755 scripts/pi-mail-token /usr/local/libexec/pi-mail-token
-RUN chmod -R a+rX /app/skills && mkdir -p /workspace /data/agent /data/state && chown -R node:node /workspace /data
+RUN chmod -R a+rX /app/skills /app/docs && mkdir -p /workspace /data/agent /data/state && chown -R node:node /workspace /data
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 WORKSPACE_DIR=/workspace PI_CODING_AGENT_DIR=/data/agent STATE_DIR=/data/state MAIL_DIR=/data/mail CALENDAR_DIR=/data/calendar PI_TELEMETRY=0
 USER node
 EXPOSE 3000
