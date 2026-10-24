@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -42,12 +43,18 @@ test('CLI round trip and unsupported execution fail closed', async t => {
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = join(dir, 'input.json');
   await writeFile(file, JSON.stringify(input));
-  const run = (...args: string[]) => promisify(execFile)(process.execPath, [resolve('dist/server/jobs/cli.js'), 'jobs', ...args], { env: { ...process.env, NOOKFRAME_JOBS_DIR: join(dir, 'state') } });
+  const run = (...args: string[]) => promisify(execFile)(process.execPath, [resolve('dist/server/jobs/cli.js'), 'jobs', ...args], { env: { ...process.env, NOOKFRAME_JOBS_DIR: join(dir, 'state'), NOOKFRAME_JOBS_SLOT: 'test' } });
   const job = JSON.parse((await run('create', '--file', file)).stdout);
   assert.equal(JSON.parse((await run('show', job.id)).stdout).name, 'Health');
-  assert.equal(JSON.parse((await run('preview', job.id)).stdout).executionAvailable, false);
+  assert.equal(JSON.parse((await run('preview', job.id)).stdout).schedulingAvailable, false);
   await assert.rejects(run('resume', job.id), /not implemented/);
   await assert.rejects(run('delete', job.id), /Usage/);
+  const requestId = randomUUID();
+  const queued = JSON.parse((await run('run', job.id, '--revision', '1', '--request-id', requestId)).stdout);
+  assert.equal(queued.status, 'queued');
+  assert.equal(JSON.parse((await run('run', job.id, '--revision', '1', '--request-id', requestId)).stdout).id, requestId);
+  assert.equal(JSON.parse((await run('runs', job.id)).stdout).length, 1);
+  assert.equal(JSON.parse((await run('cancel', requestId)).stdout).status, 'cancelled');
   await run('delete', job.id, '--revision', '1');
   assert.deepEqual(JSON.parse((await run('list')).stdout), []);
 });

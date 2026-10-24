@@ -39,6 +39,22 @@ export class Workspace {
   photo(id: string) { return this.photos.get(id); }
   private unsubscribe: () => void;
   private stopping = false;
+  private cancelBackground?: () => Promise<void>;
+  background(id: string, cancel: () => Promise<void>) {
+    this.state.backgroundRun = { id, stopping: false };
+    this.cancelBackground = cancel;
+    this.state.notice = 'Read-only background run. You can watch or stop it; continuation is available after shutdown.';
+    this.changed();
+  }
+  stoppingBackground() {
+    if (this.state.backgroundRun) this.state.backgroundRun.stopping = true;
+    this.state.notice = 'Stopping background agent… Waiting for confirmed process exit.';
+    this.changed();
+  }
+  startBackground(text: string) {
+    if (!this.state.backgroundRun) throw new Error('Not a background workspace');
+    return this.submit(text);
+  }
   private heartbeat?: ReturnType<typeof setInterval>;
 
   constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore, private managed = false, private setClientContext?: (context: ClientContext | undefined) => Promise<void>) {
@@ -108,7 +124,7 @@ export class Workspace {
     this.pruneImages();
   }
 
-  get idle() { return !this.state.busy && !this.stopping && !this.state.modelChanging && !this.state.threadChanging; }
+  get idle() { return !this.state.backgroundRun && !this.state.busy && !this.stopping && !this.state.modelChanging && !this.state.threadChanging; }
 
   assertThread(id: unknown) {
     if (this.threads && id !== this.state.threadId) throw new Error('The active thread changed. Review the selected thread before retrying.');
@@ -297,6 +313,7 @@ export class Workspace {
   }
 
   async setModel(provider: string, modelId: string) {
+    if (this.state.backgroundRun) throw new Error('Background runs are view-only; stop or wait for completion');
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.modelSource === 'environment') throw new Error('Model is locked by AGENT_PROVIDER/AGENT_MODEL; remove the environment override to select it here');
     if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('Wait until the current operation finishes before switching models');
@@ -325,6 +342,10 @@ export class Workspace {
   }
 
   async prompt(text: string, images: PhotoContent[] = [], clientContext?: ClientContext) {
+    if (this.state.backgroundRun) throw new Error('Background runs are view-only; stop or wait for completion');
+    return this.submit(text, images, clientContext);
+  }
+  private async submit(text: string, images: PhotoContent[] = [], clientContext?: ClientContext) {
     const context = parseClientContext(clientContext);
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('A run, model change, or thread change is already active');
@@ -333,7 +354,7 @@ export class Workspace {
     if (text.trimStart().startsWith('/')) throw new Error('Slash commands are not supported in this first version');
     writeFileSync(this.marker, new Date().toISOString(), { mode: 0o600 });
     this.state.busy = true;
-    this.state.notice = '';
+    this.state.notice = this.state.backgroundRun ? 'Read-only background run. Watch or Stop; continue after confirmed shutdown.' : '';
     this.changed();
     try {
       await this.setClientContext?.(context);
@@ -347,6 +368,10 @@ export class Workspace {
   }
 
   async abort() {
+    if (this.cancelBackground) { await this.cancelBackground(); this.stoppingBackground(); return; }
+    return this.abortAgent();
+  }
+  private async abortAgent() {
     if (this.stopping) throw new Error('Stop is already pending');
     if (this.state.threadChanging || this.state.modelChanging) throw new Error('Wait until switching finishes');
     this.stopping = true;
@@ -366,7 +391,7 @@ export class Workspace {
     this.state.available = false;
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.state.busy) {
-      try { await this.abort(); } catch { /* Keep interruption marker. */ }
+      try { await this.abortAgent(); } catch { /* Keep interruption marker. */ }
     }
     this.unsubscribe();
     await this.agent.stop();

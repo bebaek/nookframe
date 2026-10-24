@@ -1,10 +1,11 @@
-# Scheduled agent jobs (in progress)
+# Background agent jobs (in progress)
 
-Nookframe jobs are chat-first, with a CLI fallback and no dedicated UI.
-This first increment implements **paused definitions only**. There is no
-scheduler, agent execution, chat-management skill, or result delivery yet.
-Creating a definition does not schedule or run an agent. `run`, `resume`,
-`pause`, `runs`, and `cancel` fail explicitly rather than pretending to work.
+Jobs are chat-first with a CLI fallback, not a dedicated Jobs UI. Definitions,
+manual background execution, durable run history, cancellation, and same-thread
+continuation are implemented. **Automatic scheduling, chat-management skills,
+service-specific read profiles, and attention-only delivery are not yet implemented.**
+Definitions remain paused; schedule previews do not dispatch work. The `notify`
+field is stored for future delivery, not currently acted on.
 
 ## CLI
 
@@ -16,20 +17,27 @@ nookframe jobs create --file job.json
 nookframe jobs show JOB_ID
 nookframe jobs preview JOB_ID
 nookframe jobs update JOB_ID --revision 1 --file changes.json
+nookframe jobs run JOB_ID --revision 2 --request-id UUID
+nookframe jobs runs JOB_ID
+nookframe jobs cancel RUN_ID
 nookframe jobs delete JOB_ID --revision 2
 ```
 
-In a checkout, use `npm run jobs -- <command>`. All successful commands emit
-JSON on stdout; failures emit a JSON error on stderr and exit nonzero.
-Update and delete require the revision last read, preventing stale chat turns
-or concurrent CLI sessions from silently overwriting another edit.
+In a checkout, use `npm run jobs -- <command>`. Commands emit JSON on stdout;
+failures emit a JSON error on stderr and exit nonzero. Update, delete and run
+require the revision last read. Generate a UUID once for each intended manual
+run (for example, `node -p 'crypto.randomUUID()'`). Repeating the same job/revision
+and request ID returns the original run, even after completion, rather than
+executing again. A new UUID means a new request. Run commands only enqueue work;
+inspect `runs` to find its actual status and thread ID. `runs` without an ID lists
+all history, including deleted jobs.
 
-Example definition:
+Example definition for the **current filesystem-read-only profile**:
 
 ```json
 {
-  "name": "Morning homelab review",
-  "prompt": "Inspect homelab health. Report unavailable services, failed backups and recurring errors. Do not modify anything.",
+  "name": "Review exported health report",
+  "prompt": "Read /workspace/reports/health.txt and summarize problems. Report missing or stale data; do not infer live service health or change anything.",
   "schedule": {
     "kind": "weekly",
     "time": "08:00",
@@ -47,26 +55,77 @@ Preview returns the next scheduled occurrence strictly after now, **not a promis
 of execution**. Missing DST minutes are skipped; repeated minutes use only their
 first occurrence. Past one-shot dates have no next occurrence.
 
-Definitions live under `NOOKFRAME_JOBS_DIR`, defaulting to `$STATE_DIR/jobs`
-(or `.local/state/jobs` in a checkout). Both slots must use the same durable
-directory. The catalog uses a shared filesystem lock, revision checks, private
-file permissions, atomic rename, and file/directory fsync. Corrupt or unknown
-schema versions are rejected, not reset. Back up this directory privately;
-prompts may contain personal information. The lock assumes a reliable filesystem
-and responsive processes; it is not distributed fencing.
+## Enable manual execution
+
+Execution is opt-in. Set `NOOKFRAME_JOBS_SLOT` to the designated instance's
+`NOOKFRAME_SLOT` value on the server (and in the CLI environment). Only that slot
+starts a runner. Both instances and the CLI must use the same durable
+`NOOKFRAME_JOBS_DIR`, which defaults to `$STATE_DIR/jobs` or `.local/state/jobs`.
+The runner also holds a shared filesystem ownership lock; a second owner fails
+startup rather than competing. No automatic failover is implemented.
+
+One background agent runs at a time, sharing the existing four-agent limit. It
+never evicts a viewed or busy interactive agent. When capacity is full, requests
+stay queued. Queued requests survive restarts and have not yet been dispatched.
+The runner saves the immutable job snapshot and dispatch/thread metadata before
+starting the agent. Each run uses a fresh thread and the current server model
+selection; a follow-up conversation does not affect future runs.
+
+The initial tool profile permits only `read`, `grep`, `find`, and `ls`. Shell,
+write/edit, codemode, MCP, extensions, skills, templates, and context discovery
+are disabled. It cannot query Home Assistant, mail, or calendars yet. This is
+**tool-level restriction, not filesystem or network sandboxing**: read tools can
+access any file readable by the process, including credentials. Only use trusted
+prompts and appropriate inputs. Trusted provider configuration and provider
+credentials are still used by Pi; do not treat it as isolation for untrusted jobs.
+
+## View, Stop, continue
+
+Select a running job's ordinary thread on the owning instance, or open
+`/#thread=THREAD_ID`. Viewing attaches to the existing restricted agent. Send,
+model changes and thread deletion are blocked server-side during the run.
+
+The existing **Stop** button and `jobs cancel RUN_ID` request the same durable
+cancellation. Queued runs cancel immediately. Running threads show **Stopping…**
+and remain view-only until the process has actually exited. Cancellation affects
+this run only; it never changes the job definition.
+
+On completion, cancellation or timeout, Nookframe confirms process exit, saves
+its final status and summary, then replaces the restricted agent with an
+interactive agent on the same thread. Existing viewers follow the replacement;
+they do not need to switch threads. The session lock is held continuously across
+this handoff—background ownership is relinquished by process exit without an
+unlocked interval in which another server could start a writer. Following up uses
+normal interactive permissions. The original run status and summary stay immutable.
+
+If termination or persistence is uncertain, no interactive replacement starts.
+The run stays blocked and is never automatically retried. On restart, dispatched
+but unfinished records become `uncertain`, and the runner refuses new work while
+any such record remains. Recovery currently requires operator inspection; there
+is deliberately no force-resume command. Do not delete a live lock or blindly
+edit a run back to queued. Confirm the old process has exited and inspect its
+thread before any recovery. The background RPC wrapper exits if its server parent
+dies; this is a crash guard, not distributed fencing against arbitrary suspension.
+
+## Persistence and limits
+
+The catalog and run ledger use a shared directory lock, private file permissions,
+atomic rename, and file/directory fsync. Corrupt or unknown schema versions are
+rejected, not reset. Back up the jobs directory and the session directory privately;
+prompts, summaries and transcripts may contain personal information. Run history
+is retained without automatic pruning in this increment.
+
+Timeouts are wall-clock bounds on normal execution, not guarantees that an
+unresponsive process can be safely reclaimed at that instant. Cancellation and
+startup RPCs can add latency. If process exit cannot be confirmed, ownership stays
+blocked. Locks assume a reliable filesystem and responsive processes; they are
+not distributed fencing. Main/fallback still do not share live chat state.
 
 ## Remaining increments
 
-1. Restricted runner and durable run ledger: fresh thread per run, enforced
-   read-only tools, immutable prompt/revision snapshots, bounded concurrency,
-   cancellation and timeout handling. Never automatically replay uncertain runs.
-2. Scheduler: explicit owning `NOOKFRAME_SLOT`, shared dispatch guard, deterministic
-   occurrence IDs, skip missed runs, and crash-boundary tests. No automatic failover.
-3. Interactive chat skill/tools using the same service as the CLI. Confirm new
-   jobs and changes in plain text. Background agents cannot manage schedules.
-4. Results delivered through ordinary chat threads, with attention-only filtering
-   and visible failures; no Jobs screen or custom confirmation cards.
-
-Do not enable execution using ordinary interactive agents: those agents inherit
-shell, credentials, skills, and write-capable extensions. A read-only prompt is
-not an enforced security boundary.
+- Reviewed, least-privilege service-specific read profiles.
+- Schedule dispatch, deterministic occurrence IDs and missed-run policy.
+- Interactive chat skill/tools using the same service as the CLI, with plain-text
+  confirmation. Background agents cannot manage schedules.
+- Attention-only result delivery through existing chat, with visible failures.
+- Operator recovery workflow and run-history retention policy.

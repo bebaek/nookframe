@@ -6,7 +6,10 @@ import lockfile from 'proper-lockfile';
 export type Schedule = { kind: 'once'; at: string } | { kind: 'weekly'; time: string; timezone: string; days: number[] };
 export interface JobInput { name: string; prompt: string; schedule: Schedule; notify: 'always' | 'attention'; timeoutSeconds: number }
 export interface Job extends JobInput { id: string; revision: number; enabled: boolean; createdAt: string; updatedAt: string }
-interface Database { version: 1; jobs: Job[] }
+export type RunStatus = 'queued' | 'running' | 'stopping' | 'completed' | 'cancelled' | 'timed_out' | 'failed' | 'uncertain';
+export interface JobRun { id: string; job: Job; status: RunStatus; createdAt: string; startedAt?: string; endedAt?: string; threadId?: string; cancelRequested?: boolean; summary?: string }
+interface Database { version: 1; jobs: Job[]; runs?: JobRun[] }
+export const activeRun = (run: JobRun) => ['queued', 'running', 'stopping', 'uncertain'].includes(run.status);
 const keys = ['name', 'prompt', 'schedule', 'notify', 'timeoutSeconds'];
 export function validateInput(value: unknown): JobInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a job object');
@@ -43,6 +46,14 @@ export class JobStore {
       try { db = JSON.parse(await readFile(join(this.directory, 'jobs.json'), 'utf8')); }
       catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; db = { version: 1, jobs: [] }; }
       if (db.version !== 1 || !Array.isArray(db.jobs)) throw new Error('Unsupported jobs database');
+      if (db.runs !== undefined && !Array.isArray(db.runs)) throw new Error('Invalid runs database');
+      for (const run of db.runs ?? []) {
+        if (!run || typeof run.id !== 'string' || !run.job || typeof run.job.id !== 'string' || !['queued', 'running', 'stopping', 'completed', 'cancelled', 'timed_out', 'failed', 'uncertain'].includes(run.status) || !Number.isFinite(Date.parse(run.createdAt)) || (run.cancelRequested !== undefined && typeof run.cancelRequested !== 'boolean') || (run.threadId !== undefined && typeof run.threadId !== 'string')) throw new Error('Invalid stored run');
+        const { id, revision, enabled, createdAt, updatedAt, ...input } = run.job;
+        validateInput(input);
+        if (!Number.isInteger(revision) || revision < 1) throw new Error('Invalid run revision');
+      }
+      if (new Set((db.runs ?? []).map(r => r.id)).size !== (db.runs ?? []).length) throw new Error('Duplicate run IDs');
       const ids = new Set<string>();
       for (const job of db.jobs) {
         const { id, revision, enabled, createdAt, updatedAt, ...input } = job;
@@ -86,11 +97,46 @@ export class JobStore {
       return job;
     }, true);
   }
+  runs(jobId?: string) { return this.transaction(db => (db.runs ?? []).filter(r => !jobId || r.job.id === jobId)); }
+  requestRun(jobId: string, revision: number, requestId: string) {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(requestId)) throw new Error('A UUID request ID is required');
+    return this.transaction(db => {
+      db.runs ??= [];
+      const existing = db.runs.find(r => r.id === requestId);
+      if (existing) {
+        if (existing.job.id !== jobId || existing.job.revision !== revision) throw new Error('Request ID already used for another job/revision');
+        return existing;
+      }
+      const job = db.jobs.find(j => j.id === jobId);
+      if (!job || job.revision !== revision) throw new Error('Job missing or changed; read it again');
+      if (db.runs.some(r => r.job.id === jobId && activeRun(r))) throw new Error('Job already has an active or uncertain run');
+      const run: JobRun = { id: requestId, job: structuredClone(job), status: 'queued', createdAt: new Date().toISOString() };
+      db.runs.push(run); return run;
+    }, true);
+  }
+  cancelRun(id: string) {
+    return this.transaction(db => {
+      const run = db.runs?.find(r => r.id === id);
+      if (!run) throw new Error('Run not found');
+      if (run.status === 'uncertain') throw new Error('Termination is uncertain; inspect the owning server before recovery');
+      if (run.status === 'queued') { run.status = 'cancelled'; run.endedAt = new Date().toISOString(); }
+      else if (['running', 'stopping'].includes(run.status)) run.cancelRequested = true;
+      return run;
+    }, true);
+  }
+  transition(id: string, from: RunStatus[], patch: Partial<Pick<JobRun, 'status' | 'threadId' | 'startedAt' | 'endedAt' | 'summary'>>) {
+    return this.transaction(db => {
+      const run = db.runs?.find(r => r.id === id);
+      if (!run || !from.includes(run.status)) throw new Error('Run state changed');
+      Object.assign(run, patch); return run;
+    }, true);
+  }
   delete(id: string, revision: number) {
     return this.transaction(db => {
       const index = db.jobs.findIndex(j => j.id === id);
       if (index < 0) throw new Error('Job not found');
       if (db.jobs[index].revision !== revision) throw new Error('Job changed; read it again before deleting');
+      if (db.runs?.some(r => r.job.id === id && activeRun(r))) throw new Error('Job has an active or uncertain run');
       db.jobs.splice(index, 1); return { deleted: id };
     }, true);
   }

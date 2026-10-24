@@ -14,7 +14,7 @@
     "dev": "tsx server/main.ts",
     "test": "node scripts/run-tests.mjs test/*.test.ts",
     "test:rpc": "node scripts/run-tests.mjs test/rpc.smoke.ts",
-    "test:browser": "node scripts/run-tests.mjs test/browser.smoke.ts test/threads.browser.smoke.ts test/auth.browser.smoke.ts test/composer.browser.smoke.ts test/photos.browser.smoke.ts test/artifacts.browser.smoke.ts",
+    "test:browser": "node scripts/run-tests.mjs test/browser.smoke.ts test/threads.browser.smoke.ts test/auth.browser.smoke.ts test/composer.browser.smoke.ts test/photos.browser.smoke.ts test/artifacts.browser.smoke.ts test/jobs.browser.smoke.ts",
     "test:container": "node scripts/run-tests.mjs --container test/container.smoke.ts",
     "image": "tsx server/image-cli.ts",
     "mail": "tsx mail/cli.ts",
