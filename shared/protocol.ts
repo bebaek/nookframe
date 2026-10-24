@@ -44,6 +44,7 @@ export type ClientCommand =
   | { type: 'stop'; id: string; threadId: string }
   | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
   | { type: 'new_thread'; id: string; threadId: string }
+  | { type: 'delete_thread'; id: string; threadId: string; targetId: string }
   | { type: 'switch_thread'; id: string; threadId: string; targetId: string };
 export type TerminalEvent =
   | { type: 'terminal_ready' }

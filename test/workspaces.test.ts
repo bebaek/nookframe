@@ -91,6 +91,81 @@ test('session ownership blocks another server until stopped; invalid paths and s
   } finally { await other.close(); await f.close(); }
 });
 
+test('deletion rejects busy/foreign-owned threads, stops idle writers and persists across restart', async () => {
+  const f = fixture();
+  const other = new Workspaces(f.store, f.first, f.factory);
+  try {
+    await f.pool.initialize();
+    const a = await f.pool.connect();
+    const file = f.store.path(f.first);
+    f.store.remember(file);
+    await assert.rejects(other.deleteThread(f.first), /another server/);
+    await a.workspace.prompt('running');
+    await assert.rejects(f.pool.deleteThread(f.first), /finishes running/);
+    await a.workspace.abort();
+    await a.workspace.setModel('test', 'second');
+    const stateDir = f.agents.get(f.first)!.stateDir;
+    await f.pool.deleteThread(f.first);
+    assert.equal(f.agents.get(f.first)!.stops, 1);
+    assert.equal(existsSync(file), false);
+    assert.equal(existsSync(stateDir), false);
+    assert.equal(f.pool.snapshot().threads.length, 0);
+    await assert.rejects(a.workspace.prompt('stale'), /unavailable/);
+    await assert.rejects(f.pool.connect(f.first));
+    await assert.rejects(f.pool.deleteThread('../outside.jsonl'), /Invalid thread/);
+    a.release();
+    const fresh = await f.store.initial();
+    assert.notEqual(fresh, file, 'legacy preference does not prevent startup');
+    const b = await f.pool.connect(undefined, true);
+    const second = b.workspace.state.threadId;
+    b.release();
+    await f.pool.close();
+    await other.initialize();
+    await other.deleteThread(second); // Nonresident session uses the same lock.
+    assert.equal((await f.store.list()).some(t => t.id === second), false);
+  } finally { await other.close(); await f.close(); }
+});
+
+test('failed deletion retains the session and allows reopening without a second writer', async t => {
+  const f = fixture();
+  try {
+    await f.pool.initialize();
+    const a = await f.pool.connect();
+    const file = f.store.path(f.first);
+    const deletion = t.mock.method(f.store, 'delete', () => { throw new Error('unlink failed'); });
+    await assert.rejects(f.pool.deleteThread(f.first), /unlink failed/);
+    deletion.mock.restore();
+    assert.ok(existsSync(file));
+    assert.equal(f.pool.snapshot().threads.length, 1);
+    assert.equal(f.agents.get(f.first)!.stops, 1);
+    await assert.rejects(a.workspace.prompt('stale'), /unavailable/);
+    const reopened = await f.pool.connect(f.first);
+    assert.notEqual(reopened.workspace, a.workspace);
+    a.release(); reopened.release();
+  } finally { await f.close(); }
+});
+
+test('deletion serializes reconnects and blocks prompts while stopping the writer', async () => {
+  const f = fixture();
+  let finishStop!: () => void;
+  const stopped = new Promise<void>(resolve => { finishStop = resolve; });
+  try {
+    const a = await f.pool.connect();
+    const close = a.workspace.close.bind(a.workspace);
+    let stopping!: () => void;
+    const started = new Promise<void>(resolve => { stopping = resolve; });
+    a.workspace.close = async () => { await close(); stopping(); await stopped; };
+    const deletion = f.pool.deleteThread(f.first);
+    await started;
+    await assert.rejects(a.workspace.prompt('race'), /unavailable/);
+    const reconnect = assert.rejects(f.pool.connect(f.first));
+    finishStop();
+    await deletion; await reconnect;
+    assert.equal((await f.store.list()).length, 0);
+    a.release();
+  } finally { finishStop(); await f.close(); }
+});
+
 test('capacity never evicts subscribed or busy agents; disconnected idle agents are reaped', async () => {
   const f = fixture(1, 25);
   try {
@@ -156,6 +231,14 @@ test('two websocket clients select independently; background runs, reconnect, ca
     b.send({ type: 'switch_thread', threadId: second, targetId: f.first, id: 'switch' });
     await b.wait(m => m.type === 'snapshot' && m.state.threadId === f.first);
     await b.wait(m => m.type === 'ack' && m.id === 'switch');
+    b.send({ type: 'delete_thread', threadId: f.first, targetId: second, id: 'wrong-delete' });
+    await b.wait(m => m.type === 'error' && m.id === 'wrong-delete');
+    b.send({ type: 'delete_thread', threadId: f.first, targetId: f.first, id: 'delete' });
+    await b.wait(m => m.type === 'ack' && m.id === 'delete');
+    await resumed.wait(m => m.type === 'snapshot' && m.selected === true && m.state.threadId === '');
+    assert.equal(f.pool.snapshot().threads.some(t => t.id === f.first), false);
+    resumed.send({ type: 'prompt', threadId: f.first, id: 'deleted-prompt', text: 'stale' });
+    await resumed.wait(m => m.type === 'error' && m.id === 'deleted-prompt');
   } finally {
     for (const ws of sockets) ws.terminate();
     await app.close(); await f.close();
