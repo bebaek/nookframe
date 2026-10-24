@@ -392,7 +392,9 @@ See [thread ownership and multitasking](docs/session-concurrency.md).
 Only `/workspace` and `/data` persist; bake additional installed software into
 `Containerfile`.
 
-The image includes development and homelab administration tools. See
+The image includes development and homelab administration tools. Python 3 is
+available as both `python3` and `python` (the same interpreter), with its standard
+library and PyYAML; pip is not included. See
 [development workstation setup](docs/development-workstation.md) for persistent
 home configuration, credential risks, checkout tests, and CI-based image builds.
 No credentials are baked into the image. All npm test entry points automatically
