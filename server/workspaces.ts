@@ -7,7 +7,8 @@ import { Workspace } from './workspace.js';
 import type { ThreadStore } from './threads.js';
 
 export interface WorkspaceLease { workspace: Workspace; release(): void }
-type Entry = { workspace: Workspace; refs: number; used: number; ownsLock: () => boolean; releaseLock: () => Promise<void>; unsubscribe: () => void };
+export interface BackgroundOpen { id: string; cancel(): Promise<void>; beforeStart(threadId: string): Promise<void> }
+type Entry = { workspace: Workspace; pendingWorkspace?: Workspace; refs: number; used: number; ownsLock: () => boolean; releaseLock: () => Promise<void>; unsubscribe: () => void };
 
 // One writer per session file, and one selection per connection. Opening/evicting
 // is serialized, but independent agents run concurrently after acquisition.
@@ -19,8 +20,8 @@ export class Workspaces {
   private catalog: ThreadChoice[] = [];
   private timer: ReturnType<typeof setInterval>;
   constructor(readonly threads: ThreadStore, public defaultId: string,
-    private factory: (file: string, stateDir: string) => { workspace: Workspace; start(): Promise<void> },
-    private maxAgents = 4, private idleMs = 5 * 60_000) {
+    private factory: (file: string, stateDir: string, background?: boolean) => { workspace: Workspace; start(): Promise<void> },
+    private maxAgents = 4, private idleMs = 5 * 60_000, private guardThread?: (id: string) => Promise<void>) {
     this.timer = setInterval(() => { void this.serial(async () => {
       for (const [id, entry] of this.entries) if (this.idle(entry) && Date.now() - entry.used >= this.idleMs) await this.remove(id, entry);
     }).catch(() => { /* Failed stops retain ownership; never start a second writer. */ }); }, Math.min(idleMs, 60_000));
@@ -41,7 +42,7 @@ export class Workspaces {
     const threads = this.catalog.map(thread => {
       const state = this.entries.get(thread.id)?.workspace.state;
       const live = state?.threads.find(t => t.id === thread.id);
-      return { ...thread, ...live, busy: state?.busy ?? false };
+      return { ...thread, ...live, busy: !!state?.backgroundRun || (state?.busy ?? false) };
     });
     return workspace ? { ...workspace.state, threads } : {
       messages: [], liveText: '', tools: {}, busy: false, available: false,
@@ -50,7 +51,7 @@ export class Workspaces {
       threadId: '', threads, threadChanging: false,
     };
   }
-  connect(id?: string, create = false): Promise<WorkspaceLease> {
+  connect(id?: string, create = false, background?: BackgroundOpen): Promise<WorkspaceLease> {
     return this.serial(async () => {
       if (this.closing) throw new Error('Workspace is shutting down');
       let file = create ? undefined : this.threads.path(id ?? this.defaultId);
@@ -64,22 +65,25 @@ export class Workspaces {
         }
         file ??= this.threads.create();
         key = this.threads.id(file);
+        if (!background) await this.guardThread?.(key);
         let compromised = false;
         let workspace: Workspace | undefined;
         let releaseLock: () => Promise<void>;
         try {
           releaseLock = await lockfile.lock(file, { retries: 0, stale: 30_000, update: 10_000,
-            onCompromised: () => { compromised = true; workspace?.ownershipLost(); },
+            onCompromised: () => { compromised = true; (entry?.pendingWorkspace ?? entry?.workspace ?? workspace)?.ownershipLost(); },
           });
         } catch { throw new Error('This thread is owned by another server. Choose a different thread or close it there first.'); }
         try {
           const stateDir = join(this.threads.directory, '.nookframe', createHash('sha256').update(key).digest('hex'));
-          const agent = this.factory(file, stateDir);
+          if (background) await background.beforeStart(key);
+          const agent = this.factory(file, stateDir, !!background);
           workspace = agent.workspace;
           await agent.start();
           await workspace.initialize();
           if (workspace.state.threadId !== key) throw new Error('Thread load was not confirmed');
           if (compromised) { workspace.ownershipLost(); throw new Error('Thread ownership was lost'); }
+          if (background) workspace.background(background.id, background.cancel);
           this.catalog = await this.threads.list();
           entry = { workspace, refs: 0, used: Date.now(), ownsLock: () => !compromised, releaseLock, unsubscribe: workspace.subscribe(() => {
             if (entry) entry.used = Date.now();
@@ -96,10 +100,39 @@ export class Workspaces {
       entry.refs++;
       this.changed();
       let released = false;
-      return { workspace: entry.workspace, release: () => {
+      return { get workspace() { return entry!.workspace; }, release: () => {
         if (released) return;
         released = true; entry.refs--; entry.used = Date.now();
       } };
+    });
+  }
+  // Keep the same session lock across handoff; no second writer can enter the
+  // gap between confirmed background exit and interactive startup. Leases follow
+  // the entry, so already-open browsers see the replacement controller.
+  finishBackground(id: string, persist: () => Promise<void>) {
+    return this.serial(async () => {
+      const entry = this.entries.get(id);
+      if (!entry?.workspace.state.backgroundRun || !entry.ownsLock()) throw new Error('Background ownership unavailable');
+      entry.workspace.stoppingBackground();
+      await entry.workspace.close();
+      if (!entry.ownsLock()) throw new Error('Background ownership lost');
+      await persist();
+      if (!entry.ownsLock()) throw new Error('Background ownership lost');
+      const file = this.threads.path(id);
+      const stateDir = join(this.threads.directory, '.nookframe', createHash('sha256').update(id).digest('hex'));
+      const agent = this.factory(file, stateDir, false);
+      entry.pendingWorkspace = agent.workspace;
+      try {
+        await agent.start(); await agent.workspace.initialize();
+        if (agent.workspace.state.threadId !== id || !entry.ownsLock()) throw new Error('Handoff not confirmed');
+      } catch (error) { await agent.workspace.close(); entry.pendingWorkspace = undefined; throw error; }
+      entry.pendingWorkspace = undefined;
+      entry.unsubscribe();
+      entry.workspace = agent.workspace;
+      entry.unsubscribe = agent.workspace.subscribe(() => { entry.used = Date.now(); this.changed(agent.workspace); });
+      entry.used = Date.now();
+      this.catalog = await this.threads.list();
+      this.changed(agent.workspace);
     });
   }
   deleteThread(id: string): Promise<void> {
@@ -117,6 +150,7 @@ export class Workspaces {
         if (!entry.ownsLock()) throw new Error('Thread ownership was lost; deletion cancelled');
         release = entry.releaseLock;
       } else {
+        await this.guardThread?.(id);
         try { release = await lockfile.lock(file, { retries: 0, stale: 30_000, update: 10_000 }); }
         catch { throw new Error('This thread is owned by another server. Close it there before deleting it.'); }
       }
@@ -148,6 +182,7 @@ export class Workspaces {
     throw new Error('Image unavailable');
   } };
   private async remove(id: string, entry: Entry) {
+    await entry.pendingWorkspace?.close();
     await entry.workspace.close();
     await entry.releaseLock();
     entry.unsubscribe(); this.entries.delete(id);

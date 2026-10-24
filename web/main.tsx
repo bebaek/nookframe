@@ -173,7 +173,7 @@ function App() {
     } finally { upload.current = null; setUploading(false); }
   }
   function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file }))); }
-  const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy &&
+  const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
   function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread', model?: ModelChoice, targetId?: string) {
@@ -191,7 +191,7 @@ function App() {
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
         <button type="button" role="tab" aria-selected={tab === 'terminal'} onClick={() => { setTerminalOpened(true); setTab('terminal'); }}>Terminal</button>
       </nav>}
-      <span role="status" className={connected ? 'badge online' : 'badge'}>{connected ? state?.busy ? 'Working' : 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>
+      <span role="status" className={connected ? 'badge online' : 'badge'}>{connected ? state?.backgroundRun?.stopping ? 'Stopping…' : state?.busy || state?.backgroundRun ? 'Working' : 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>
       {signedIn && <button type="button" className="secondary controls-toggle" aria-label="Workspace controls" popoverTarget="workspace-controls">⋯</button>}
     </header>
     {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
@@ -204,13 +204,13 @@ function App() {
           {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.busy ? 'Working · ' : ''}{unread.has(thread.id) ? 'New · ' : ''}{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
         </select>
         <button type="button" disabled={!connected || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
-        <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || state.modelChanging || state.threadChanging} onClick={() => {
+        <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => {
           const title = state.threads.find(thread => thread.id === state.threadId)?.title || 'this thread';
           if (window.confirm(`Permanently delete “${title}”? This removes its saved conversation, not shared workspace files. This cannot be undone.`)) command('delete_thread', undefined, state.threadId);
         }}>Delete thread</button>
         <small>{state.threadChanging ? 'Switching…' : 'Selected in this tab only · other threads keep running · same files'}</small>
       </section>}
-      {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} onChange={e => {
+      {state && <section className="model-picker"><label htmlFor="model">Model</label><select id="model" value={state.model} disabled={!connected || !state.available || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} onChange={e => {
         const choice = state.models.find(m => `${m.provider}/${m.id}` === e.target.value);
         if (choice) command('set_model', choice);
       }}>
@@ -243,7 +243,7 @@ function App() {
           e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         e.preventDefault();
         if (!e.repeat && canSend) e.currentTarget.form?.requestSubmit();
-      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={1} /><div className="actions">{state?.busy && <button type="button" className="secondary" disabled={!connected || pending} onClick={() => command('stop')}>Stop</button>}<button disabled={!canSend}>Send</button></div></form></footer>
+      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state || state.threadChanging} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) && <button type="button" className="secondary" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button>}<button disabled={!canSend}>Send</button></div></form></footer>
       </section>
       {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}

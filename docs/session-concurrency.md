@@ -32,6 +32,17 @@ honor these session locks. Do not open the same conversation there while using
 the new server. Stop older agents before transferring their conversations. The
 shared terminal itself remains one shell; this change separates chat, not PTYs.
 
+## Background job threads
+
+Opt-in manual jobs share the pool's capacity and session ownership locks. A running
+job thread can be viewed and stopped, but cannot accept prompts, model changes,
+or deletion. Stop requests durable cancellation; the thread stays read-only while
+process exit is pending. After confirmed exit and final run persistence, the pool
+replaces the restricted agent with an interactive agent under the same lock.
+Existing browser leases follow that replacement, preserving the selected thread.
+An uncertain shutdown retains ownership and blocks continuation. See
+[background jobs](scheduled-jobs.md) for capabilities and remaining work.
+
 ## Persistence and limits
 
 Pi JSONL remains authoritative. Per-thread model preferences and interrupted-run

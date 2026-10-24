@@ -23,6 +23,7 @@ export interface ThreadChoice { id: string; title: string; updatedAt: string; bu
 export interface ModelChoice { provider: string; id: string; images?: boolean }
 export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {
+  backgroundRun?: { id: string; stopping: boolean };
   promptExamples?: string[];
   messages: ChatMessage[];
   liveText: string;
