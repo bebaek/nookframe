@@ -18,6 +18,18 @@ test('client context is bounded, allowlisted and optional', () => {
   }
 });
 
+test('browser location is bounded and rounded before model sharing', () => {
+  assert.deepEqual(parseClientContext({ location: { latitude: 37.566535, longitude: -126.977969, source: 'browser', accuracy: 10 } }), {
+    location: { latitude: 37.57, longitude: -126.98, source: 'browser' },
+  });
+  for (const location of [null, [], {}, { latitude: 91, longitude: 0, source: 'browser' },
+    { latitude: 0, longitude: 181, source: 'browser' }, { latitude: NaN, longitude: 0, source: 'browser' },
+    { latitude: 0, longitude: Infinity, source: 'browser' }, { latitude: '0', longitude: 0, source: 'browser' },
+    { latitude: 0, longitude: 0, source: 'manual' }]) {
+    assert.throws(() => parseClientContext({ location }), /Invalid client location/);
+  }
+});
+
 test('extension adds request-only hints, replaces clients, and clears on opt-out and settlement', async () => {
   const handlers = new Map<string, (...args: any[]) => any>();
   let command: { handler: (...args: any[]) => any };

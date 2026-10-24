@@ -35,7 +35,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
   try {
     for (const mobile of [true, false]) {
-      const page = await browser.newPage({ isMobile: mobile, hasTouch: mobile, timezoneId: 'Asia/Seoul' });
+      const page = await browser.newPage({ isMobile: mobile, hasTouch: mobile, timezoneId: 'Asia/Seoul', permissions: ['geolocation'], geolocation: { latitude: 37.566535, longitude: 126.977969 } });
       await page.goto(origin);
       await page.getByLabel('Access token').fill(token);
       await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -67,6 +67,8 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await input.press('Enter');
       assert.equal(await send.isDisabled(), true);
       await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+      await page.getByText('Approximate location available for your next message.', { exact: true }).waitFor();
+      assert.equal(await page.getByLabel('Share approximate browser location').isChecked(), true);
       await page.getByLabel('Timezone override (optional)').fill('Invalid/Place');
       assert.equal(await send.isDisabled(), true);
       await page.getByLabel('Timezone override (optional)').fill('');
@@ -76,12 +78,14 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.getByText('Ready', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
       assert.equal(await page.getByLabel('City (optional)', { exact: true }).inputValue(), 'Seoul');
+      await page.getByText('Approximate location available for your next message.', { exact: true }).waitFor();
+      assert.doesNotMatch(await page.evaluate(() => localStorage.getItem('nookframe.client-context')!), /latitude|longitude/);
       await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await input.fill('hello\nworld');
       await input.press('Enter');
       await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
       assert.deepEqual(prompts, ['hello\nworld']);
-      assert.deepEqual(contexts, [{ timezone: 'Asia/Seoul', timezoneSource: 'browser', city: 'Seoul' }]);
+      assert.deepEqual(contexts, [{ timezone: 'Asia/Seoul', timezoneSource: 'browser', city: 'Seoul', location: { latitude: 37.57, longitude: 126.98, source: 'browser' } }]);
       await input.fill('keep while busy');
       await input.press('Enter');
       assert.equal(await send.isDisabled(), true);
@@ -94,6 +98,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.getByText('Ready', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
       await page.getByLabel('Share approximate city').uncheck();
+      await page.getByLabel('Share approximate browser location').uncheck();
       await page.getByLabel('Timezone override (optional)').fill('America/New_York');
       await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await input.fill('manual timezone');
@@ -104,6 +109,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.reload();
       await page.getByText('Ready', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+      assert.equal(await page.getByLabel('Share approximate browser location').isChecked(), false);
       await page.getByLabel('Share timezone', { exact: true }).uncheck();
       await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await input.fill('nothing shared');

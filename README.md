@@ -211,7 +211,13 @@ Workspace controls includes browser-local context preferences. Timezone sharing 
 on by default, detected with `Intl.DateTimeFormat().resolvedOptions().timeZone`;
 leave the override blank to detect it again on each message. You can override it
 with an IANA timezone or disable sharing. Approximate city sharing is off by
-default and requires a manually entered city. No GPS or permission prompt is used.
+default and requires a manually entered city. Automatic browser location sharing is
+on by default and requests browser permission (HTTPS or localhost required). Denial,
+timeout, or unavailable location does not block chat; manual city remains a fallback.
+Coordinates are rounded to two decimals before transmission and validated/rounded
+again server-side. They stay in page memory only, not local storage. Location is
+sampled when the page opens or sharing is enabled; toggle off/on to refresh or retry.
+Disable “Share approximate browser location” to stop sharing on future messages.
 
 Preferences stay in this browser's local storage (including across sign-out).
 Only enabled fields accompany a prompt. A bundled Pi extension holds them in memory
