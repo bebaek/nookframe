@@ -21,6 +21,7 @@ import { piExtensionArgs } from './pi-extensions.js';
 import { parsePromptExamples } from './prompt-examples.js';
 import { clientContextCommand } from './client-context-extension.js';
 import { PresenceStore } from './agent-presence.js';
+import { explainModel } from './operations.js';
 
 const extensionArgs = piExtensionArgs(process.env.NOOKFRAME_PI_EXTENSIONS);
 const promptExamples = parsePromptExamples(process.env.NOOKFRAME_PROMPT_EXAMPLES);
@@ -57,7 +58,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
     env: { NOOKFRAME_PRESENCE_DIR: background ? '' : presenceDir, NOOKFRAME_PRESENCE_THREAD_ID: threads.id(file), NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
     provider: selection.model?.provider,
     model: selection.model?.id,
-    args: ['--session', file, '--session-dir', threads.directory, ...(background ? backgroundArgs : [...extensionArgs, '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './agent-presence-extension.ts' : './agent-presence-extension.js', import.meta.url)), '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './client-context-extension.ts' : './client-context-extension.js', import.meta.url)), '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md'), '--skill', join(root, 'skills/jobs/SKILL.md')])],
+    args: ['--session', file, '--session-dir', threads.directory, ...(background ? backgroundArgs : [...extensionArgs, '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './agent-presence-extension.ts' : './agent-presence-extension.js', import.meta.url)), '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './client-context-extension.ts' : './client-context-extension.js', import.meta.url)), '--no-approve', '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md'), '--skill', join(root, 'skills/jobs/SKILL.md'), '--skill', join(root, 'skills/operations/SKILL.md')])],
   });
   const controller = new Workspace(client, threadStateDir, selection, threads, true, background ? undefined : async context => {
     const disposition = await client.prompt(`/${clientContextCommand} ${JSON.stringify(context ?? null)}`);
@@ -78,6 +79,12 @@ await jobRunner?.start();
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
 const app = createApp(workspace, {
   token, origin: publicOrigin, allowedOrigins, promptExamples, presence,
+  operations: {
+    status: () => ({ schemaVersion: 1, slot: process.env.NOOKFRAME_SLOT ?? null, uptimeSeconds: Math.floor(process.uptime()),
+      capabilities: { inspection: true, mutations: false, presence: !!presence, jobRunner: !!jobRunner } }),
+    config: () => ({ model: explainModel(resolveModelSelection(stateDir, agentDir, process.env)) }),
+    sessions: () => workspace.operationSessions(),
+  },
   mail: mailOAuth, calendar: calendar.oauth,
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {

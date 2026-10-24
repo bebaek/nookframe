@@ -51,6 +51,19 @@ export class Workspaces {
       threadId: '', threads, threadChanging: false,
     };
   }
+  operationSessions() {
+    return {
+      scope: 'this-instance-loaded-agents',
+      count: this.entries.size,
+      capacity: this.maxAgents,
+      closing: this.closing,
+      sessions: [...this.entries].map(([id, entry]) => ({
+        id, busy: entry.workspace.state.busy, available: entry.workspace.state.available,
+        model: entry.workspace.state.model, modelSource: entry.workspace.state.modelSource,
+        connections: entry.refs, ownsLock: entry.ownsLock(),
+      })),
+    };
+  }
   connect(id?: string, create = false, background?: BackgroundOpen): Promise<WorkspaceLease> {
     return this.serial(async () => {
       if (this.closing) throw new Error('Workspace is shutting down');

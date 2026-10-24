@@ -18,8 +18,9 @@ import { ArtifactStore } from './artifacts.js';
 
 import { defaultPromptExamples } from './prompt-examples.js';
 import type { PresenceStore } from './agent-presence.js';
+import type { OperationsReader } from './operations.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   const single = pool ? undefined : workspace as Workspace;
@@ -107,6 +108,24 @@ export function createApp(workspace: Workspace | Workspaces, config: { presence?
         }
         res.end(JSON.stringify({ ok: true }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
+      return;
+    }
+    if (req.url === '/api/operations' || req.url?.startsWith('/api/operations/')) {
+      res.setHeader('Content-Type', 'application/json');
+      // Reuse the existing access token and browser sessions. Browser requests
+      // must have an allowed origin, including when they carry a bearer token.
+      if (req.headers.origin !== undefined && !acceptsOrigin(req.headers.origin)) {
+        res.writeHead(403).end(JSON.stringify({ error: 'Origin rejected' })); return;
+      }
+      const bearer = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
+      if (!sessions.identify(req.headers.cookie, cookieName) && !sessions.verifyToken(bearer)) {
+        res.writeHead(401).end(JSON.stringify({ error: 'Authentication required' })); return;
+      }
+      if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); res.writeHead(405).end(); return; }
+      const operation = req.url.slice('/api/operations/'.length);
+      if (!config.operations || !['status', 'config', 'sessions'].includes(operation)) { res.writeHead(404).end(); return; }
+      try { res.end(JSON.stringify(config.operations[operation as keyof OperationsReader]())); }
+      catch { res.writeHead(503).end(JSON.stringify({ error: 'Operation inspection unavailable' })); }
       return;
     }
     if (req.url === '/agent-presence') {
