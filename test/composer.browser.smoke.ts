@@ -69,6 +69,43 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
       await page.getByText('Approximate location available for your next message.', { exact: true }).waitFor();
       assert.equal(await page.getByLabel('Share approximate browser location').isChecked(), true);
+      // Drive browser failures without waiting for real geolocation timeouts.
+      await page.evaluate(() => {
+        const requests: { success: PositionCallback; error: PositionErrorCallback | null; options?: PositionOptions }[] = [];
+        Object.assign(window, { locationRequests: requests });
+        navigator.geolocation.getCurrentPosition = (success, error = null, options) => {
+          requests.push({ success, error, options });
+        };
+      });
+      await page.getByLabel('Share approximate browser location').uncheck();
+      await page.getByLabel('Share approximate browser location').check();
+      const retry = page.getByRole('button', { name: 'Retry location', exact: true });
+      await page.getByText('Requesting browser location… This may take up to 60 seconds.', { exact: true }).waitFor();
+      assert.equal(await retry.isDisabled(), true);
+      await input.fill('chat remains available');
+      assert.equal(await send.isDisabled(), false);
+      assert.deepEqual(await page.evaluate(() => (window as any).locationRequests[0].options), {
+        enableHighAccuracy: false, timeout: 60000, maximumAge: 300000,
+      });
+      for (const [code, message] of [
+        [3, 'Location lookup timed out after 60 seconds. Retry or use a manual city.'],
+        [1, 'Location permission denied. Check browser and device permissions, then retry or use a manual city.'],
+        [2, 'Browser could not determine your location. Check device location services, then retry or use a manual city.'],
+      ] as const) {
+        await page.evaluate(code => (window as any).locationRequests.at(-1).error({ code }), code);
+        await page.getByText(message, { exact: true }).waitFor();
+        assert.equal(await retry.isDisabled(), false);
+        await retry.click();
+        await page.getByText('Requesting browser location… This may take up to 60 seconds.', { exact: true }).waitFor();
+      }
+      // A callback arriving after sharing is turned off must not restore location.
+      await page.getByLabel('Share approximate browser location').uncheck();
+      await page.evaluate(() => (window as any).locationRequests.at(-1).success({ coords: { latitude: 1, longitude: 2 } }));
+      await page.getByLabel('Share approximate browser location').check();
+      await page.getByText('Requesting browser location… This may take up to 60 seconds.', { exact: true }).waitFor();
+      await page.evaluate(() => (window as any).locationRequests.at(-1).success({ coords: { latitude: 37.566535, longitude: 126.977969 } }));
+      await page.getByText('Approximate location available for your next message.', { exact: true }).waitFor();
+      assert.equal(await retry.isDisabled(), false);
       await page.getByLabel('Timezone override (optional)').fill('Invalid/Place');
       assert.equal(await send.isDisabled(), true);
       await page.getByLabel('Timezone override (optional)').fill('');
