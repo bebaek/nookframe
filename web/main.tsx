@@ -5,6 +5,7 @@ import './style.css';
 import { ToolCard } from './ToolCard';
 import { useTranscriptScroll } from './useTranscriptScroll';
 import { AgentPresence } from './AgentPresence';
+import { useAttentionNotifications } from './useAttentionNotifications';
 import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
@@ -39,6 +40,10 @@ function App() {
   const [terminalOpened, setTerminalOpened] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const activeThread = useRef(initialThread());
+  const [attentionTarget, setAttentionTarget] = useState<string>();
+  const attention = useAttentionNotifications(state?.threadId, tab === 'chat', id => {
+    setTab('chat'); setAttentionTarget(id);
+  });
   const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[] } | null>(null);
   function rememberSelection(threadId: string, explicitRelease = false) {
     activeThread.current = threadId;
@@ -59,6 +64,7 @@ function App() {
     sent.current = null; setPending(false);
     upload.current?.abort(); setPhotoDrafts({});
     catalog.current = []; setUnread(new Set());
+    attention.clear(); setAttentionTarget(undefined);
   }
 
   useEffect(() => {
@@ -99,6 +105,7 @@ function App() {
     function trackThreads(threads: ThreadChoice[], selected: string | undefined) {
       const previous = new Map(catalog.current.map(thread => [thread.id, thread]));
       catalog.current = threads;
+      attention.update(threads);
       setUnread(current => {
         const next = new Set(current);
         for (const thread of threads) {
@@ -110,6 +117,7 @@ function App() {
       });
     }
     function connect() {
+      attention.clear();
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
       socket.current = ws;
       ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth', threadId: activeThread.current })); };
@@ -152,7 +160,7 @@ function App() {
       ws.onerror = () => ws.close();
     }
     connect();
-    return () => { disposed = true; clearTimeout(retry); socket.current?.close(); };
+    return () => { disposed = true; clearTimeout(retry); socket.current?.close(); attention.clear(); };
   }, [signedIn]);
 
   useEffect(() => {
@@ -203,6 +211,14 @@ function App() {
     socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
   }
 
+  useEffect(() => {
+    if (!attentionTarget || !connected || pending || uploading || !state || state.threadChanging) return;
+    setAttentionTarget(undefined);
+    if (!state.threads.some(thread => thread.id === attentionTarget)) {
+      setError('That conversation is no longer available.');
+    } else if (state.threadId !== attentionTarget) command('switch_thread', undefined, attentionTarget);
+  }, [attentionTarget, connected, pending, uploading, state]);
+
   return <div className="app">
     <header><h1><span>Nookframe</span></h1>
       {signedIn && <nav className="tabs" role="tablist" aria-label="Workspace views">
@@ -215,6 +231,11 @@ function App() {
     {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
       <section id="workspace-controls" popover="auto" aria-label="Workspace controls" className="workspace-controls">
       <div className="controls-heading"><h2>Workspace controls</h2><button type="button" className="secondary" aria-label="Close controls" popoverTarget="workspace-controls" popoverTargetAction="hide">×</button></div>
+      <section aria-label="Agent notifications">
+        <button type="button" className="secondary" disabled={!attention.available} aria-pressed={attention.enabled} onClick={() => void attention.toggle()}>{attention.enabled ? 'Disable notifications' : 'Enable notifications'}</button>
+        <p><small>{attention.available ? 'Notify when an agent run ends outside the focused chat. Keep this page open and connected.' : 'Browser notifications are unavailable here.'}</small></p>
+        {attention.status && <p role="status">{attention.status}</p>}
+      </section>
       {state && <section className="thread-picker">
         <label htmlFor="thread">Thread</label>
         <select id="thread" value={state.threadId} disabled={!connected || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
