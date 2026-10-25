@@ -10,12 +10,15 @@ import { Workspace, type Agent } from '../server/workspace.js';
 import { Workspaces } from '../server/workspaces.js';
 import { createApp } from '../server/http.js';
 import { resolveModelSelection } from '../server/models.js';
+import { persistSession } from './session-fixture.js';
 import type { ServerMessage } from '../shared/protocol.js';
 
 function fixture(max = 4, idleMs = 300_000) {
   const dir = mkdtempSync(join(tmpdir(), 'nookframe-workspaces-'));
   const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
-  const first = store.id(store.create());
+  const firstFile = store.create();
+  persistSession(firstFile, dir);
+  const first = store.id(firstFile);
   const agents = new Map<string, { emit: (event: unknown) => void; prompts: number; stops: number; stateDir: string }>();
   const factory = (file: string, stateDir: string) => {
     let emit: (event: unknown) => void = () => {};
@@ -26,7 +29,11 @@ function fixture(max = 4, idleMs = 300_000) {
       async getState() { return { sessionFile: file, model }; },
       async getAvailableModels() { return ['first', 'second'].map(id => ({ provider: 'test', id })); },
       async getEntries() { return { entries: [], leafId: null }; },
-      async prompt() { record.prompts++; },
+      async prompt(text: string) {
+        record.prompts++;
+        persistSession(file, dir, text);
+        emit({ type: 'message_end', message: { role: 'user', content: text } });
+      },
       async setModel(provider: string, id: string) { model = { provider, id }; },
       async clearQueue() {},
       async abort() { emit({ type: 'agent_settled' }); },
@@ -40,6 +47,55 @@ function fixture(max = 4, idleMs = 300_000) {
   return { dir, store, first, agents, pool, factory, async close() { await pool.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+test('drafts reconnect locally, stay out of history, and disappear on release', async () => {
+  const f = fixture();
+  try {
+    await f.pool.initialize();
+    const draft = await f.pool.connect(undefined, true);
+    const id = draft.workspace.state.threadId;
+    const file = f.store.livePath(id);
+    assert.equal(existsSync(file), false);
+    assert.equal(f.pool.snapshot(draft.workspace).threadId, id);
+    assert.equal(f.pool.snapshot().threads.some(t => t.id === id), false);
+    assert.equal(f.pool.hasThread(id), true, 'catalog absence must not detach its viewer');
+    f.pool.assertThread(id); // Uploads and stale-request checks support a live draft.
+    const reconnected = await f.pool.connect(id);
+    assert.equal(reconnected.workspace, draft.workspace);
+    reconnected.release();
+    await draft.releaseThread();
+    assert.equal(existsSync(file), false);
+    assert.equal(f.pool.hasThread(id), false);
+    await assert.rejects(f.pool.connect(id));
+    await assert.rejects(draft.workspace.prompt('stale'), /unavailable/);
+    const next = await f.pool.connect(undefined, true);
+    assert.notEqual(next.workspace.state.threadId, id);
+    await f.pool.deleteThread(next.workspace.state.threadId);
+    next.release();
+  } finally { await f.close(); }
+});
+
+test('first Pi write updates history without changing identity or releasing ownership', async () => {
+  const f = fixture();
+  const otherStore = new ThreadStore(f.store.directory, f.dir, join(f.dir, 'other-state'));
+  const other = new Workspaces(otherStore, '', f.factory);
+  try {
+    await f.pool.initialize();
+    const draft = await f.pool.connect(undefined, true);
+    const id = draft.workspace.state.threadId;
+    await assert.rejects(other.connect(id), /ENOENT/); // Other instances cannot open an unknown draft.
+    await draft.workspace.prompt('First saved prompt');
+    (await f.pool.connect(id)).release(); // Wait for serialized catalog refresh.
+    assert.equal(draft.workspace.state.threadId, id);
+    assert.equal(f.pool.snapshot().threads.find(t => t.id === id)?.title, 'First saved prompt');
+    await assert.rejects(other.connect(id), /another server/, 'same lock protects the path after materialization');
+    await draft.workspace.abort();
+    await draft.releaseThread();
+    const saved = await other.connect(id);
+    assert.equal(saved.workspace.state.threadId, id);
+    saved.release();
+  } finally { await other.close(); await f.close(); }
+});
+
 test('one agent per thread; parallel runs, independent models/markers, same-thread serialization', async () => {
   const f = fixture();
   try {
@@ -51,6 +107,7 @@ test('one agent per thread; parallel runs, independent models/markers, same-thre
     assert.equal(b.workspace.state.model, 'test/first');
     await Promise.all([a.workspace.prompt('a'), b.workspace.prompt('b')]);
     await assert.rejects(same.workspace.prompt('duplicate'), /already active/);
+    await f.pool.connect(b.workspace.state.threadId).then(lease => lease.release()); // Drain catalog discovery.
     assert.equal(f.pool.snapshot(b.workspace).threads.filter(t => t.busy).length, 2);
     const ar = f.agents.get(f.first)!;
     const br = f.agents.get(b.workspace.state.threadId)!;
@@ -83,7 +140,9 @@ test('session ownership blocks another server until stopped; invalid paths and s
     assert.notEqual(takeover.workspace, lease.workspace);
     assert.equal(takeover.workspace.state.model, 'test/second', 'thread preference survives ownership transfer');
     takeover.release();
-    const failedId = f.store.id(f.store.create());
+    const failedFile = f.store.create();
+    persistSession(failedFile, f.dir);
+    const failedId = f.store.id(failedFile);
     const broken = new Workspaces(f.store, failedId, () => { throw new Error('startup failed'); });
     try { await assert.rejects(broken.connect(), /startup failed/); }
     finally { await broken.close(); }
@@ -262,6 +321,8 @@ test('deletion rejects busy/foreign-owned threads, stops idle writers and persis
     assert.notEqual(fresh, file, 'legacy preference does not prevent startup');
     const b = await f.pool.connect(undefined, true);
     const second = b.workspace.state.threadId;
+    await b.workspace.prompt('Keep this thread');
+    await b.workspace.abort();
     b.release();
     await f.pool.close();
     await other.initialize();

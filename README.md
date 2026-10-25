@@ -186,6 +186,12 @@ do not replay missed completions. Each enabled tab observes runs independently.
 There is no separate approval-needed or stalled-run detection yet.
 
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
+A blank thread is shown as **New thread (unsaved)** and is not added to saved
+history. Pi creates its session file at the first conversation message (including
+your first submitted prompt), not when you click **New thread**. A live draft
+can reconnect on the same server while its agent remains loaded, but cannot be
+resumed after release, idle eviction, or a server restart. Existing saved threads
+and older empty session files are unchanged.
 Each thread has its own pi JSONL history; all threads share workspace files,
 and credentials, but use separate agent processes. Thread titles come from the first user message
 (or an existing pi session name). Switching itself makes no model request.

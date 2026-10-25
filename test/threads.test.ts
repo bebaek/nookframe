@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { ThreadStore } from '../server/threads.js';
+import { persistSession } from './session-fixture.js';
 import { Workspace, type Agent } from '../server/workspace.js';
 
 function fixture() {
@@ -23,14 +24,42 @@ function fixture() {
     async getEntries() { return { entries: manager.getEntries(), leafId: manager.getLeafId() }; },
     async getAvailableModels() { return ['first', 'second'].map(id => ({ provider: 'test', id })); },
     async setModel(provider: string, id: string) { model = { provider, id }; return model; },
-    async switchSession(path: string) { manager = SessionManager.open(path); model = { provider: 'test', id: 'first' }; return { cancelled: false }; },
+    async switchSession(path: string) { manager = SessionManager.open(path, store.directory, dir); model = { provider: 'test', id: 'first' }; return { cancelled: false }; },
     async stop() {},
   } as unknown as Agent;
   const workspace = new Workspace(agent, join(dir, 'state'), undefined, store);
   return { dir, store, original, agent, workspace, async close() { await workspace.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test('upgrade original session, durable empty threads, separate histories, saved model and selected thread', async () => {
+test('startup and repeated allocation leave no session files; Pi owns the first write', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-drafts-'));
+  try {
+    const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
+    const file = await store.initial();
+    const id = store.id(file);
+    for (let i = 0; i < 10; i++) assert.equal(existsSync(store.create()), false);
+    assert.equal(existsSync(file), false);
+    store.remember(file);
+    assert.equal(existsSync(join(dir, 'state/active-thread.json')), false);
+    assert.deepEqual(await store.list(), []);
+    assert.throws(() => store.path(id));
+    assert.throws(() => store.livePath(`../sessions/${id}`), /Invalid thread/);
+    assert.throws(() => store.livePath('unknown.jsonl'));
+    const reopened = new ThreadStore(store.directory, dir, join(dir, 'state'));
+    assert.throws(() => reopened.livePath(id), 'draft identity is not restored from disk');
+    const pi = SessionManager.open(file, store.directory, dir);
+    pi.appendMessage({ role: 'user', content: 'Pending prompt', timestamp: Date.now() });
+    assert.equal(existsSync(file), true, 'Pi persists the submitted prompt before an assistant reply');
+    assert.equal(store.id(file), id, 'identity does not change when persisted');
+    assert.equal((await store.list())[0].title, 'Pending prompt');
+    store.remember(file);
+    assert.equal(await reopened.initial(), file);
+    rmSync(file);
+    assert.throws(() => store.livePath(id), 'a missing saved file must not become a new draft');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('upgrade original session, unsaved drafts, separate histories, saved model and selected thread', async () => {
   const f = fixture();
   try {
     const originalBytes = readFileSync(f.original, 'utf8');
@@ -44,16 +73,17 @@ test('upgrade original session, durable empty threads, separate histories, saved
     assert.notEqual(emptyId, basename(f.original));
     assert.equal(f.workspace.state.messages.length, 0);
     assert.equal(f.workspace.state.model, 'test/second');
-    assert.equal(f.workspace.state.threads.length, 2);
-    assert.equal(readFileSync(f.store.path(emptyId), 'utf8').trim().split('\n').length, 1);
-    assert.equal(await new ThreadStore(f.store.directory, f.dir, join(f.dir, 'state')).initial(), f.store.path(emptyId));
+    assert.equal(f.workspace.state.threads.length, 1);
+    assert.equal(existsSync(f.store.livePath(emptyId)), false);
+    assert.throws(() => f.store.path(emptyId));
+    assert.equal(await new ThreadStore(f.store.directory, f.dir, join(f.dir, 'state')).initial(), f.original);
     await f.workspace.switchThread(basename(f.original));
     assert.deepEqual(f.workspace.state.messages.map(m => m.text), ['Original conversation', 'Original answer']);
     assert.equal(f.workspace.state.model, 'test/second');
     assert.equal(readFileSync(f.original, 'utf8'), originalBytes, 'Legacy transcript not rewritten by the bridge');
     assert.throws(() => f.workspace.assertThread(emptyId), /active thread changed/);
-    await f.workspace.switchThread(emptyId);
-    assert.equal(f.workspace.state.messages.length, 0);
+    await assert.rejects(f.workspace.switchThread(emptyId), /unavailable/);
+    assert.throws(() => f.store.livePath(emptyId));
   } finally { await f.close(); }
 });
 
@@ -92,7 +122,9 @@ test('missing/corrupt selected thread and uncertain switch/save fail closed', as
       const preference = join(f.dir, 'state/active-thread.json');
       if (failure === 'rpc') f.agent.switchSession = async () => { throw new Error('Timeout'); };
       else { rmSync(preference); mkdirSync(preference); }
-      await assert.rejects(f.workspace.switchThread(), /confirm and save/);
+      const target = f.store.create();
+      persistSession(target, f.dir);
+      await assert.rejects(f.workspace.switchThread(basename(target)), /confirm and save/);
       assert.equal(f.workspace.state.available, false);
       assert.equal(f.workspace.state.threadChanging, false);
       await assert.rejects(f.workspace.prompt('unsafe'), /unavailable/);

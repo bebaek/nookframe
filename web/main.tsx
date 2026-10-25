@@ -297,6 +297,7 @@ function App() {
         <label htmlFor="thread">Thread</label>
         <select id="thread" value={state.threadId} disabled={!connected || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
           {!state.threadId && <option value="" disabled>Choose a thread</option>}
+          {!!state.threadId && !state.threads.some(thread => thread.id === state.threadId) && <option value={state.threadId}>New thread (unsaved)</option>}
           {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.busy ? 'Working · ' : ''}{unread.has(thread.id) ? 'New · ' : ''}{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
         </select>
         <button type="button" disabled={!connected || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
@@ -328,7 +329,7 @@ function App() {
         open={r => takeoverCommand('takeover_open', r.threadId, r.id)}
         inspect={id => { setTab('chat'); setAttentionTarget(id); }} notify={attention.notifyTakeover} />
       <section className="chat-pane" hidden={tab !== 'chat'}>
-      <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
+      <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span></div>
       <AgentPresence threadId={state?.threadId} />
       {reading.hidden && <button type="button" className="reading-controls" onClick={reading.reveal} aria-label="Show chat controls">Show controls</button>}
       <main className="transcript" ref={scroll.transcript} onScroll={scroll.onScroll} {...reading.gestures}>
