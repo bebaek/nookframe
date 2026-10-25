@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Takeover, ThreadChoice } from '../shared/protocol';
 
-export function TakeoverPanel({ incoming, outgoing, lockedThreadId, connected, pending, selected, chat, threads, request, decide, open, inspect, notify }: {
+export function TakeoverPanel({ incoming, outgoing, lockedThreadId, connected, pending, selected, chat, threads, request, decide, open, inspect, notify, error, pendingAction, checkTarget, check }: {
   incoming: Takeover[]; outgoing?: Takeover; lockedThreadId?: string; connected: boolean; pending: boolean;
+  error?: string; pendingAction?: string; checkTarget?: string; check: (id: string) => void;
   selected?: string; chat: boolean; threads: ThreadChoice[]; request: (id: string) => void;
   decide: (request: Takeover, decision: 'allow' | 'keep' | 'force' | 'cancel') => void;
   open: (request: Takeover) => void; inspect: (id: string) => void; notify: (id: string) => void;
@@ -32,7 +33,11 @@ export function TakeoverPanel({ incoming, outgoing, lockedThreadId, connected, p
     <button disabled={disabled} onClick={() => decide(waiting, 'allow')}>Allow takeover</button>
     <button disabled={disabled} onClick={() => decide(waiting, 'keep')}>Keep here</button>
   </>;
+  const progress = pendingAction === 'takeover_request' ? 'Requesting takeover…' : pendingAction === 'takeover_decide' ? 'Sending takeover response…' : pendingAction === 'takeover_open' ? 'Opening thread here…' : pendingAction === 'switch_thread' && checkTarget ? 'Checking thread ownership…' : undefined;
   return <section className="takeover-panel" aria-label="Thread takeover">
+    {progress && <p role="status">{progress}</p>}
+    {error && <p role="alert" className="error">{error}</p>}
+    {checkTarget && (error || outgoing && ['failed', 'completed', 'cancelled'].includes(outgoing.status)) && <button disabled={disabled} onClick={() => check(checkTarget)}>Check thread</button>}
     {lockedThreadId && (!outgoing || ['rejected', 'cancelled', 'failed', 'completed'].includes(outgoing.status)) && <button disabled={disabled} onClick={() => {
       if (window.confirm(`Request takeover of “${title(lockedThreadId)}” on this slot? The other slot has 30 seconds to respond. Allowing takeover interrupts any active response; saved messages are kept.`)) request(lockedThreadId);
     }}>Take over on this slot</button>}
@@ -41,7 +46,9 @@ export function TakeoverPanel({ incoming, outgoing, lockedThreadId, connected, p
       <dialog ref={dialog} onCancel={e => e.preventDefault()} aria-labelledby="takeover-title">
         <h2 id="takeover-title">Allow thread takeover?</h2>
         <p>Slot {waiting.requesterSlot} is requesting “{title(waiting.threadId)}”. Allowing it interrupts the current response. Saved messages are kept.</p>
-        <p>{seconds(waiting)} seconds remaining. Silence does not approve takeover.</p>{buttons}
+        <p>{seconds(waiting)} seconds remaining. Silence does not approve takeover.</p>
+        {progress && <p role="status">{progress}</p>}
+        {error && <p role="alert" className="error">{error}</p>}{buttons}
       </dialog>
     </>}
     {outgoing && <div role="status">

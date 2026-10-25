@@ -53,6 +53,15 @@ views show a banner. Background clients can receive a browser notification when
 notifications are enabled and permission has already been granted. Notification
 clicks open the request; they do not authorize takeover.
 
+Takeover progress and errors appear beside the takeover controls, including in
+an open approval dialog. Missing owner metadata is reported as an unavailable or
+possibly older slot, not a verified version mismatch. Status-read failures remain
+visible instead of silently dropping the request. A command without an
+acknowledgement after 15 seconds reconnects with an **outcome unknown** warning;
+no takeover command is automatically replayed. **Check thread** tries the normal
+thread-open path with its usual lock checks—it may open the thread if ownership
+is available, and never force-clears a lock.
+
 Both sides show a server-enforced 30-second response deadline. The first valid
 owner response wins across tabs. **Keep here** rejects the request and cannot be
 overridden by that request. Silence never approves or stops a run: after expiry,

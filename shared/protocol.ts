@@ -66,5 +66,5 @@ export type ServerMessage =
   | { type: 'threads'; threads: ThreadChoice[] }
   | { type: 'snapshot'; state: Snapshot; selected?: boolean }
   | { type: 'ack'; id: string }
-  | { type: 'takeovers'; incoming: Takeover[]; outgoing?: Takeover }
+  | { type: 'takeovers'; incoming: Takeover[]; outgoing?: Takeover; problem?: string }
   | { type: 'error'; id?: string; message: string; lockedThreadId?: string };

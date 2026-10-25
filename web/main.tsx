@@ -37,7 +37,9 @@ function App() {
   const upload = useRef<AbortController | null>(null);
   const [error, setError] = useState('');
   const [lockedThreadId, setLockedThreadId] = useState<string>();
-  const [takeovers, setTakeovers] = useState<{ incoming: Takeover[]; outgoing?: Takeover }>({ incoming: [] });
+  const [takeovers, setTakeovers] = useState<{ incoming: Takeover[]; outgoing?: Takeover; problem?: string }>({ incoming: [] });
+  const [takeoverError, setTakeoverError] = useState('');
+  const takeoverTarget = useRef<string | undefined>(undefined);
   const openedTakeovers = useRef(new Set<string>());
   const [pending, setPending] = useState(false);
   const [tab, setTab] = useState<'chat' | 'terminal'>('chat');
@@ -48,7 +50,7 @@ function App() {
   const attention = useAttentionNotifications(state?.threadId, tab === 'chat', id => {
     setTab('chat'); setAttentionTarget(id);
   });
-  const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[] } | null>(null);
+  const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[]; decision?: string } | null>(null);
   function rememberSelection(threadId: string, explicitRelease = false) {
     activeThread.current = threadId;
     let hash = threadId ? `#thread=${encodeURIComponent(threadId)}` : location.hash === '#thread=' ? '#thread=' : '';
@@ -70,6 +72,7 @@ function App() {
     catalog.current = []; setUnread(new Set());
     attention.clear(); setAttentionTarget(undefined);
     setLockedThreadId(undefined); setTakeovers({ incoming: [] });
+    setTakeoverError(''); takeoverTarget.current = undefined;
   }
 
   useEffect(() => {
@@ -132,23 +135,29 @@ function App() {
         if (message.type === 'snapshot') {
           if (activeThread.current !== undefined && message.state.threadId !== activeThread.current && !message.selected) return;
           rememberSelection(message.state.threadId);
+          if ((message.selected || message.state.movedTo) && message.state.threadId && message.state.threadId === takeoverTarget.current) {
+            setTakeoverError(''); takeoverTarget.current = undefined;
+          }
           setLockedThreadId(current => (message.selected && !!message.state.threadId) || current === message.state.threadId ? undefined : current);
           trackThreads(message.state.threads, activeThread.current);
           setConnected(true); delay = 1000;
           setState(sent.current?.type === 'release_thread' && !message.state.threadId ? { ...message.state, notice: 'Thread released. You can open it on another slot now.' } : message.state);
         } else if (message.type === 'takeovers') {
-          setTakeovers({ incoming: message.incoming, outgoing: message.outgoing });
+          setTakeovers(current => ({ incoming: message.incoming, outgoing: message.problem ? current.outgoing : message.outgoing, problem: message.problem }));
+          if (message.outgoing && ['rejected', 'cancelled', 'failed', 'completed'].includes(message.outgoing.status)) takeoverTarget.current = undefined;
         } else if (message.type === 'threads') {
           trackThreads(message.threads, activeThread.current);
           setState(current => current ? { ...current, threads: message.threads } : current);
         } else if (message.type === 'ack' && message.id === sent.current?.id) {
           const { text: acknowledgedText, threadId, photos: acknowledgedPhotos } = sent.current;
+          if (['allow', 'keep', 'cancel'].includes(sent.current.decision ?? '')) takeoverTarget.current = undefined;
           if (acknowledgedPhotos) setPhotoDrafts(current => ({ ...current, [threadId]: (current[threadId] ?? []).filter(p => !acknowledgedPhotos.includes(p.key)) }));
           if (acknowledgedText !== undefined) setDrafts(current => current[threadId] === acknowledgedText ? { ...current, [threadId]: '' } : current);
           sent.current = null; setPending(false);
         } else if (message.type === 'error') {
           setError(message.message);
           if (message.lockedThreadId) setLockedThreadId(message.lockedThreadId);
+          if (message.id === sent.current?.id && (sent.current?.type.startsWith('takeover_') || sent.current?.type === 'switch_thread' && takeoverTarget.current)) setTakeoverError(message.message);
           if (sent.current && message.id === sent.current.id) {
             if (sent.current.type === 'release_thread') rememberSelection(sent.current.threadId);
             sent.current = null; setPending(false);
@@ -158,6 +167,7 @@ function App() {
       ws.onclose = event => {
         if (disposed) return;
         setConnected(false);
+        if (takeoverTarget.current) setTakeoverError('Connection lost during takeover. The outcome is unknown. Check the thread after reconnecting before requesting takeover again; no command will be replayed.');
         setTakeovers({ incoming: [] });
         if (sent.current) {
           setError('Connection lost before acknowledgement. Check history and the active model before retrying; any draft was kept.');
@@ -224,17 +234,30 @@ function App() {
   function takeoverCommand(type: string, targetId: string, requestId?: string, decision?: string) {
     if (!connected || pending || sent.current || !socket.current) return;
     const id = crypto.randomUUID();
-    sent.current = { id, type, threadId: state?.threadId ?? '' };
+    sent.current = { id, type, threadId: state?.threadId ?? '', decision };
+    takeoverTarget.current = targetId;
+    setTakeoverError('');
     setPending(true); setError('');
     socket.current.send(JSON.stringify({ type, id, targetId, requestId, decision }));
   }
 
   useEffect(() => {
+    const command = sent.current;
+    if (!pending || !command?.type.startsWith('takeover_')) return;
+    const timeout = setTimeout(() => {
+      if (sent.current?.id !== command.id) return;
+      setTakeoverError('Takeover acknowledgement timed out. The outcome is unknown. Reconnect and check the thread before retrying; no command will be replayed.');
+      socket.current?.close();
+    }, 15_000);
+    return () => clearTimeout(timeout);
+  }, [pending]);
+
+  useEffect(() => {
     const request = takeovers.outgoing;
-    if (!request || request.status !== 'released' || !connected || pending || openedTakeovers.current.has(request.id)) return;
+    if (!request || request.status !== 'released' || takeovers.problem || takeoverError || !connected || pending || openedTakeovers.current.has(request.id)) return;
     openedTakeovers.current.add(request.id);
     takeoverCommand('takeover_open', request.threadId, request.id);
-  }, [takeovers.outgoing, connected, pending]);
+  }, [takeovers.outgoing, takeovers.problem, takeoverError, connected, pending]);
 
   useEffect(() => {
     if (!attentionTarget || !connected || pending || uploading || !state || state.threadChanging) return;
@@ -287,7 +310,10 @@ function App() {
       <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>
       </section>
       {state?.movedTo && <div className="takeover-moved" role="status">Thread moved to slot {state.movedTo.slot}. {state.movedTo.url && <a href={state.movedTo.url}>Open on slot {state.movedTo.slot}</a>}</div>}
-      <TakeoverPanel incoming={takeovers.incoming} outgoing={takeovers.outgoing} lockedThreadId={lockedThreadId} connected={connected} pending={pending} selected={state?.threadId} chat={tab === 'chat'} threads={state?.threads ?? []}
+      <TakeoverPanel error={takeoverError || takeovers.problem} pendingAction={pending ? sent.current?.type : undefined}
+        checkTarget={takeoverTarget.current ?? takeovers.outgoing?.threadId ?? lockedThreadId}
+        check={id => { takeoverTarget.current = id; setTakeoverError(''); setTakeovers(current => ({ incoming: current.incoming })); command('switch_thread', undefined, id); }}
+        incoming={takeovers.incoming} outgoing={takeovers.outgoing} lockedThreadId={lockedThreadId} connected={connected} pending={pending} selected={state?.threadId} chat={tab === 'chat'} threads={state?.threads ?? []}
         request={id => takeoverCommand('takeover_request', id)}
         decide={(r, decision) => takeoverCommand('takeover_decide', r.threadId, r.id, decision)}
         open={r => takeoverCommand('takeover_open', r.threadId, r.id)}

@@ -63,7 +63,8 @@ export class Takeovers {
   }
   async request(threadId: string): Promise<Takeover> {
     return this.mutate(threadId, record => {
-      if (!record.owner || record.owner.instance === this.instance) throw new Error('No other owner is available. Try opening the thread again.');
+      if (!record.owner) throw new Error('Could not coordinate takeover: the owning slot has not published takeover information. It may need updating or may be unavailable. Try opening the thread again to check ownership.');
+      if (record.owner.instance === this.instance) throw new Error('This slot already owns the thread. Open it here instead of requesting takeover.');
       const old = record.request;
       if (old && (old.status === 'stopping' || old.status === 'pending' && old.deadline > this.now() || this.reserved(record))) throw new Error('Another takeover request is already pending.');
       const request = { id: randomUUID(), threadId, ownerSlot: record.owner.slot, requesterSlot: this.slot,
@@ -76,7 +77,7 @@ export class Takeovers {
   }
   private public(request: NonNullable<Record['request']>): Takeover {
     const { id, threadId, ownerSlot, requesterSlot, requesterUrl, deadline, status } = request;
-    return { id, threadId, ownerSlot, requesterSlot, requesterUrl, deadline, status: status === 'approved' && request.reservedUntil <= this.now() ? 'failed' : status === 'pending' && deadline <= this.now() ? 'expired' : status };
+    return { id, threadId, ownerSlot, requesterSlot, requesterUrl, deadline, status: ['approved', 'stopping'].includes(status) && request.reservedUntil <= this.now() ? 'failed' : status === 'pending' && deadline <= this.now() ? 'expired' : status };
   }
   async status(threadId: string, id: string): Promise<Takeover> {
     const r = (await this.read(threadId)).request;

@@ -65,6 +65,34 @@ test('silence expires without approval; force is explicit, time bounded, and gen
   } finally { await f.close(); }
 });
 
+test('missing ownership metadata explains compatibility uncertainty without claiming an outdated version', async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(f.requester.request('legacy-thread'), /has not published takeover information.*may need updating or may be unavailable/);
+    await assert.rejects(f.owner.request('thread'), /already owns the thread/);
+  } finally { await f.close(); }
+});
+
+test('stalled shutdown reports an unconfirmed outcome without authorizing a competing request', async () => {
+  const f = await fixture();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  let handoff: Promise<void> | undefined;
+  try {
+    const r = await f.requester.request('thread');
+    await f.owner.decide('thread', r.id, 'allow');
+    handoff = f.owner.handoff(r, async () => { entered(); await gate; throw new Error('unconfirmed shutdown'); });
+    await started;
+    f.advance(60_001);
+    assert.equal((await f.requester.status('thread', r.id)).status, 'failed');
+    await assert.rejects(f.competitor.request('thread'), /already pending/);
+    release(); await handoff;
+    assert.equal((await f.requester.status('thread', r.id)).status, 'failed');
+  } finally { release(); await handoff; await f.close(); }
+});
+
 test('denial cannot be overridden and unreachable owner never yields a successful handoff', async () => {
   const f = await fixture();
   try {
