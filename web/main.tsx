@@ -5,6 +5,7 @@ import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } fro
 import './style.css';
 import { ToolCard } from './ToolCard';
 import { useTranscriptScroll } from './useTranscriptScroll';
+import { useMobileReading } from './useMobileReading';
 import { AgentPresence } from './AgentPresence';
 import { useAttentionNotifications } from './useAttentionNotifications';
 import { useClientContext } from './ClientContext';
@@ -63,6 +64,10 @@ function App() {
   }
   const composer = useRef<HTMLTextAreaElement>(null);
   const scroll = useTranscriptScroll(signedIn && !checkingAuth && tab === 'chat', state?.threadId);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const reading = useMobileReading(signedIn && !checkingAuth && tab === 'chat', state?.threadId,
+    composerFocused || uploading || photos.length > 0 || !!draft || pending || !connected || !!error || !!state?.notice,
+    scroll.transcript, scroll.preservePosition);
 
   function lock() {
     setSignedIn(false); setConnected(false); setState(undefined); setDrafts({});
@@ -222,6 +227,7 @@ function App() {
 
   function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
+    reading.show();
     const id = crypto.randomUUID();
     const threadId = state?.threadId ?? '';
     sent.current = { id, type, threadId, text: type === 'prompt' ? draft : undefined, photos: type === 'prompt' ? photos.map(p => p.key) : undefined };
@@ -267,7 +273,7 @@ function App() {
     } else if (state.threadId !== attentionTarget) command('switch_thread', undefined, attentionTarget);
   }, [attentionTarget, connected, pending, uploading, state]);
 
-  return <div className="app">
+  return <div className={`app${reading.hidden ? ' mobile-reading' : ''}`}>
     <header><h1><span>Nookframe</span></h1>
       {signedIn && <nav className="tabs" role="tablist" aria-label="Workspace views">
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
@@ -321,7 +327,8 @@ function App() {
       <section className="chat-pane" hidden={tab !== 'chat'}>
       <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || 'Chat'}</span><span>{state?.model.split('/').at(-1)}</span></div>
       <AgentPresence threadId={state?.threadId} />
-      <main className="transcript" ref={scroll.transcript} onScroll={scroll.onScroll}>
+      {reading.hidden && <button type="button" className="reading-controls" onClick={reading.reveal} aria-label="Show chat controls">Show controls</button>}
+      <main className="transcript" ref={scroll.transcript} onScroll={scroll.onScroll} {...reading.gestures}>
         <div ref={scroll.content}>
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2>
           {!!state?.promptExamples?.length && <div className="prompt-examples" aria-label="Prompt examples">{state.promptExamples.map((example, index) =>
@@ -335,7 +342,7 @@ function App() {
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><MessageContent text={state.liveText} /></article>}
         </div>
       </main>
-      <footer onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !state?.available || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
+      <footer onFocusCapture={event => setComposerFocused((event.target as HTMLElement).matches('textarea, input, select, [contenteditable="true"]'))} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setComposerFocused(false); }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !state?.available || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
         // Keep mobile Enter and IME confirmation native (229 covers Safari IME).
         if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches ||
           e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey ||
