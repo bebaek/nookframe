@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TakeoverPanel } from './TakeoverPanel';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } from '../shared/protocol';
@@ -63,6 +63,13 @@ function App() {
     history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
   }
   const composer = useRef<HTMLTextAreaElement>(null);
+  // Finish autosizing before the transcript hook measures its viewport. The
+  // temporary zero height can clamp scrollTop even if the final height is unchanged.
+  useLayoutEffect(() => {
+    if (tab !== 'chat' || !composer.current) return;
+    composer.current.style.height = '0px';
+    composer.current.style.height = `${Math.min(144, Math.max(44, composer.current.scrollHeight + 2))}px`;
+  }, [draft, tab, signedIn]);
   const scroll = useTranscriptScroll(signedIn && !checkingAuth && tab === 'chat', state?.threadId);
   const [composerFocused, setComposerFocused] = useState(false);
   const reading = useMobileReading(signedIn && !checkingAuth && tab === 'chat', state?.threadId,
@@ -187,12 +194,6 @@ function App() {
     connect();
     return () => { disposed = true; clearTimeout(retry); socket.current?.close(); attention.clear(); };
   }, [signedIn]);
-
-  useEffect(() => {
-    if (tab !== 'chat' || !composer.current) return;
-    composer.current.style.height = '0px';
-    composer.current.style.height = `${Math.min(144, Math.max(44, composer.current.scrollHeight + 2))}px`;
-  }, [draft, tab, signedIn]);
 
   async function uploadPhotos(items: DraftPhoto[], retry = false) {
     if (upload.current || pending || !state || state.threadChanging) return;
