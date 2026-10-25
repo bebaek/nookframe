@@ -41,5 +41,10 @@ export function useTranscriptScroll(active: boolean, threadId: string | undefine
     geometry.current.top = el.scrollTop;
   }
 
-  return { transcript, content, onScroll };
+  function resume() {
+    follow.current = true;
+    sync();
+  }
+
+  return { transcript, content, onScroll, resume };
 }
