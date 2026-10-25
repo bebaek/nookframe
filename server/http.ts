@@ -301,13 +301,17 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       for (const ws of authenticated) {
         const request = outgoing.get(ws);
         let result;
+        let problem: string | undefined;
         if (request) {
           try { result = await pool.takeovers.status(request.threadId, request.id); }
-          catch { outgoing.delete(ws); }
+          catch { problem = 'Takeover status could not be verified. The request may have changed or coordination may be unavailable. Check the thread before retrying; no command was replayed.'; }
         }
-        send(ws, { type: 'takeovers', incoming, outgoing: result });
+        send(ws, { type: 'takeovers', incoming, outgoing: result, problem });
       }
-    })().catch(() => { /* Coordination unavailable: keep locks and retry inspection only. */ }).finally(() => { pollingTakeovers = false; });
+    })().catch(() => {
+      // Keep ownership and request bindings; retry inspection, never the action.
+      for (const ws of authenticated) send(ws, { type: 'takeovers', incoming: [], problem: 'Takeover coordination is unavailable. Ownership has not been confirmed; check the thread before retrying.' });
+    }).finally(() => { pollingTakeovers = false; });
   }, 500) : undefined;
   wss.on('connection', (ws, request) => {
     const isTerminal = request.url === '/terminal';
@@ -388,6 +392,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
                 if (status && ['pending', 'expired', 'approved', 'stopping', 'released'].includes(status.status)) throw new Error('Finish or cancel your existing takeover request first.');
               }
               const result = await pool.takeovers.request(command.targetId);
+              if (ws.readyState !== WebSocket.OPEN) return;
               outgoing.set(ws, { threadId: result.threadId, id: result.id });
               send(ws, { type: 'takeovers', incoming: await pool.takeovers.incoming(), outgoing: result });
             } else {
@@ -451,6 +456,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
               const lease = await pool.connect(command.targetId, command.type === 'new_thread');
               if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
               selected.get(ws)?.release(); selected.set(ws, lease);
+              if (outgoing.get(ws)?.threadId === lease.workspace.state.threadId) outgoing.delete(ws);
             } else await single!.switchThread(command.type === 'new_thread' ? undefined : command.targetId);
           }
           else if (!current) throw new Error('Select a thread first');
