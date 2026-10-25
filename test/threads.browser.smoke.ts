@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -87,6 +88,9 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     assert.equal(await a.locator('article.message').count(), 0);
     assert.equal(await a.getByLabel('Message', { exact: true }).inputValue(), '');
     assert.equal(await a.locator('#thread option').count(), 3);
+    assert.equal(existsSync(join(store.directory, empty)), false, 'real Pi RPC does not persist a blank session');
+    assert.equal((await store.list()).length, 2, 'draft is not saved history');
+    assert.equal(await b.locator('#thread option').count(), 2, 'other tabs do not list the draft');
     assert.equal(new URLSearchParams(new URL(a.url()).hash.slice(1)).get('thread'), empty);
     await a.reload(); await selected(a, empty);
     await selected(b, second);
@@ -116,7 +120,7 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     a.once('dialog', dialog => void dialog.accept());
     await a.getByRole('button', { name: 'Delete thread', exact: true }).click();
     await selected(a, ''); await selected(b, '');
-    assert.equal(await a.locator('#thread option').count(), 3, 'two remaining threads plus placeholder');
+    assert.equal(await a.locator('#thread option').count(), 2, 'one saved thread plus placeholder');
     assert.equal(await b.locator('article.message').count(), 0);
     assert.equal((await store.list()).some(thread => thread.id === second), false);
     await a.getByRole('button', { name: 'New thread', exact: true }).click();

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -13,7 +14,7 @@ test('real pi RPC writes a file and restores persisted session after replacement
   const dir = await mkdtemp(join(tmpdir(), 'pi-workspace-rpc-'));
   const cwd = join(dir, 'workspace');
   await mkdir(cwd);
-  // Pi defers saving a brand-new session until its first assistant message.
+  // Pi defers saving a brand-new session until its first conversation message.
   // Seed a synthetic completed turn to exercise persistence without an API call.
   const manager = SessionManager.create(cwd, join(dir, 'sessions'), { id: 'workspace' });
   manager.appendMessage({
@@ -59,14 +60,15 @@ test('real pi RPC writes a file and restores persisted session after replacement
       await workspace.switchThread();
       const emptyId = workspace.state.threadId;
       assert.equal(workspace.state.messages.length, 0);
+      assert.equal(existsSync(store.livePath(emptyId)), false, 'RPC leaves the draft unpersisted');
       await workspace.switchThread(originalId);
       assert.ok(workspace.state.messages.some(m => m.text.includes('hello from pi')));
-      await workspace.switchThread(emptyId);
+      await assert.rejects(workspace.switchThread(emptyId), /unavailable/);
     } finally { await workspace.close(); }
     const selected = await store.initial();
     client = new RpcClient({ ...options, args: ['--session', selected, '--session-dir', store.directory, '--no-extensions', '--no-approve'] });
     await client.start();
     assert.equal((await client.getState()).sessionFile, selected);
-    assert.equal((await client.getMessages()).length, 0, 'Empty selected thread survives a real RPC restart');
+    assert.ok((await client.getMessages()).some(m => m.role === 'bashExecution'), 'Last saved selection survives restart, not the abandoned draft');
   } finally { await client.stop(); await rm(dir, { recursive: true, force: true }); }
 });

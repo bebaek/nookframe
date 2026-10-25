@@ -273,9 +273,8 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   const dirty = new Set<Workspace>();
   const unsubscribe = workspace.subscribe((changed?: Workspace) => {
     if (pool) {
-      const ids = new Set(pool.snapshot().threads.map(thread => thread.id));
       for (const [ws, lease] of selected) {
-        if (!ids.has(lease.workspace.state.threadId)) {
+        if (!pool.hasThread(lease.workspace.state.threadId)) {
           lease.release(); selected.delete(ws);
           send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
         }
