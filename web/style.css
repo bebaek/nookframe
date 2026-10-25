@@ -43,6 +43,12 @@ body { margin: 0; }
 .terminal-controls small { width: 100%; }
 .terminal-controls button { padding: 8px 10px; font-size: 12px; }
 .app { max-width: 960px; margin: auto; height: 100dvh; display: flex; flex-direction: column; }
+.reading-controls { display: none; }
+@media (max-width: 600px) {
+  .mobile-reading > header, .mobile-reading .chat-pane > footer { display: none; }
+  .mobile-reading { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .reading-controls { display: block; position: fixed; z-index: 5; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); min-height: 44px; font-size: 12px; box-shadow: 0 2px 8px #0008; }
+}
 header { flex-shrink: 0; padding: max(6px, env(safe-area-inset-top)) 16px 6px; border-bottom: 1px solid #29333f; display: flex; align-items: center; gap: 8px; }
 header > .badge { margin-left: auto; }
 header:has(.tabs) > .badge { margin-left: 0; }
