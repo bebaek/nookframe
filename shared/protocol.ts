@@ -1,3 +1,7 @@
+export interface Takeover {
+  id: string; threadId: string; ownerSlot: string; requesterSlot: string; requesterUrl?: string; deadline: number;
+  status: 'pending' | 'expired' | 'approved' | 'stopping' | 'released' | 'completed' | 'rejected' | 'cancelled' | 'failed';
+}
 export interface ResponseImage { id: string; url: string; description?: string }
 export interface ToolOperation {
   images?: ResponseImage[];
@@ -23,6 +27,7 @@ export interface ThreadChoice { id: string; title: string; updatedAt: string; bu
 export interface ModelChoice { provider: string; id: string; images?: boolean }
 export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {
+  movedTo?: { slot: string; url?: string };
   backgroundRun?: { id: string; stopping: boolean };
   promptExamples?: string[];
   messages: ChatMessage[];
@@ -47,6 +52,9 @@ export type ClientCommand =
   | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
   | { type: 'new_thread'; id: string; threadId: string }
   | { type: 'release_thread'; id: string; threadId: string }
+  | { type: 'takeover_request'; id: string; targetId: string }
+  | { type: 'takeover_open'; id: string; targetId: string; requestId: string }
+  | { type: 'takeover_decide'; id: string; targetId: string; requestId: string; decision: 'allow' | 'keep' | 'force' | 'cancel' }
   | { type: 'delete_thread'; id: string; threadId: string; targetId: string }
   | { type: 'switch_thread'; id: string; threadId: string; targetId: string };
 export type TerminalEvent =
@@ -58,4 +66,5 @@ export type ServerMessage =
   | { type: 'threads'; threads: ThreadChoice[] }
   | { type: 'snapshot'; state: Snapshot; selected?: boolean }
   | { type: 'ack'; id: string }
-  | { type: 'error'; id?: string; message: string };
+  | { type: 'takeovers'; incoming: Takeover[]; outgoing?: Takeover }
+  | { type: 'error'; id?: string; message: string; lockedThreadId?: string };

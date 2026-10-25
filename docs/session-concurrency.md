@@ -31,8 +31,8 @@ reacquisition. Release does not force ownership away from another slot.
 Before starting/loading an agent, the server acquires a `proper-lockfile` lock on
 the validated session JSONL path (30-second stale timeout, 10-second heartbeat).
 Ownership lasts until the agent has stopped. A second server cannot load a
-writable copy of an owned thread: the UI reports the conflict and offers other
-threads/New thread instead. Losing ownership makes the controller unavailable
+writable copy of an owned thread: the UI reports the conflict and offers a
+confirmed takeover request (or other threads/New thread). Losing ownership makes the controller unavailable
 and stops its agent. Failed shutdowns retain ownership rather than permit a
 second writer. After a crash, stale ownership can be reclaimed after the timeout.
 Do not manually remove a live lock. As with any heartbeat lock, this assumes a
@@ -43,6 +43,48 @@ fencing against arbitrary process suspension or storage failure.
 honor these session locks. Do not open the same conversation there while using
 the new server. Stop older agents before transferring their conversations. The
 shared terminal itself remains one shell; this change separates chat, not PTYs.
+
+## Confirmed cross-slot takeover
+
+On a locked thread, **Take over on this slot** asks the owning slot for approval.
+Every connected chat client on that slot receives the request. The focused client
+viewing that conversation shows an **Allow takeover / Keep here** dialog; other
+views show a banner. Background clients can receive a browser notification when
+notifications are enabled and permission has already been granted. Notification
+clicks open the request; they do not authorize takeover.
+
+Both sides show a server-enforced 30-second response deadline. The first valid
+owner response wins across tabs. **Keep here** rejects the request and cannot be
+overridden by that request. Silence never approves or stops a run: after expiry,
+the requester may **Cancel** or explicitly confirm **Take over anyway** within
+another 60 seconds. Force means bypassing an unanswered UI request, **not**
+bypassing the session lock or confirmed process exit.
+
+On approval, the owner blocks prompts, stops its agent, confirms exit, then
+releases the ordinary JSONL lock. The requester acquires that same lock and
+reloads saved history. Multiple viewers do not prevent takeover; the old tabs
+become read-only and offer **Open on slot …**, using the requester's configured
+`PUBLIC_ORIGIN`. Drafts stay on their original browser; they are not transferred.
+Agent shutdown has a separate 15-second limit. Failure retains the lock and an
+unavailable controller; no late completion automatically releases ownership.
+Background jobs, model/thread transitions, and uncertain owners are refused.
+
+Coordination uses atomic per-thread records in
+`workspace-sessions/.nookframe-takeovers/`, protected by a short filesystem lock.
+Records contain instance/generation IDs, slot names, a public navigation URL,
+and the latest request/deadline/status—not transcripts or credentials. The
+existing single-owner shared-directory trust boundary applies. This protocol is
+separate from advisory agent presence and requires both slots to support it.
+Older/unreachable owners cannot acknowledge a safe handoff; their locks are never
+manually cleared. Ordinary stale-lock recovery after a crashed process remains
+unchanged and has the heartbeat-lock limitations described above.
+
+Requests are bound to the requesting WebSocket connection and owning generation.
+Disconnect/restart never replays an approval or force command. On reconnect,
+inspect/open the thread again; an unanswered old request may need to expire first.
+A brief handoff reservation prevents other cooperating slots from immediately
+reopening the released thread. Expired approvals cannot stop a replacement owner.
+Only the session-file lock authorizes starting an agent.
 
 ## Background job threads
 

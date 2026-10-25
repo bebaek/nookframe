@@ -74,20 +74,20 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     } catch { setStatus('This browser could not enable notifications.'); }
   }
 
-  async function notify(id: string) {
+  async function notify(id: string, takeover = false) {
     const version = generation.current;
     const active = await prepareWorker();
     const view = current.current;
     if (version !== generation.current || !view.enabled || Notification.permission !== 'granted' ||
-      !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus())) return;
+      (takeover ? document.visibilityState === 'visible' && document.hasFocus() : !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus()))) return;
     try {
       if (active) {
-        active.postMessage({ type: 'show-attention', threadId: id });
+        active.postMessage({ type: 'show-attention', threadId: id, takeover });
         return;
       }
       setStatus('Using basic notifications; this browser may not bring the chat window forward.');
       const notification = new Notification('Nookframe needs your attention', {
-        body: 'An agent run has ended. Open the conversation to review the result.', tag: `nookframe:${id}`,
+        body: takeover ? 'Another slot requests this thread. Open Nookframe to allow takeover or keep it here.' : 'An agent run has ended. Open the conversation to review the result.', tag: `nookframe:${id}`,
       });
       notifications.current.add(notification);
       notification.onclose = () => notifications.current.delete(notification);
@@ -107,5 +107,8 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     }
   }
 
-  return { enabled, status, available: supported(), toggle, update, clear };
+  function notifyTakeover(id: string) {
+    if (current.current.enabled && supported() && Notification.permission === 'granted') void notify(id, true);
+  }
+  return { enabled, status, available: supported(), toggle, update, clear, notifyTakeover };
 }

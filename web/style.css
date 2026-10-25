@@ -1,5 +1,11 @@
 :root { color-scheme: dark; font-family: system-ui, sans-serif; color: #e2e8ef; background: #101419; }
 * { box-sizing: border-box; }
+.takeover-panel:empty { display: none; }
+.takeover-panel, .takeover-moved { padding: 8px 16px; border-bottom: 1px solid #46576a; flex-shrink: 0; overflow-wrap: anywhere; }
+.takeover-panel button { margin: 4px; }
+.takeover-panel dialog { max-width: min(460px, calc(100vw - 24px)); color: #e2e8ef; background: #171e26; border: 1px solid #46576a; border-radius: 12px; }
+.takeover-panel dialog::backdrop { background: #0009; }
+.takeover-moved a { color: #9dcfff; }
 .agent-presence { padding: 6px 16px; border-bottom: 1px solid #46576a; font-size: .85rem; overflow-wrap: anywhere; flex-shrink: 0; }
 .agent-presence details[open] { max-height: 30vh; overflow-y: auto; }
 .agent-presence article { border-top: 1px solid #46576a; padding: 8px 0; }

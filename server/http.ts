@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Workspace } from './workspace.js';
-import { Workspaces, type WorkspaceLease } from './workspaces.js';
+import { Workspaces, ThreadOwnedError, type WorkspaceLease } from './workspaces.js';
 import type { TerminalSession } from './terminal.js';
 import type { ServerMessage } from '../shared/protocol.js';
 import { BrowserSessions, SESSION_SECONDS } from './browser-sessions.js';
@@ -25,6 +25,7 @@ import type { ModelOperations } from './model-operations.js';
 export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
+  pool?.takeovers.configureOrigin(config.origin);
   const single = pool ? undefined : workspace as Workspace;
   const selected = new Map<WebSocket, WorkspaceLease>();
   const snapshot = (ws: WebSocket) => ({
@@ -290,6 +291,24 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       dirty.clear();
     }, 50);
   });
+  const outgoing = new Map<WebSocket, { threadId: string; id: string }>();
+  let pollingTakeovers = false;
+  const takeoverTimer = pool ? setInterval(() => {
+    if (pollingTakeovers) return;
+    pollingTakeovers = true;
+    void (async () => {
+      const incoming = await pool.pollTakeovers();
+      for (const ws of authenticated) {
+        const request = outgoing.get(ws);
+        let result;
+        if (request) {
+          try { result = await pool.takeovers.status(request.threadId, request.id); }
+          catch { outgoing.delete(ws); }
+        }
+        send(ws, { type: 'takeovers', incoming, outgoing: result });
+      }
+    })().catch(() => { /* Coordination unavailable: keep locks and retry inspection only. */ }).finally(() => { pollingTakeovers = false; });
+  }, 500) : undefined;
   wss.on('connection', (ws, request) => {
     const isTerminal = request.url === '/terminal';
     let authorized = false;
@@ -306,7 +325,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       else { alive = false; ws.ping(); }
     }, 30000);
     ws.on('error', () => { /* Socket close cleans up; never stop the agent. */ });
-    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); browserSockets.delete(ws); selected.get(ws)?.release(); selected.delete(ws); detachTerminal?.(); });
+    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); outgoing.delete(ws); browserSockets.delete(ws); selected.get(ws)?.release(); selected.delete(ws); detachTerminal?.(); });
     ws.on('message', async (raw, binary) => {
       let id: string | undefined;
       try {
@@ -335,7 +354,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
                   selected.set(ws, lease);
                 }
               } catch (error) {
-                send(ws, { type: 'error', message: error instanceof Error ? error.message : 'Thread unavailable' });
+                send(ws, { type: 'error', message: error instanceof Error ? error.message : 'Thread unavailable', ...(error instanceof ThreadOwnedError ? { lockedThreadId: error.threadId } : {}) });
               }
             }
             if (ws.readyState !== WebSocket.OPEN) return;
@@ -357,6 +376,44 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
         if (typeof command.id !== 'string' || command.id.length > 100) throw new Error('Request ID required');
         id = command.id;
         if (commandPending) throw new Error('A command is pending');
+        if (command.type === 'takeover_request' || command.type === 'takeover_decide' || command.type === 'takeover_open') {
+          if (!pool) throw new Error('Takeover unavailable');
+          pool.assertThread(command.targetId);
+          commandPending = true;
+          try {
+            if (command.type === 'takeover_request') {
+              const previous = outgoing.get(ws);
+              if (previous) {
+                const status = await pool.takeovers.status(previous.threadId, previous.id).catch(() => undefined);
+                if (status && ['pending', 'expired', 'approved', 'stopping', 'released'].includes(status.status)) throw new Error('Finish or cancel your existing takeover request first.');
+              }
+              const result = await pool.takeovers.request(command.targetId);
+              outgoing.set(ws, { threadId: result.threadId, id: result.id });
+              send(ws, { type: 'takeovers', incoming: await pool.takeovers.incoming(), outgoing: result });
+            } else {
+              if (typeof command.requestId !== 'string') throw new Error('Takeover request ID required');
+              const scoped = outgoing.get(ws);
+              if (command.type === 'takeover_open' || ['force', 'cancel'].includes(command.decision)) {
+                if (!scoped || scoped.id !== command.requestId || scoped.threadId !== command.targetId) throw new Error('Request belongs to another connection. Request takeover again.');
+              }
+              if (command.type === 'takeover_open') {
+                const result = await pool.takeovers.status(command.targetId, command.requestId);
+                if (result.status !== 'released') throw new Error('Handoff is not confirmed');
+                const lease = await pool.connect(command.targetId);
+                if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
+                selected.get(ws)?.release(); selected.set(ws, lease);
+                outgoing.delete(ws);
+                send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
+              } else {
+                if (!['allow', 'keep', 'force', 'cancel'].includes(command.decision)) throw new Error('Invalid takeover decision');
+                await pool.takeovers.decide(command.targetId, command.requestId, command.decision);
+                if (command.decision === 'cancel') outgoing.delete(ws);
+              }
+            }
+            send(ws, { type: 'ack', id: command.id });
+          } finally { commandPending = false; }
+          return;
+        }
         if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread', 'delete_thread', 'release_thread'].includes(command.type)) throw new Error('Unsupported command');
         const current = selected.get(ws)?.workspace ?? single;
         if (pool && command.threadId !== (current?.state.threadId ?? '')) throw new Error('The selected thread changed. Review it before retrying.');
@@ -403,7 +460,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
           send(ws, { type: 'ack', id: command.id });
         } finally { commandPending = false; }
       } catch (error) {
-        send(ws, { type: 'error', id, message: isTerminal ? 'Terminal request failed' : error instanceof Error ? error.message : 'Command failed' });
+        send(ws, { type: 'error', id, message: isTerminal ? 'Terminal request failed' : error instanceof Error ? error.message : 'Command failed', ...(error instanceof ThreadOwnedError ? { lockedThreadId: error.threadId } : {}) });
       }
     });
   });
@@ -411,6 +468,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
     server,
     async close() {
       unsubscribe();
+      if (takeoverTimer) clearInterval(takeoverTimer);
       photos?.close();
       config.terminal?.close();
       if (timer) clearTimeout(timer);
