@@ -57,12 +57,22 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await atBottom();
       await page.setViewportSize({ width: 900, height: 500 });
       await atBottom();
-      await transcript.evaluate(el => { el.scrollTop -= 500; });
+      // Small reading adjustments inside the old 120px follow threshold
+      // must survive React renders, redundant scroll events and layout growth.
+      await transcript.evaluate(el => { el.scrollTop -= 40; });
+      await page.waitForTimeout(100);
+      const slightlyUp = await transcript.evaluate(el => el.scrollTop);
+      await page.getByLabel('Message', { exact: true }).fill('reading');
+      await page.waitForTimeout(100);
+      assert.equal(await transcript.evaluate(el => el.scrollTop), slightlyUp, 'renders must preserve a small upward scroll');
+      await transcript.dispatchEvent('scroll');
+      await transcript.evaluate(el => { el.scrollTop += 10; });
       await page.waitForTimeout(100);
       const readingTop = await transcript.evaluate(el => el.scrollTop);
       await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '4000px'; });
       await page.waitForTimeout(100);
       assert.equal(await transcript.evaluate(el => el.scrollTop), readingTop, 'layout growth must not pull a reader down');
+      await page.getByLabel('Message', { exact: true }).fill('');
       await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.waitForTimeout(100);
       await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '5000px'; });
