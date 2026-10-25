@@ -30,6 +30,9 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
       w.notifications = [];
       w.permissionRequests = 0;
       w.fixtureFocus = true;
+      if (localStorage.getItem('fixtureRealWorker') !== 'true') {
+        navigator.serviceWorker.register = async () => { throw new Error('Fixture: unavailable'); };
+      }
       document.hasFocus = () => w.fixtureFocus;
       Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
       w.Notification = class {
@@ -40,6 +43,8 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
         close() { this.closed = true; this.onclose?.(); }
       };
     })()`);
+    // Exercise the basic fallback when service-worker registration is unavailable.
+    await page.route('**/notification-worker.js', route => route.abort());
     await page.route('**/auth/session', route => route.fulfill({ json: { authenticated: true } }));
     const threads = [{ id: 'a', title: 'Private A', updatedAt: '2026-01-01', busy: false }, { id: 'b', title: 'Private B', updatedAt: '2026-01-01', busy: false }];
     const state: Snapshot = { threadId: 'a', threads, busy: false, available: true, messages: [], tools: {}, liveText: '', model: 'fixture', models: [], modelSource: 'pi', modelChanging: false, threadChanging: false, notice: '' };
@@ -81,6 +86,35 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.getByRole('button', { name: 'Disable notifications', exact: true }).click();
     await run('a'); assert.equal(await count(), 2);
     assert.equal(await page.evaluate(() => (window as any).notifications.every((n: any) => n.closed)), true);
+    assert.deepEqual(errors, []);
+
+    // Now exercise the actual registered worker and its exact-client activation path.
+    await page.unroute('**/notification-worker.js');
+    await page.context().grantPermissions(['notifications']);
+    await page.evaluate(() => localStorage.setItem('fixtureRealWorker', 'true'));
+    await page.reload();
+    await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await page.getByRole('button', { name: 'Enable notifications', exact: true }).click();
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    const worker = page.context().serviceWorkers()[0];
+    assert.ok(worker);
+    await page.evaluate(() => { (window as any).fixtureFocus = false; });
+    await run('a');
+    await page.waitForFunction(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length === 1);
+    assert.equal(await count(), 0, 'worker notification does not use the page Notification constructor');
+    // OS notification clicks cannot be automated in headless Chromium. Dispatch the
+    // equivalent event in the real worker and verify navigation without a page reload.
+    await worker.evaluate(`(async () => {
+      const [notification] = await self.registration.getNotifications();
+      const work = [];
+      const event = new Event('notificationclick');
+      Object.assign(event, { notification, waitUntil: promise => work.push(promise) });
+      self.dispatchEvent(event);
+      await Promise.all(work);
+    })()`);
+    await page.waitForFunction(() => location.hash === '#thread=a');
+    await page.getByRole('button', { name: 'Disable notifications', exact: true }).click();
+    await page.waitForFunction(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length === 0);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

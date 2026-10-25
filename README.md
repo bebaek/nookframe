@@ -172,6 +172,12 @@ The layout uses the browser's native Popover API (current Chrome/Safari/Firefox)
 Use **⋯ → Enable notifications** to opt in to browser notifications when an
 observed agent run ends outside the focused chat (including failed or stopped
 runs). Clicking the notification opens its conversation without discarding drafts.
+When supported, notifications use a service worker to focus the exact originating
+browser tab via `WindowClient.focus()` and select the conversation without reloading.
+If that tab has closed, clicking opens the conversation in a new window/tab.
+Firefox/Wayland and OS activation policies may still prevent raising the window;
+unsupported workers fall back to basic notifications with a notice in controls.
+The worker does not intercept requests, cache pages, or subscribe to push.
 Notification text contains no conversation titles or content. Permission is only
 requested when you click Enable; **Disable notifications** turns them off again.
 This requires a supported browser on HTTPS or localhost, with the page open and
