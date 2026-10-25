@@ -55,6 +55,13 @@ test('origin and token checks; disconnect preserves task; reconnect snapshot; st
     return { ws, next };
   };
   try {
+    const base = `http://127.0.0.1:${address.port}`;
+    const worker = await fetch(`${base}/notification-worker.js`);
+    assert.equal(worker.status, 200);
+    assert.match(worker.headers.get('content-type') ?? '', /text\/javascript/);
+    assert.equal(worker.headers.get('cache-control'), 'no-cache');
+    assert.match(await worker.text(), /notificationclick/);
+    assert.equal((await fetch(`${base}/other-worker.js`)).status, 404);
     const forbidden = new WebSocket(url, { origin: 'https://attacker.example' });
     const [error] = await once(forbidden, 'error');
     assert.match(error.message, /403/);
@@ -84,7 +91,6 @@ test('origin and token checks; disconnect preserves task; reconnect snapshot; st
     while (reply.type !== 'ack') reply = await second.next();
     assert.equal(aborts, 1);
     assert.equal(workspace.state.busy, false);
-    const base = `http://127.0.0.1:${address.port}`;
     assert.equal((await fetch(base + '/healthz')).status, 200);
     assert.equal((await fetch(base + '/.env')).status, 404);
     const page = await fetch(base + '/');

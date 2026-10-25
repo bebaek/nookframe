@@ -13,15 +13,45 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   const [status, setStatus] = useState('');
   const tracker = useRef(new AttentionTracker());
   const notifications = useRef(new Set<Notification>());
+  const worker = useRef<Promise<ServiceWorker | undefined> | undefined>(undefined);
+  const generation = useRef(0);
+
+  function prepareWorker() {
+    if (!('serviceWorker' in navigator)) return Promise.resolve(undefined);
+    return worker.current ??= (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          navigator.serviceWorker.register('/notification-worker.js', { scope: '/', updateViaCache: 'none' })
+            .then(() => navigator.serviceWorker.ready).then(registration => registration.active ?? undefined),
+          new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 10000); }),
+        ]);
+      } catch { return undefined; }
+      finally { clearTimeout(timer); }
+    })();
+  }
   const current = useRef({ selected, chat, open, enabled });
   current.current = { selected, chat, open, enabled };
 
   function clear() {
     tracker.current.reset();
+    generation.current++;
+    void worker.current?.then(active => active?.postMessage({ type: 'clear-attention' }));
     for (const notification of notifications.current) notification.close();
     notifications.current.clear();
   }
-  useEffect(() => clear, []);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return () => clear();
+    const receive = (event: MessageEvent) => {
+      if (!current.current.enabled || event.origin !== location.origin) return;
+      if (event.data?.type === 'open-attention' && typeof event.data.threadId === 'string') {
+        current.current.open(event.data.threadId);
+      } else if (event.data?.type === 'attention-error') setStatus('Notifications could not be displayed by this browser.');
+    };
+    navigator.serviceWorker.addEventListener('message', receive);
+    return () => { navigator.serviceWorker.removeEventListener('message', receive); clear(); };
+  }, []);
+  useEffect(() => { if (enabled) void prepareWorker(); }, [enabled]);
 
   async function toggle() {
     if (enabled) {
@@ -44,23 +74,36 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     } catch { setStatus('This browser could not enable notifications.'); }
   }
 
+  async function notify(id: string) {
+    const version = generation.current;
+    const active = await prepareWorker();
+    const view = current.current;
+    if (version !== generation.current || !view.enabled || Notification.permission !== 'granted' ||
+      !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus())) return;
+    try {
+      if (active) {
+        active.postMessage({ type: 'show-attention', threadId: id });
+        return;
+      }
+      setStatus('Using basic notifications; this browser may not bring the chat window forward.');
+      const notification = new Notification('Nookframe needs your attention', {
+        body: 'An agent run has ended. Open the conversation to review the result.', tag: `nookframe:${id}`,
+      });
+      notifications.current.add(notification);
+      notification.onclose = () => notifications.current.delete(notification);
+      notification.onclick = () => {
+        notification.close(); notifications.current.delete(notification);
+        window.focus(); current.current.open(id);
+      };
+    } catch { setStatus('Notifications could not be displayed by this browser.'); }
+  }
+
   function update(threads: ThreadChoice[]) {
     for (const id of tracker.current.update(threads)) {
       const view = current.current;
       if (!view.enabled || !supported() || Notification.permission !== 'granted' ||
         !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus())) continue;
-      try {
-        // Do not expose conversation titles, responses, or tool output on the lock screen.
-        const notification = new Notification('Nookframe needs your attention', {
-          body: 'An agent run has ended. Open the conversation to review the result.', tag: `nookframe:${id}`,
-        });
-        notifications.current.add(notification);
-        notification.onclose = () => notifications.current.delete(notification);
-        notification.onclick = () => {
-          notification.close(); notifications.current.delete(notification);
-          window.focus(); current.current.open(id);
-        };
-      } catch { setStatus('Notifications could not be displayed by this browser.'); }
+      void notify(id);
     }
   }
 

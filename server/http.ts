@@ -242,11 +242,12 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
     if (req.url === '/healthz') { const available = pool ? true : single!.state.available; res.writeHead(available ? 200 : 503).end(available ? 'ok' : 'unavailable'); return; }
     const path = req.url === '/' ? '/index.html' : req.url ?? '';
     // Serve only build artifacts, never the workspace, config, or arbitrary paths.
-    if (path !== '/index.html' && !/^\/assets\/[a-zA-Z0-9_.-]+\.(js|css)$/.test(path)) { res.writeHead(404).end(); return; }
+    if (path !== '/index.html' && path !== '/notification-worker.js' && !/^\/assets\/[a-zA-Z0-9_.-]+\.(js|css)$/.test(path)) { res.writeHead(404).end(); return; }
     try {
       const data = await readFile(resolve(config.webDir, '.' + path));
       const mime: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
       res.setHeader('Content-Type', `${mime[extname(path)]}; charset=utf-8`);
+      if (path === '/notification-worker.js') res.setHeader('Cache-Control', 'no-cache');
       res.end(data);
     } catch { res.writeHead(404).end(); }
   });
