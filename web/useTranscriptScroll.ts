@@ -54,5 +54,12 @@ export function useTranscriptScroll(active: boolean, threadId: string | undefine
     geometry.current.top = el.scrollTop;
   }
 
-  return { transcript, content, onScroll, preservePosition };
+  function resume() {
+    // Explicit send intent takes precedence over a pending reading anchor.
+    readingAnchor.current = null;
+    follow.current = true;
+    sync();
+  }
+
+  return { transcript, content, onScroll, preservePosition, resume };
 }

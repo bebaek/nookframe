@@ -81,7 +81,32 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '6000px'; });
       await page.getByRole('tab', { name: 'Chat', exact: true }).click();
       await atBottom();
-      await page.locator('#scroll-fixture').evaluate(el => el.remove());
+      // Sending is explicit intent to follow again, even while reading above
+      // the bottom. Exercise the mobile Send button and desktop Enter paths.
+      await transcript.evaluate(el => { el.scrollTop -= 40; });
+      await page.waitForTimeout(100);
+      const beforeSend = await transcript.evaluate(el => el.scrollTop);
+      await page.getByLabel('Message', { exact: true }).fill('resume following');
+      assert.equal(await transcript.evaluate(el => el.scrollTop), beforeSend, 'typing must not resume following');
+      if (mobile) await page.getByRole('button', { name: 'Send', exact: true }).click();
+      else await page.getByLabel('Message', { exact: true }).press('Enter');
+      await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
+      assert.deepEqual(prompts, ['resume following']);
+      await atBottom();
+      await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '6500px'; });
+      await atBottom();
+      await transcript.evaluate(el => { el.scrollTop -= 40; });
+      await page.waitForTimeout(100);
+      const afterSendReadingTop = await transcript.evaluate(el => el.scrollTop);
+      await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '7000px'; });
+      await page.waitForTimeout(100);
+      assert.equal(await transcript.evaluate(el => el.scrollTop), afterSendReadingTop, 'scrolling up after sending must pause following again');
+      // Reset the prompt fixture before the composer/context assertions below.
+      workspace.state.busy = false;
+      prompts.length = 0;
+      contexts.length = 0;
+      await page.reload();
+      await page.getByText('Ready', { exact: true }).waitFor();
       await page.setViewportSize({ width: 1280, height: 720 });
       const input = page.getByLabel('Message', { exact: true });
       const send = page.getByRole('button', { name: 'Send', exact: true });
