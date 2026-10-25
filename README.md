@@ -194,6 +194,11 @@ and credentials, but use separate agent processes. Thread titles come from the f
   runs; the picker shows running threads. Tabs viewing the same thread share its agent.
 - Commands carry the expected thread ID. Stale commands cannot act on a different
   thread. Prompts and model changes are serialized within each thread.
+- A thread owned by another slot offers **Take over on this slot**. The owner has
+  30 seconds to **Allow takeover** or **Keep here**. No response offers a separately
+  confirmed **Take over anyway**; timeout never interrupts automatically. The
+  existing agent must stop before ownership transfers. Old tabs become read-only
+  and link to the new slot. Background/uncertain runs cannot be taken over.
 - Drafts are kept separately per thread in that browser's memory; refreshing clears
   drafts. Switching does not move an unsent draft into a different conversation.
 - The selection is stored in the tab's URL fragment and restored on reload.

@@ -91,6 +91,65 @@ test('session ownership blocks another server until stopped; invalid paths and s
   } finally { await other.close(); await f.close(); }
 });
 
+test('confirmed takeover stops active owner with multiple tabs before opening on the requester', async () => {
+  const f = fixture();
+  const other = new Workspaces(f.store, f.first, f.factory);
+  let finish!: () => void;
+  try {
+    const a = await f.pool.connect(), same = await f.pool.connect();
+    await a.workspace.setModel('test', 'second');
+    await a.workspace.prompt('in progress');
+    const close = a.workspace.close.bind(a.workspace);
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    let entered!: () => void;
+    const stopping = new Promise<void>(resolve => { entered = resolve; });
+    a.workspace.close = async () => { const stopped = close(); entered(); await gate; await stopped; };
+    const r = await other.takeovers.request(f.first);
+    await f.pool.takeovers.decide(f.first, r.id, 'allow');
+    await f.pool.pollTakeovers();
+    await stopping;
+    assert.equal(same.workspace.state.available, false);
+    await assert.rejects(other.connect(), /another server/);
+    await assert.rejects(same.workspace.prompt('late prompt'), /unavailable/i);
+    finish();
+    for (let i = 0; i < 100 && (await other.takeovers.status(f.first, r.id)).status !== 'released'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await other.takeovers.status(f.first, r.id)).status, 'released');
+    assert.match(a.workspace.state.notice, /moved to slot/);
+    const b = await other.connect();
+    assert.equal(b.workspace.state.model, 'test/second');
+    assert.notEqual(b.workspace, a.workspace);
+    assert.ok(existsSync(f.store.path(f.first)));
+    a.release(); same.release(); b.release();
+  } finally { finish?.(); await other.close(); await f.close(); }
+});
+
+test('takeover failure and background runs never release the session lock', async () => {
+  const f = fixture();
+  const other = new Workspaces(f.store, f.first, f.factory);
+  try {
+    const a = await f.pool.connect();
+    a.workspace.background('job', async () => {});
+    const r = await other.takeovers.request(f.first);
+    await f.pool.takeovers.decide(f.first, r.id, 'allow');
+    await f.pool.pollTakeovers();
+    for (let i = 0; i < 100 && (await other.takeovers.status(f.first, r.id)).status !== 'failed'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await other.takeovers.status(f.first, r.id)).status, 'failed');
+    await assert.rejects(other.connect(), /another server/);
+    assert.equal(a.workspace.state.available, true);
+    delete a.workspace.state.backgroundRun;
+    const close = a.workspace.close.bind(a.workspace);
+    a.workspace.close = async () => { a.workspace.state.available = false; throw new Error('exit unknown'); };
+    const second = await other.takeovers.request(f.first);
+    await f.pool.takeovers.decide(f.first, second.id, 'allow');
+    await f.pool.pollTakeovers();
+    for (let i = 0; i < 100 && (await other.takeovers.status(f.first, second.id)).status !== 'failed'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await other.takeovers.status(f.first, second.id)).status, 'failed');
+    await assert.rejects(other.connect(), /another server/);
+    a.workspace.close = close;
+    a.release();
+  } finally { await other.close(); await f.close(); }
+});
+
 test('explicit release transfers ownership immediately and preserves saved preferences and catalog', async () => {
   const f = fixture();
   const other = new Workspaces(f.store, f.first, f.factory);
@@ -265,6 +324,65 @@ test('capacity never evicts subscribed or busy agents; disconnected idle agents 
     assert.equal(f.agents.get(f.first)!.stops, 1);
     const b = await f.pool.connect(undefined, true); b.release();
   } finally { await f.close(); }
+});
+
+test('takeover websocket requests are connection scoped and malformed targets cannot dispatch', async () => {
+  const f = fixture();
+  const other = new Workspaces(f.store, f.first, f.factory);
+  const origin = 'http://localhost:3000', token = 't'.repeat(64);
+  const app = createApp(other, { origin, token, webDir: resolve('dist/web') });
+  const sockets: WebSocket[] = [];
+  try {
+    const owner = await f.pool.connect();
+    await other.initialize();
+    app.server.listen(0, '127.0.0.1'); await once(app.server, 'listening');
+    const address = app.server.address(); assert.ok(address && typeof address !== 'string');
+    async function open() {
+      const ws = new WebSocket(`ws://127.0.0.1:${(address as { port: number }).port}/ws`, { origin });
+      sockets.push(ws);
+      const messages: ServerMessage[] = [];
+      ws.on('message', raw => messages.push(JSON.parse(raw.toString())));
+      async function wait(predicate: (m: ServerMessage) => boolean) {
+        for (let i = 0; i < 300; i++) {
+          const index = messages.findIndex(predicate);
+          if (index >= 0) return messages.splice(index, 1)[0];
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        throw new Error('Message timeout');
+      }
+      await once(ws, 'open');
+      ws.send(JSON.stringify({ type: 'auth', token, threadId: f.first }));
+      const error = await wait(m => m.type === 'error');
+      assert.equal(error.type === 'error' && error.lockedThreadId, f.first);
+      await wait(m => m.type === 'snapshot');
+      return { ws, wait, send(command: object) { ws.send(JSON.stringify(command)); } };
+    }
+    const a = await open(), b = await open();
+    a.send({ type: 'takeover_request', id: 'request', targetId: f.first });
+    const response = await a.wait(m => m.type === 'takeovers' && !!m.outgoing);
+    assert.equal(response.type, 'takeovers');
+    if (response.type !== 'takeovers' || !response.outgoing) throw new Error('Missing request');
+    const r = response.outgoing;
+    await a.wait(m => m.type === 'ack' && m.id === 'request');
+    b.send({ type: 'takeover_decide', id: 'foreign', targetId: f.first, requestId: r.id, decision: 'cancel' });
+    const foreign = await b.wait(m => m.type === 'error' && m.id === 'foreign');
+    assert.match(foreign.type === 'error' ? foreign.message : '', /another connection/);
+    a.send({ type: 'takeover_decide', id: 'early-force', targetId: f.first, requestId: r.id, decision: 'force' });
+    await a.wait(m => m.type === 'error' && m.id === 'early-force');
+    a.send({ type: 'takeover_open', id: 'early-open', targetId: f.first, requestId: r.id });
+    await a.wait(m => m.type === 'error' && m.id === 'early-open');
+    a.send({ type: 'takeover_request', id: 'invalid', targetId: '../outside.jsonl' });
+    await a.wait(m => m.type === 'error' && m.id === 'invalid');
+    assert.equal(owner.workspace.state.available, true);
+    assert.equal(f.agents.get(f.first)!.stops, 0);
+    a.send({ type: 'takeover_decide', id: 'cancel', targetId: f.first, requestId: r.id, decision: 'cancel' });
+    await a.wait(m => m.type === 'ack' && m.id === 'cancel');
+    assert.equal((await other.takeovers.status(f.first, r.id)).status, 'cancelled');
+    owner.release();
+  } finally {
+    for (const ws of sockets) ws.terminate();
+    await app.close(); await other.close(); await f.close();
+  }
 });
 
 test('two websocket clients select independently; background runs, reconnect, catalog and stale request isolation', { timeout: 15_000 }, async () => {

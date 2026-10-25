@@ -40,6 +40,16 @@ test('worker binds notifications to exact sender, focuses before navigating, and
   assert.equal(notification.closed, true);
 });
 
+test('takeover notification opens the request without approving it', async () => {
+  const f = await fixture();
+  await f.emit('message', { source: f.client, data: { type: 'show-attention', threadId: 'a', takeover: true } });
+  assert.match(f.notifications[0].body, /requests this thread/);
+  await f.emit('notificationclick', { notification: f.notifications[0] });
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[0], 'focus');
+  assert.equal(f.calls[1].type, 'open-attention');
+});
+
 test('closed originating tab opens an encoded conversation URL, not another existing tab', async () => {
   const f = await fixture();
   await f.emit('notificationclick', { notification: { close() {}, data: { clientId: 'closed', threadId: 'a&b/#' } } });

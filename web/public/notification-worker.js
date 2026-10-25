@@ -13,7 +13,7 @@ self.addEventListener('message', event => {
     }));
   } else if (data?.type === 'show-attention' && typeof data.threadId === 'string' && data.threadId.length > 0 && data.threadId.length < 2048) {
     event.waitUntil(self.registration.showNotification('Nookframe needs your attention', {
-      body: 'An agent run has ended. Open the conversation to review the result.',
+      body: data.takeover === true ? 'Another slot requests this thread. Open Nookframe to allow takeover or keep it here.' : 'An agent run has ended. Open the conversation to review the result.',
       tag: `nookframe:${client.id}:${data.threadId}`,
       data: { clientId: client.id, threadId: data.threadId },
     }).catch(() => client.postMessage({ type: 'attention-error' })));
