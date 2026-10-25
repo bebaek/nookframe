@@ -53,6 +53,17 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
         return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
       });
       await atBottom();
+      // Autosizing briefly sets the composer height to zero. That temporary
+      // viewport expansion must not be mistaken for a manual upward scroll.
+      await page.getByLabel('Message', { exact: true }).fill('typing at the bottom');
+      await page.waitForTimeout(100);
+      await atBottom();
+      await page.getByLabel('Message', { exact: true }).fill('line\n'.repeat(8));
+      await page.waitForTimeout(100);
+      await atBottom();
+      await page.getByLabel('Message', { exact: true }).fill('');
+      await page.waitForTimeout(100);
+      await atBottom();
       await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '3000px'; });
       await atBottom();
       await page.setViewportSize({ width: 900, height: 500 });
