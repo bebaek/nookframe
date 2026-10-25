@@ -34,9 +34,10 @@ export function useTranscriptScroll(active: boolean, threadId: string | undefine
       sync();
       return;
     }
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) follow.current = true;
-    else if (el.scrollTop < previous.top) follow.current = false;
+    // Even a small upward scroll means the user is reading. Only resume at
+    // the bottom, not within a broad threshold that can steal their position.
+    if (el.scrollTop < previous.top) follow.current = false;
+    else if (el.scrollHeight - el.scrollTop - el.clientHeight <= 1) follow.current = true;
     geometry.current.top = el.scrollTop;
   }
 
