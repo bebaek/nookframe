@@ -229,6 +229,8 @@ function App() {
     if (type === 'release_thread') rememberSelection('', true);
     setPending(true); setError('');
     socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
+    // A new prompt resumes following; ordinary renders and incoming updates do not.
+    if (type === 'prompt') scroll.resume();
   }
 
   function takeoverCommand(type: string, targetId: string, requestId?: string, decision?: string) {
