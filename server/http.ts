@@ -273,9 +273,8 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   const dirty = new Set<Workspace>();
   const unsubscribe = workspace.subscribe((changed?: Workspace) => {
     if (pool) {
-      const ids = new Set(pool.snapshot().threads.map(thread => thread.id));
       for (const [ws, lease] of selected) {
-        if (!ids.has(lease.workspace.state.threadId)) {
+        if (!pool.hasThread(lease.workspace.state.threadId)) {
           lease.release(); selected.delete(ws);
           send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
         }
@@ -354,7 +353,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
                 if (command.threadId !== undefined && (typeof command.threadId !== 'string' || command.threadId.length > 255)) throw new Error('Invalid thread');
                 // Other slots or CLI sessions may have created threads while this client was offline.
                 // Refresh even for an empty selection or a resident workspace that needs no reload.
-                await pool.refreshCatalog();
+                await pool.refreshThreadCatalog();
                 if (command.threadId !== '') {
                   const lease = await pool.connect(command.threadId);
                   if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }

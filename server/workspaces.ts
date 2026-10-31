@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import lockfile from 'proper-lockfile';
 import type { Snapshot, ThreadChoice } from '../shared/protocol.js';
@@ -46,11 +46,20 @@ export class Workspaces {
   private changed(workspace?: Workspace) { for (const listener of this.listeners) listener(workspace); }
   subscribe(listener: (workspace?: Workspace) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async initialize() { this.catalog = await this.threads.list(); }
-  refreshCatalog() {
+  refreshThreadCatalog() {
     return this.serial(async () => {
       this.catalog = await this.threads.list();
       this.changed();
     });
+  }
+  hasThread(id: string) { return this.entries.has(id) || this.catalog.some(thread => thread.id === id); }
+  private refreshCatalog(workspace: Workspace) {
+    const id = workspace.state.threadId;
+    if (this.catalog.some(thread => thread.id === id) || !existsSync(this.threads.livePath(id))) return;
+    void this.serial(async () => {
+      this.catalog = await this.threads.list();
+      this.changed(workspace);
+    }).catch(() => { /* A later event retries catalog discovery. */ });
   }
   snapshot(workspace?: Workspace): Snapshot {
     const threads = this.catalog.map(thread => {
@@ -88,7 +97,7 @@ export class Workspaces {
   connect(id?: string, create = false, background?: BackgroundOpen): Promise<WorkspaceLease> {
     return this.serial(async () => {
       if (this.closing) throw new Error('Workspace is shutting down');
-      let file = create ? undefined : this.threads.path(id ?? this.defaultId);
+      let file = create || (!id && !this.defaultId) ? undefined : this.threads.livePath(id ?? this.defaultId);
       let key = file ? this.threads.id(file) : undefined;
       let entry = key ? this.entries.get(key) : undefined;
       if (!entry) {
@@ -105,7 +114,7 @@ export class Workspaces {
         let workspace: Workspace | undefined;
         let releaseLock: () => Promise<void>;
         try {
-          releaseLock = await lockfile.lock(file, { retries: 0, stale: 30_000, update: 10_000,
+          releaseLock = await lockfile.lock(file, { realpath: false, retries: 0, stale: 30_000, update: 10_000,
             onCompromised: () => { compromised = true; (entry?.pendingWorkspace ?? entry?.workspace ?? workspace)?.ownershipLost(); },
           });
         } catch (error) {
@@ -126,6 +135,7 @@ export class Workspaces {
           this.catalog = await this.threads.list();
           entry = { workspace, refs: 0, used: Date.now(), ownsLock: () => !compromised, releaseLock, unsubscribe: workspace.subscribe(() => {
             if (entry) entry.used = Date.now();
+            this.refreshCatalog(workspace!);
             this.changed(workspace);
           }) };
           this.entries.set(key, entry);
@@ -201,7 +211,7 @@ export class Workspaces {
       if (!entry.ownsLock()) throw new Error('Background ownership lost');
       await persist();
       if (!entry.ownsLock()) throw new Error('Background ownership lost');
-      const file = this.threads.path(id);
+      const file = this.threads.livePath(id);
       const stateDir = join(this.threads.directory, '.nookframe', createHash('sha256').update(id).digest('hex'));
       const agent = this.factory(file, stateDir, false);
       entry.pendingWorkspace = agent.workspace;
@@ -212,7 +222,7 @@ export class Workspaces {
       entry.pendingWorkspace = undefined;
       entry.unsubscribe();
       entry.workspace = agent.workspace;
-      entry.unsubscribe = agent.workspace.subscribe(() => { entry.used = Date.now(); this.changed(agent.workspace); });
+      entry.unsubscribe = agent.workspace.subscribe(() => { entry.used = Date.now(); this.refreshCatalog(agent.workspace); this.changed(agent.workspace); });
       entry.used = Date.now();
       this.catalog = await this.threads.list();
       this.changed(agent.workspace);
@@ -221,7 +231,7 @@ export class Workspaces {
   deleteThread(id: string): Promise<void> {
     return this.serial(async () => {
       if (this.closing) throw new Error('Workspace is shutting down');
-      const file = this.threads.path(id);
+      const file = this.threads.livePath(id);
       const entry = this.entries.get(id);
       if (entry && (!entry.workspace.state.available || !entry.ownsLock())) throw new Error('Thread ownership or run status is uncertain. Restart and inspect it before deleting it.');
       if (entry && !entry.workspace.idle) throw new Error('Wait until the thread finishes running before deleting it');
@@ -234,7 +244,7 @@ export class Workspaces {
         release = entry.releaseLock;
       } else {
         await this.guardThread?.(id);
-        try { release = await lockfile.lock(file, { retries: 0, stale: 30_000, update: 10_000 }); }
+        try { release = await lockfile.lock(file, { realpath: false, retries: 0, stale: 30_000, update: 10_000 }); }
         catch { throw new Error('This thread is owned by another server. Close it there before deleting it.'); }
       }
       try {
@@ -254,7 +264,7 @@ export class Workspaces {
   }
   assertThread(id: unknown) {
     if (typeof id !== 'string') throw new Error('Thread is required');
-    this.threads.path(id);
+    this.threads.livePath(id);
   }
   photo(id: string) {
     for (const entry of this.entries.values()) { const data = entry.workspace.photo(id); if (data) return data; }
@@ -271,6 +281,12 @@ export class Workspaces {
     await this.takeovers.relinquished(id);
     await entry.releaseLock();
     entry.unsubscribe(); this.entries.delete(id);
+    const file = this.threads.livePath(id);
+    if (!existsSync(file)) {
+      this.threads.forget(file);
+      rmSync(join(this.threads.directory, '.nookframe', createHash('sha256').update(id).digest('hex')), { recursive: true, force: true });
+      if (this.defaultId === id) this.defaultId = '';
+    }
     this.catalog = await this.threads.list();
     this.changed();
   }

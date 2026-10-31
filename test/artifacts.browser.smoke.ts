@@ -12,6 +12,7 @@ import { Workspace, type Agent } from '../server/workspace.js';
 import { ThreadStore } from '../server/threads.js';
 import { createApp } from '../server/http.js';
 import { photoId } from '../server/photos.js';
+import { persistSession } from './session-fixture.js';
 import type { PublishedImage } from '../server/artifacts.js';
 
 const exec = promisify(execFile);
@@ -34,6 +35,7 @@ test('public image browser: CLI publishing, inline preview, original download, t
       await copyFile('test/fixtures/images/apollo17-earth.jpg', join(context.directory, 'earth.jpg'));
       published = JSON.parse((await cli('publish', context.thread, join(context.directory, 'earth.jpg'), 'Earth — NASA / Apollo 17')).stdout);
       const messages = [{ role: 'user', content: [{ type: 'text', text }] }, { role: 'assistant', content: [{ type: 'text', text: published.markdown + '\n\nCredit: NASA / Apollo 17 (public domain).' }] }];
+      persistSession(sessionFile, cwd, text);
       history.set(sessionFile, messages);
       for (const message of messages) event({ type: 'message_end', message });
       event({ type: 'agent_settled' });

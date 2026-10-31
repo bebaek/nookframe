@@ -12,6 +12,7 @@ import { Workspaces } from '../server/workspaces.js';
 import { ThreadStore } from '../server/threads.js';
 import { createApp } from '../server/http.js';
 import { JobStore } from '../server/jobs/store.js';
+import { persistSession } from './session-fixture.js';
 import { JobRunner } from '../server/jobs/runner.js';
 
 test('background thread: two viewers, Stop, confirmed shutdown and same-thread continuation', { timeout: 30000 }, async () => {
@@ -33,7 +34,11 @@ test('background thread: two viewers, Stop, confirmed shutdown and same-thread c
       async getState() { return { model, sessionFile: file }; },
       async getAvailableModels() { return [model]; },
       async getEntries() { return { entries: [], leafId: null }; },
-      async prompt(text: string) { prompts.push(text); },
+      async prompt(text: string) {
+        prompts.push(text);
+        persistSession(file, dir, text);
+        emit({ type: 'message_end', message: { role: 'user', content: text } });
+      },
       async clearQueue() {},
       async abort() { emit({ type: 'agent_settled', aborted: true }); },
       async stop() { if (background && !releaseStops) { startedStop(); await new Promise<void>(resolve => { finishStop = resolve; }); } },

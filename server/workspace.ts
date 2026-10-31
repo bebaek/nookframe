@@ -145,6 +145,7 @@ export class Workspace {
     this.changed();
     try {
       target ??= this.threads.create();
+      const previous = this.state.threadId ? this.threads.livePath(this.state.threadId) : undefined;
       const result = await this.agent.switchSession(target);
       if (result.cancelled) throw new Error('Thread switch was cancelled');
       let state = await this.agent.getState();
@@ -163,6 +164,7 @@ export class Workspace {
       const catalog = await this.threads.list();
       this.threads.remember(target);
       this.state.threadId = this.threads.id(target);
+      if (previous && !existsSync(previous)) this.threads.forget(previous);
       this.state.threads = catalog;
       this.state.model = state.model ? `${state.model.provider}/${state.model.id}` : 'No model configured';
     } catch {
@@ -312,6 +314,16 @@ export class Workspace {
         break;
     }
     this.changed();
+    if (!this.managed && this.threads && (event.type === 'message_end' || event.type === 'agent_settled')) {
+      const id = this.state.threadId;
+      const file = this.threads.livePath(id);
+      if (existsSync(file)) {
+        this.threads.remember(file);
+        void this.threads.list().then(catalog => {
+          if (this.state.threadId === id) { this.state.threads = catalog; this.changed(); }
+        }).catch(() => this.fail());
+      }
+    }
   }
 
   async setModel(provider: string, modelId: string) {

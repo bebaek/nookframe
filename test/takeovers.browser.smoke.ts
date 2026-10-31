@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { chromium, type Page } from 'playwright';
+import { persistSession } from './session-fixture.js';
 import { ThreadStore } from '../server/threads.js';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { Workspaces } from '../server/workspaces.js';
@@ -21,7 +22,9 @@ async function port() {
 test('cross-slot takeover: focused owner approval, denial, timer, explicit force, and moved-thread link', { timeout: 90000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-takeover-browser-'));
   const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
-  const first = store.id(store.create());
+  const file = store.create();
+  persistSession(file, dir);
+  const first = store.id(file);
   let stops = 0;
   const factory = (file: string, stateDir: string) => {
     let emit: (event: unknown) => void = () => {};
