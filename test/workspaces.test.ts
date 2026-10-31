@@ -467,8 +467,10 @@ test('two websocket clients select independently; background runs, reconnect, ca
       throw new Error('Message timeout');
     }
     await once(ws, 'open'); ws.send(JSON.stringify({ type: 'auth', token, threadId }));
-    await wait(m => m.type === 'snapshot');
-    return { ws, messages, wait, send(command: object) { ws.send(JSON.stringify(command)); } };
+    const initial = await wait(m => m.type === 'snapshot');
+    assert.equal(initial.type, 'snapshot');
+    if (initial.type !== 'snapshot') throw new Error('Expected snapshot');
+    return { ws, messages, wait, initial: initial.state, send(command: object) { ws.send(JSON.stringify(command)); } };
   }
   try {
     const a = await open(), b = await open();
@@ -487,7 +489,14 @@ test('two websocket clients select independently; background runs, reconnect, ca
     await b.wait(m => m.type === 'error' && m.id === 'stale');
     assert.equal(f.agents.get(f.first)!.prompts, 1);
     a.ws.close(); await once(a.ws, 'close');
+    const externalFile = f.store.create();
+    persistSession(externalFile, f.dir);
+    const external = f.store.id(externalFile);
+    assert.ok(!f.pool.snapshot().threads.some(t => t.id === external), 'external creation bypasses the cached catalog');
+    const resident = f.agents.get(f.first);
     const resumed = await open();
+    assert.ok(resumed.initial.threads.some(t => t.id === external), 'reconnect discovers threads created outside this pool');
+    assert.equal(f.agents.get(f.first), resident, 'refresh does not restart the selected agent');
     resumed.send({ type: 'stop', threadId: f.first, id: 'stop-a' });
     await resumed.wait(m => m.type === 'ack' && m.id === 'stop-a');
     const lease = await f.pool.connect(second);
@@ -507,7 +516,12 @@ test('two websocket clients select independently; background runs, reconnect, ca
     await b.wait(m => m.type === 'error' && m.id === 'released-prompt');
     b.send({ type: 'release_thread', threadId: '', id: 'no-selection-release' });
     await b.wait(m => m.type === 'error' && m.id === 'no-selection-release');
+    const externalChooserFile = f.store.create();
+    persistSession(externalChooserFile, f.dir);
+    const externalForChooser = f.store.id(externalChooserFile);
     const chooser = await open('');
+    assert.ok(chooser.initial.threads.some(t => t.id === externalForChooser), 'empty selection also refreshes the catalog');
+    assert.equal(chooser.initial.threadId, '');
     assert.equal(f.agents.get(f.first)!.stops, 1, 'empty selection must not reopen the default');
     chooser.ws.close(); await once(chooser.ws, 'close');
     b.send({ type: 'switch_thread', threadId: '', targetId: f.first, id: 'reopen' });

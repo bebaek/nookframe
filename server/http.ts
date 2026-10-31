@@ -351,6 +351,9 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
             if (pool) {
               try {
                 if (command.threadId !== undefined && (typeof command.threadId !== 'string' || command.threadId.length > 255)) throw new Error('Invalid thread');
+                // Other slots or CLI sessions may have created threads while this client was offline.
+                // Refresh even for an empty selection or a resident workspace that needs no reload.
+                await pool.refreshThreadCatalog();
                 if (command.threadId !== '') {
                   const lease = await pool.connect(command.threadId);
                   if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }

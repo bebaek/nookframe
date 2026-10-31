@@ -46,6 +46,12 @@ export class Workspaces {
   private changed(workspace?: Workspace) { for (const listener of this.listeners) listener(workspace); }
   subscribe(listener: (workspace?: Workspace) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   async initialize() { this.catalog = await this.threads.list(); }
+  refreshThreadCatalog() {
+    return this.serial(async () => {
+      this.catalog = await this.threads.list();
+      this.changed();
+    });
+  }
   hasThread(id: string) { return this.entries.has(id) || this.catalog.some(thread => thread.id === id); }
   private refreshCatalog(workspace: Workspace) {
     const id = workspace.state.threadId;
