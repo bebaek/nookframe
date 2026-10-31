@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { validateLocalAccess } from './local-access.js';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,9 +38,12 @@ const allowedOrigins = [...allowedBrowserOrigins(publicOrigin, process.env.ALLOW
 const mailStore = new MailStore(resolve(process.env.MAIL_DIR ?? join(stateDir, '..', 'mail')), googleStore());
 const mailOAuth = new MailOAuth(mailStore, publicOrigin);
 const calendar = calendarRuntime();
+const localAccess = process.env.NOOKFRAME_LOCAL_ACCESS === '1';
+const host = process.env.HOST ?? '127.0.0.1';
+if (localAccess) validateLocalAccess(host, publicOrigin, allowedOrigins);
 const tokenFile = process.env.ACCESS_TOKEN_FILE;
-if (!tokenFile) throw new Error('Set ACCESS_TOKEN_FILE to a file containing a random token (at least 32 characters)');
-const token = (await readFile(tokenFile, 'utf8')).trim();
+if (!localAccess && !tokenFile) throw new Error('Set ACCESS_TOKEN_FILE to a file containing a random token (at least 32 characters)');
+const token = localAccess ? randomBytes(32).toString('hex') : (await readFile(tokenFile!, 'utf8')).trim();
 if (token.length < 32) throw new Error('Access token must be at least 32 characters');
 for (const dir of [workspaceDir, agentDir, stateDir]) await mkdir(dir, { recursive: true, mode: 0o700 });
 // Validate the default configuration now; agents are opened lazily under a session lock.
@@ -81,7 +86,7 @@ const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'
 const modelOperations = new ModelOperations(stateDir, agentDir, process.env, id => workspace.operationWorkspace(id));
 const app = createApp(workspace, {
   modelOperations,
-  token, origin: publicOrigin, allowedOrigins, promptExamples, presence,
+  token, localAccess, origin: publicOrigin, allowedOrigins, promptExamples, presence,
   operations: {
     status: () => ({ schemaVersion: 1, slot: process.env.NOOKFRAME_SLOT ?? null, uptimeSeconds: Math.floor(process.uptime()),
       capabilities: { inspection: true, mutations: true, modelPlans: true, presence: !!presence, jobRunner: !!jobRunner } }),
@@ -96,7 +101,8 @@ const app = createApp(workspace, {
     PATH: `${join(root, 'node_modules/.bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
   }),
 });
-app.server.listen(port, process.env.HOST ?? '127.0.0.1', () => {
+app.server.listen(port, host, () => {
+  if (localAccess) console.warn('Local tokenless access enabled: local users and forwarded connections have shell-equivalent access. Do not proxy or tunnel this listener.');
   console.log(`Pi workspace listening on port ${port}; workspace: ${workspaceDir}`);
 });
 let closing = false;

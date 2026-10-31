@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { request } from 'node:http';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -8,6 +9,46 @@ import { WebSocket } from 'ws';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { createApp } from '../server/http.js';
 import type { ServerMessage } from '../shared/protocol.js';
+
+test('local access bootstraps cookie auth and rejects foreign HTTP and WebSocket hosts', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nookframe-local-'));
+  const agent = { onEvent() { return () => {}; }, async stop() {} } as unknown as Agent;
+  const workspace = new Workspace(agent, dir);
+  const origin = 'http://localhost:3000';
+  const app = createApp(workspace, { token: 'a'.repeat(64), localAccess: true, origin, webDir: resolve('dist/web') });
+  app.server.listen(0, '127.0.0.1');
+  await once(app.server, 'listening');
+  const address = app.server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  // node:http preserves an explicit Host for virtual-origin guard tests.
+  const fetch = (url: string, init: { headers?: Record<string, string>; method?: string } = {}) => new Promise<Response>((resolve, reject) => {
+    const req = request(url, init, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve(new Response(body, { status: res.statusCode, headers: Object.fromEntries(Object.entries(res.headers).filter((entry): entry is [string, string | string[]] => entry[1] !== undefined).map(([key, value]) => [key, Array.isArray(value) ? value.join(', ') : value])) })));
+    });
+    req.on('error', reject); req.end();
+  });
+  try {
+    assert.equal((await fetch(`${base}/auth/session`)).status, 403);
+    const headers = { Host: 'localhost:3000' };
+    for (const extra of [{ Origin: 'https://evil.example' }, { 'X-Forwarded-For': '127.0.0.1' }] as Record<string, string>[]) {
+      assert.equal((await fetch(`${base}/auth/session`, { headers: { ...headers, ...extra } })).status, 403);
+    }
+    const response = await fetch(`${base}/auth/session`, { headers });
+    assert.deepEqual(await response.json(), { authenticated: true });
+    const cookie = response.headers.get('set-cookie')!;
+    assert.match(cookie, /HttpOnly/);
+    const resumed = await fetch(`${base}/auth/session`, { headers: { ...headers, Cookie: cookie.split(';')[0] } });
+    assert.equal(resumed.headers.get('set-cookie'), null);
+    const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws`, { origin });
+    await assert.rejects(once(ws, 'open'));
+    const logout = await fetch(`${base}/auth/logout`, { method: 'POST', headers: { ...headers, Origin: origin, Cookie: cookie.split(';')[0] } });
+    assert.equal(logout.status, 200);
+  } finally { await app.close(); await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 function inbox(ws: WebSocket) {
   const queue: ServerMessage[] = [];

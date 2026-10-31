@@ -22,7 +22,9 @@ import type { PresenceStore } from './agent-presence.js';
 import type { OperationsReader } from './operations.js';
 import type { ModelOperations } from './model-operations.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
+import { acceptsLocalRequest, validateLocalAccess } from './local-access.js';
+
+export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; localAccess?: boolean; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   pool?.takeovers.configureOrigin(config.origin);
@@ -33,6 +35,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
     promptExamples: config.promptExamples ?? defaultPromptExamples,
   });
   const allowedOrigins = allowedBrowserOrigins(config.origin, config.allowedOrigins);
+  if (config.localAccess) validateLocalAccess('127.0.0.1', config.origin, [...allowedOrigins]);
   const acceptsOrigin = (value: string | undefined) => value !== undefined && allowedOrigins.has(value);
   const origin = new URL(config.origin).origin;
   const secure = new URL(origin).protocol === 'https:';
@@ -48,6 +51,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    if (config.localAccess && !acceptsLocalRequest(req, origin)) { res.writeHead(403).end(); return; }
     if (config.calendar && req.method === 'GET' && (req.url === '/calendar/oauth/callback' || req.url?.startsWith('/calendar/oauth/callback?'))) {
       // Cross-site OAuth return: single-use state + PKCE, not the Strict cookie.
       // Never log this URL or provider errors.
@@ -99,7 +103,13 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
     }
     if (req.url === '/auth/session' && req.method === 'GET') {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ authenticated: !!sessions.identify(req.headers.cookie, cookieName) })); return;
+      let authenticated = !!sessions.identify(req.headers.cookie, cookieName);
+      // Bootstrap a normal HttpOnly session; all other auth checks stay intact.
+      if (config.localAccess && !authenticated) {
+        res.setHeader('Set-Cookie', cookie(sessions.issue(), SESSION_SECONDS));
+        authenticated = true;
+      }
+      res.end(JSON.stringify({ authenticated })); return;
     }
     if ((req.url === '/auth/login' || req.url === '/auth/logout') && req.method === 'POST') {
       res.setHeader('Content-Type', 'application/json');
@@ -254,6 +264,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
   server.on('upgrade', (req, socket, head) => {
+    if (config.localAccess && !acceptsLocalRequest(req, origin)) { socket.destroy(); return; }
     if ((req.url !== '/ws' && !(req.url === '/terminal' && config.terminal)) || !acceptsOrigin(req.headers.origin) || wss.clients.size >= 16) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
