@@ -17,10 +17,11 @@ RUN npm run build && npm prune --omit=dev --ignore-scripts
 FROM docker.io/library/node:24-trixie-slim
 # Trusted personal development/admin workstation; no container daemon or sudo.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash git curl ca-certificates ripgrep python3 python-is-python3 python3-yaml make g++ pkg-config \
+    bash git curl ca-certificates ripgrep python3 python-is-python3 python3-yaml python3-bs4 make g++ pkg-config \
     gh openssh-client age jq rsync less procps unzip chromium \
     fonts-noto-cjk fonts-noto-color-emoji \
     tini isync notmuch libsasl2-modules-kdexoauth2 \
+    && python -c 'from bs4 import BeautifulSoup; assert BeautifulSoup("<p>ok</p>", "html.parser").p.get_text() == "ok"' \
     && rm -rf /var/lib/apt/lists/*
 # This image is published for linux/amd64. Pin standalone tools by version and hash.
 RUN test "$(dpkg --print-architecture)" = amd64 \
