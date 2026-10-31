@@ -17,6 +17,55 @@ Keep deployment URLs, account identities, operational logs, and private runbooks
 outside this repository. Documentation examples use placeholders, not live setup
 details.
 
+## Native installer (existing trusted checkout)
+
+Requires Node.js 24+, Bash, Python 3, make, and a C++ compiler. From the
+Nookframe checkout:
+
+```bash
+# 1. Install (token authentication by default).
+bash scripts/install-native.sh
+# For tokenless access on a private single-user host, use --local instead.
+
+# 2. Configure pi: /login, choose a model, then exit.
+PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi
+
+# 3. Start; open http://localhost:3000.
+.local/start
+```
+
+For token authentication, read `.local/access-token` privately in your editor
+and enter it in the browser. Never commit or log the token.
+
+Defaults: loopback-only port **3000**, workspace **`.local/workspace`**, pi
+profile/conversations **`.local/agent`**, application state **`.local/state`**.
+The installer builds this checkout and creates the launcher; it does not use
+sudo, install a service, start the server, or overwrite an existing launcher.
+
+To choose a workspace, stop the server and restart:
+
+```bash
+WORKSPACE_DIR="$HOME/projects/my-project" .local/start
+```
+
+For a permanent choice, set `export WORKSPACE_DIR="/absolute/project/path"`
+in `.local/start`. The workspace is pi's working directory, shared by all chat
+threads—not chat storage or a sandbox. Use separate profiles/state for unrelated
+projects rather than repurposing existing conversations.
+
+Manual tokenless startup uses `NOOKFRAME_LOCAL_ACCESS=1` instead of
+`ACCESS_TOKEN_FILE`. It requires `HOST=127.0.0.1`, an HTTP `PUBLIC_ORIGIN` whose
+hostname is `localhost` or `127.0.0.1`, and no additional allowed origins. Open
+that exact origin. HTTP and WebSocket requests enforce the exact Host, loopback
+peer, Origin and browser fetch metadata, and reject forwarding headers.
+The browser automatically receives a normal HttpOnly session; sign-out revokes
+that session, but reloading grants local access again.
+
+**Tokenless mode trusts every local user/process.** It is not a sandbox. Never
+proxy, tunnel, or port-forward this listener: a raw TCP tunnel can look local
+and cannot reliably be detected. Keep token authentication for remote access
+and multi-user hosts. Tokenless sessions are invalidated on server restart.
+
 ## First run without containers
 
 Requires Node.js 24+, Bash, Python 3, make, and a C++ compiler (for node-pty).
