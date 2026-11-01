@@ -115,6 +115,28 @@ test('mobile reading chrome follows gestures, preserves the reading anchor, and 
     await page.waitForTimeout(100);
     assert.equal(await transcript.evaluate(el => el.scrollTop), clampedTop);
     await controls.click();
+    // Revealing at the end must keep the final line above the composer,
+    // whether controls return via a gesture or the accessible reveal button.
+    await page.locator('#reading-fixture').evaluate(el => {
+      el.insertAdjacentHTML('beforeend', '<div id="last-line">Last line</div>');
+      el.style.paddingBottom = '0';
+    });
+    for (const reveal of [() => swipe(0, -30), () => controls.click()]) {
+      await transcript.evaluate(el => { el.scrollTop = 900; });
+      await page.waitForTimeout(100);
+      await wheel(80);
+      await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; });
+      await page.waitForTimeout(100);
+      await reveal();
+      await page.waitForTimeout(100);
+      await visible();
+      assert.ok(await transcript.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight <= 1),
+        'revealing controls at the bottom must retain the end of the transcript');
+      const lastLine = await page.locator('#last-line').boundingBox();
+      const composer = await footer.boundingBox();
+      assert.ok(lastLine && composer && lastLine.y + lastLine.height <= composer.y,
+        'the last line must remain above the input controls');
+    }
     // Also exercise native touch scrolling, not only synthetic DOM events.
     await transcript.evaluate(el => { el.scrollTop = 900; });
     await page.waitForTimeout(100);
