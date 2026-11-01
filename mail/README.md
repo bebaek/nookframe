@@ -9,41 +9,102 @@ Zoho `.com` accounts (including primary custom-domain mailboxes) use the separat
 live REST API workflow below. They do not use Gmail IMAP, the local index, the
 Google credential store, or the background mail scheduler.
 
-## Rename a local alias
+## Local account identities and aliases
+
+Account management is independent of the backing provider:
 
 ```sh
-mailctl jobs pause work                     # Gmail only; wait for active work
-mailctl account rename work business        # Any connected provider
-# Check with the existing provider's status command:
-mailctl account status business             # Gmail
-mailctl zoho status business                # Zoho
+mailctl account migrate                    # Read-only preflight
+mailctl account migrate --confirm          # Explicit one-time migration
+mailctl account list                       # All registered providers
+mailctl account status business            # Any provider, after migration
+mailctl account rename work business       # Any provider
 ```
 
-The command discovers the provider from the existing account. If the source alias
-exists in both providers, it fails with `AMBIGUOUS_ACCOUNT_ALIAS` rather than guessing.
-The destination must be unused across both providers, including reserved aliases.
-Aliases use the same lowercase letters/digits/hyphens format as connection setup.
-Renaming is local only: the email address, provider account, credentials, downloaded
-mail, index, and sync/retry state are preserved. Shared Google connection and calendar
-aliases do not change. Gmail jobs must be paused and remain paused; explicitly
-re-enable them under the new alias when wanted. Active sync, indexing, sending,
-Zoho execution, or credential updates cause `MAIL_BUSY`; nothing is cancelled.
-Existing aliases and leftover destination mail/index/state paths are never overwritten.
+An account has an immutable local ID, a unique mutable alias, a provider, and
+opaque immutable storage/connection references. The registry contains no tokens.
+The public alias is resolved at the CLI boundary; workers, new drafts/plans, and
+new message references use the stable ID. `account list` reports capabilities
+and connection status, including reserved accounts awaiting consent. Operations
+with provider-specific syntax remain available; account renaming never requires
+selecting a provider.
 
-The old alias remains reserved (including against reconnects or renaming back).
-Old message references and pending authorization links stop working. Unsubmitted
-Gmail drafts and Zoho plans retain their original alias and cannot execute; recreate
-those under the new alias and review/approve again. Draft/plan and attempt history
-is not rewritten. **Never automatically recreate an already-attempted operation**;
-resolve uncertain outcomes using the existing send/plan status and provider mailbox.
+**Renaming updates only `account-registry.json`.** It does not move mail, rebuild
+an index, touch credentials, change the sender address, restart jobs, or make a
+provider request. Jobs can remain enabled and active work keeps its identity.
+Aliases can be renamed back or reused: a new connection receives a different ID
+and cannot inherit another account's drafts, approvals, or credentials. A stale
+alias is no longer accepted as a CLI account selector unless it has been reused;
+use an account ID when exact identity matters across renames. Never infer identity
+from the alias alone. Legacy alias-based message references must be obtained again
+with search after migration (`LEGACY_MAIL_REFERENCE_SEARCH_AGAIN`); new references
+contain the stable ID and survive renames safely.
 
-Ordinary write failures roll back the rename. A process crash mid-rename fails
-closed and leaves a private `.rename-recovery/OLD.json` record in the provider's
-local store, alongside any partially moved directories. This record contains
-account data and may contain credentials: never print it or commit it. Stop workers
-and have an operator recover from private state/backups before further changes;
-there is no automatic interrupted-rename recovery command. Successful renames remove
-that recovery record but keep the old alias's non-secret reservation.
+### Explicit migration
+
+Deploy the registry-aware release to every process/slot accessing this state
+before migrating. Do not mix old and new CLI/worker versions afterward. Pause
+Gmail jobs and let active sync, indexing, sends, and Zoho executions finish.
+Finish outstanding OAuth consent or wait for its expiry. Then run the read-only
+preflight and review its account inventory and collisions. No live state is
+migrated merely by upgrading or starting Nookframe.
+
+Duplicate aliases across providers require an explicit mapping file containing
+only provider names, original storage references, and desired aliases, for example:
+
+```json
+{"gmail":{"work":"personal"},"zoho":{"work":"business"}}
+```
+
+```sh
+mailctl account migrate --aliases aliases.json
+mailctl account migrate --aliases aliases.json --confirm
+```
+
+Apply rechecks the inventory under provider maintenance locks, refuses polling
+or active work, and publishes one versioned registry file atomically. Existing
+provider files, downloads, indexes, approvals, and attempt records are unchanged.
+Legacy directory names become **immutable internal storage references**, not
+aliases; access through the account ID resolves to those same directories and
+locks. New connections use ID-named storage. There is no bulk file-copy/delete
+phase and nothing in the provider stores needs rollback.
+
+A failed/interrupted migration can be rerun. If publication already completed,
+rerunning preserves every ID and reports no migration; never delete the registry
+to force another import. A corrupt registry fails closed. Keep it in private
+backups together with provider state. Once ID-backed connections or approvals
+exist, removing the registry or downgrading is not a supported rollback. If a
+write's outcome is uncertain, inspect `account list` before retrying.
+
+### Approval and credential identity
+
+Legacy unsubmitted drafts/plans retain their original content, version/hash and
+immutable provider-storage binding. Migration verifies their sender identity
+(and Zoho provider account ID); unresolved identities block migration with
+`MIGRATION_APPROVAL_IDENTITY_UNRESOLVED`. Do not edit approval files to bypass it.
+Already-attempted records remain untouched and can still be inspected. A renamed
+alias does not invalidate an otherwise identical approval: the immutable account,
+sender and operation contents have not changed. Previews show the current alias
+and stable identity separately from the stored approval content. Existing
+single-attempt/uncertain-outcome rules still apply; neither migration nor renaming
+permits retrying or automatically recreating a previously attempted operation.
+
+Shared Google credentials use a separate immutable connection reference. Existing
+Google/calendar aliases and credential locks are preserved. For a new Gmail
+connection, its initial alias is used as the shared Google reference when free;
+if that reference already belongs to another local account, a new ID is used
+instead. `account list` reports `connectionRef` for connecting the calendar
+capability to that same Google identity. Later mail renames never change it.
+
+### Provider adapter contract
+
+`mail/account-registry.ts` owns identity, alias uniqueness, atomic migration,
+rename, lookup, and capability checks without importing Gmail or Zoho. The
+composition root in `mail/providers.ts` registers concrete adapters implementing
+`discover`, `describe`, `withMigrationLock`, and a capability list. Provider
+implementations retain responsibility for credentials, remote protocols and
+provider-local storage. Adding another provider requires an adapter registration,
+not a branch in rename/discovery logic. Tests exercise a third fixture provider.
 
 ## Zoho .com: connect and use read/write mail
 
