@@ -30,6 +30,12 @@ Permanent deletion, attachments, Bcc, scheduled sending, remote draft editing, l
 
 Gmail IMAP requires the broad `https://mail.google.com/` OAuth scope. Download-only behavior is enforced by the generated sync configuration, **not** by that scope. Google OAuth Testing mode usually gives seven-day refresh tokens for these scopes; discuss production/personal-app policy before relying on unattended sync.
 
+## Rename a local account alias
+
+On the user's request, use `mailctl account rename OLD NEW` for any connected provider. The command discovers the provider; duplicate source aliases fail with `AMBIGUOUS_ACCOUNT_ALIAS`, and destinations must be unused across providers. Do not guess or edit credential files to bypass ambiguity. This is a local-only operation: no provider rename, send, or reauthorization. For Gmail, pause jobs first (`mailctl jobs pause OLD`) and wait for active work to finish; `MAIL_BUSY` does not cancel work. Check status under NEW afterward and ask before re-enabling jobs. Shared Google/calendar aliases stay unchanged.
+
+Old aliases remain reserved. Old message references and pending consent links stop working; unsubmitted drafts/plans must be recreated under NEW and freshly approved. Attempt histories remain unchanged: never recreate an attempted send/plan automatically, especially an uncertain one. Do not edit credentials, tombstones, or `.rename-recovery` files by hand; interrupted renames require operator recovery from private state/backups.
+
 ## Gmail search and read
 
 - `mailctl account status` — sanitized account and sync state; no credentials.

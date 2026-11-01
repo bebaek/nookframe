@@ -17,6 +17,7 @@ export function validEmail(value: unknown): value is string {
 }
 export interface OAuthClient { clientId: string; clientSecret: string; redirectUri: string }
 export interface Account {
+  googleAccount?: string;
   alias: string; provider: 'gmail'; email: string; polling: boolean; scopes?: string[]; subject?: string;
   oauth: { clientId: string; refreshToken: string; accessToken: string; expiresAt: number };
 }
@@ -48,11 +49,24 @@ export class MailStore {
       return client;
     } catch { throw new MailError('OAUTH_CLIENT_NOT_CONFIGURED'); }
   }
+  accountMetadata(name: string): Record<string, any> | undefined {
+    const file = this.path('accounts', alias(name) + '.json');
+    if (!existsSync(file)) return undefined;
+    try { return JSON.parse(readFileSync(file, 'utf8')); }
+    catch { throw new MailError('ACCOUNT_NOT_CONNECTED'); }
+  }
+  assertActiveAlias(name: string) {
+    if (this.accountMetadata(name)?.renamedTo) throw new MailError('ACCOUNT_ALIAS_RENAMED');
+  }
+  googleAlias(name: string): string {
+    this.assertActiveAlias(name);
+    return alias(this.accountMetadata(name)?.googleAccount ?? name);
+  }
   account(name: string): Account {
     alias(name);
     try {
       const account = JSON.parse(readFileSync(this.path('accounts', name + '.json'), 'utf8')) as Account;
-      const shared = this.google?.account(name);
+      const shared = this.google?.account(this.googleAlias(name));
       if (shared) {
         if (shared.email.toLowerCase() !== account.email.toLowerCase()) throw new Error();
         account.oauth = shared.oauth; account.scopes = shared.scopes; account.subject = shared.subject;
@@ -62,14 +76,16 @@ export class MailStore {
     } catch { throw new MailError('ACCOUNT_NOT_CONNECTED'); }
   }
   saveAccount(account: Account) {
+    this.assertActiveAlias(account.alias);
     if (this.google) {
-      this.google.save({ version: 1, alias: account.alias, email: account.email, subject: account.subject, scopes: account.scopes ?? ['https://mail.google.com/'], oauth: account.oauth });
+      const googleAccount = account.googleAccount ?? this.googleAlias(account.alias);
+      this.google.save({ version: 1, alias: googleAccount, email: account.email, subject: account.subject, scopes: account.scopes ?? ['https://mail.google.com/'], oauth: account.oauth });
       const { oauth, scopes, ...metadata } = account;
-      this.write(this.path('accounts', alias(account.alias) + '.json'), { ...metadata, googleAccount: account.alias });
+      this.write(this.path('accounts', alias(account.alias) + '.json'), { ...metadata, googleAccount });
     } else this.write(this.path('accounts', alias(account.alias) + '.json'), account);
   }
   accounts(): Account[] {
-    return readdirSync(this.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => this.account(f.slice(0, -5)));
+    return readdirSync(this.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).filter(f => !this.accountMetadata(f.slice(0, -5))?.renamedTo).map(f => this.account(f.slice(0, -5)));
   }
   private async lock<T>(target: string, action: () => Promise<T>, waitForCredentials = false): Promise<T> {
     let release: () => Promise<void>;
@@ -88,7 +104,7 @@ export class MailStore {
     return this.lock(target, action);
   }
   async withAccountCredentialLock<T>(name: string, action: () => Promise<T>, wait = false): Promise<T> {
-    const target = this.google?.path('.locks', 'credentials', alias(name)) ?? this.path('.locks', 'credentials', alias(name));
+    const target = this.google?.path('.locks', 'credentials', this.googleAlias(name)) ?? this.path('.locks', 'credentials', alias(name));
     mkdirSync(target, { recursive: true, mode: 0o700 });
     return this.lock(target, action, wait);
   }
@@ -102,7 +118,8 @@ export class MailStore {
       const unchanged = ifUnchanged?.();
       if (unchanged !== undefined) return unchanged;
       const accounts = this.accounts().sort((a, b) => a.alias.localeCompare(b.alias));
-      const names = [...new Set([...accounts.map(a => a.alias), ...(this.google?.accounts().map(a => a.alias) ?? [])])].sort();
+      const sharedNames = new Set(accounts.map(a => this.googleAlias(a.alias)));
+      const names = [...new Set([...accounts.map(a => a.alias), ...(this.google?.accounts().filter(a => !sharedNames.has(a.alias)).map(a => a.alias) ?? [])])].sort();
       if (accounts.some(a => a.polling)) throw new MailError('PAUSE_MAIL_JOBS_FIRST');
       const acquire = async (index: number): Promise<T> => {
         if (index === names.length) return action();

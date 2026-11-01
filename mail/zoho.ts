@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MailError, MailStore, alias, validEmail } from './store.js';
+import { renameAccount } from './rename.js';
 
 // Zoho .com only. Never trust callback accounts-server/api_domain as an endpoint.
 export const ZOHO_CALLBACK = '/mail/zoho/oauth/callback';
@@ -78,12 +79,14 @@ export class ZohoMail {
     return c;
   }
   private account(name: string): Account {
+    this.store.assertActiveAlias(name);
     const a = this.load(this.store.path('accounts', alias(name) + '.json'));
     if (a?.alias !== name || !validEmail(a.email) || !secret(a.clientId) || !secret(a.refreshToken) || !secret(a.accessToken) || !Number.isFinite(a.expiresAt)) fail('ZOHO_ACCOUNT_NOT_CONNECTED');
     id(a.accountId);
     return a;
   }
-  private names(): string[] { return readdirSync(this.store.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => f.slice(0, -5)); }
+  private names(): string[] { return readdirSync(this.store.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => f.slice(0, -5)).filter(n => !this.store.accountMetadata(n)?.renamedTo); }
+  rename(from: string, to: string) { return renameAccount(this.store, from, to, () => { this.account(from); }, false); }
   status(name?: string) {
     let configured = false; try { this.client(); configured = true; } catch {}
     return { provider: 'zoho', region: 'com', configured, callbackUrl: this.redirectUri,
@@ -102,6 +105,7 @@ export class ZohoMail {
   async connect(name: string, email: string) {
     alias(name); if (!validEmail(email)) fail('INVALID_EMAIL');
     return this.store.locked('oauth', async () => {
+      this.store.assertActiveAlias(name);
       const c = this.client();
       const existing = existsSync(this.store.path('accounts', name + '.json')) ? this.account(name) : undefined;
       if (existing && existing.email.toLowerCase() !== email.toLowerCase()) fail('WRONG_ACCOUNT_FOR_ALIAS');
@@ -145,6 +149,7 @@ export class ZohoMail {
       const p: Pending = this.load(file); unlinkSync(file);
       if (!Number.isFinite(p.expiresAt) || p.expiresAt <= this.now() || !validEmail(p.email)) fail('INVALID_OR_EXPIRED_AUTHORIZATION');
       alias(p.alias);
+      this.store.assertActiveAlias(p.alias);
       if (url.searchParams.has('error')) fail('AUTHORIZATION_DENIED');
       const code = url.searchParams.get('code');
       if (!secret(code) || url.searchParams.getAll('code').length !== 1) fail('INVALID_OR_EXPIRED_AUTHORIZATION');
@@ -239,7 +244,7 @@ export class ZohoMail {
   }
   async execute(planId: string, version: string) {
     this.show(planId);
-    return this.store.withDraftLock(planId, async () => {
+    return this.store.withAccountSyncLock(this.show(planId).plan.account, () => this.store.withDraftLock(planId, async () => {
       const shown = this.show(planId), p = shown.plan;
       if (version !== shown.version) fail('PLAN_VERSION_CONFLICT');
       if (existsSync(this.store.path('attempts', planId + '.json'))) fail('ZOHO_ALREADY_ATTEMPTED_CHECK_STATUS');
@@ -267,7 +272,7 @@ export class ZohoMail {
       } catch { /* An unknown write outcome is never automatically retried. */ }
       this.persist(attempt);
       return attempt;
-    });
+    }));
   }
 }
 export function zohoRuntime() {

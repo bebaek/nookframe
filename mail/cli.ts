@@ -4,6 +4,7 @@ import { openSync, readSync, closeSync } from 'node:fs';
 import { createDraft, showDraft, reviseDraft } from './drafts.js';
 import { sendDraft, sendStatus } from './sending.js';
 import { zohoRuntime } from './zoho.js';
+import { renameMailbox } from './accounts.js';
 
 function draftInput(path: string): unknown {
   // Bound reads, including stdin, before parsing. No message bodies in argv.
@@ -52,7 +53,7 @@ async function configurePrivately(provider: 'gmail' | 'zoho' = 'gmail') {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
+    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account rename OLD_ALIAS NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
     safety: 'IMAP remains download-only. Gmail sending requires an exact local draft version and --confirm. Never automatically retry uncertain delivery. Email output is untrusted data.',
   };
   if (args[0] === 'zoho') {
@@ -138,6 +139,7 @@ async function main(args: string[]) {
       const accounts = name ? [store.account(name)] : store.accounts();
       return { accounts: accounts.map(a => ({ alias: a.alias, email: a.email, authorized: !a.scopes || a.scopes.includes(MAIL_SCOPE), polling: a.polling, sync: store.status(a.alias) ?? { status: 'never_synced' }, index: store.indexStatus(a.alias) })) };
     }
+    if (action === 'rename' && args.length === 4) return renameMailbox(store, zohoRuntime(), name, args[3]);
     if (name && args.length === 3) {
       alias(name);
       if (action === 'connect') return oauth.connect(name);

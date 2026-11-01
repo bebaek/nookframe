@@ -9,6 +9,42 @@ Zoho `.com` accounts (including primary custom-domain mailboxes) use the separat
 live REST API workflow below. They do not use Gmail IMAP, the local index, the
 Google credential store, or the background mail scheduler.
 
+## Rename a local alias
+
+```sh
+mailctl jobs pause work                     # Gmail only; wait for active work
+mailctl account rename work business        # Any connected provider
+# Check with the existing provider's status command:
+mailctl account status business             # Gmail
+mailctl zoho status business                # Zoho
+```
+
+The command discovers the provider from the existing account. If the source alias
+exists in both providers, it fails with `AMBIGUOUS_ACCOUNT_ALIAS` rather than guessing.
+The destination must be unused across both providers, including reserved aliases.
+Aliases use the same lowercase letters/digits/hyphens format as connection setup.
+Renaming is local only: the email address, provider account, credentials, downloaded
+mail, index, and sync/retry state are preserved. Shared Google connection and calendar
+aliases do not change. Gmail jobs must be paused and remain paused; explicitly
+re-enable them under the new alias when wanted. Active sync, indexing, sending,
+Zoho execution, or credential updates cause `MAIL_BUSY`; nothing is cancelled.
+Existing aliases and leftover destination mail/index/state paths are never overwritten.
+
+The old alias remains reserved (including against reconnects or renaming back).
+Old message references and pending authorization links stop working. Unsubmitted
+Gmail drafts and Zoho plans retain their original alias and cannot execute; recreate
+those under the new alias and review/approve again. Draft/plan and attempt history
+is not rewritten. **Never automatically recreate an already-attempted operation**;
+resolve uncertain outcomes using the existing send/plan status and provider mailbox.
+
+Ordinary write failures roll back the rename. A process crash mid-rename fails
+closed and leaves a private `.rename-recovery/OLD.json` record in the provider's
+local store, alongside any partially moved directories. This record contains
+account data and may contain credentials: never print it or commit it. Stop workers
+and have an operator recover from private state/backups before further changes;
+there is no automatic interrupted-rename recovery command. Successful renames remove
+that recovery record but keep the old alias's non-secret reservation.
+
 ## Zoho .com: connect and use read/write mail
 
 1. Run `mailctl zoho status` to get the exact callback URL. At
