@@ -36,7 +36,8 @@ export function showDraft(store: MailStore, id: string): Draft {
     ...content({ to: d.to, cc: d.cc, subject: d.subject, body: d.body }) };
 }
 export function createDraft(store: MailStore, account: string, input: unknown): Draft {
-  const fields = content(input), from = store.account(account).email;
+  const fields = content(input), connected = store.account(account), from = connected.email;
+  account = connected.alias; // Stable local ID once the registry is enabled.
   mkdirSync(store.path('drafts'), { recursive: true, mode: 0o700 });
   const now = new Date().toISOString();
   const draft: Draft = { id: randomBytes(16).toString('hex'), version: 1, account, from, createdAt: now, updatedAt: now, ...fields };
