@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject, type TouchEvent, type Whee
 
 /** Browser-like chrome, driven by gestures rather than programmatic scrolling. */
 export function useMobileReading(enabled: boolean, threadId: string | undefined, pinned: boolean,
-  transcript: RefObject<HTMLElement | null>, preservePosition: () => void) {
+  transcript: RefObject<HTMLElement | null>, preservePosition: (keepBottom?: boolean) => void) {
   const [mobile, setMobile] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
   const [hiddenThread, setHiddenThread] = useState<string>();
@@ -40,7 +40,7 @@ export function useMobileReading(enabled: boolean, threadId: string | undefined,
       setHiddenThread(threadId);
       motion.current.amount = 0;
     } else if (hidden && amount <= -12) {
-      preservePosition();
+      preservePosition(true);
       show();
     }
   }
@@ -62,7 +62,7 @@ export function useMobileReading(enabled: boolean, threadId: string | undefined,
     const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? transcript.current?.clientHeight ?? 1 : 1;
     gesture(event.deltaX * scale, event.deltaY * scale);
   }
-  function reveal() { if (hidden) preservePosition(); show(); }
+  function reveal() { if (hidden) preservePosition(true); show(); }
 
   return { hidden, show, reveal, gestures: { onTouchStart, onTouchMove, onTouchEnd: () => { touch.current = null; }, onTouchCancel: () => { touch.current = null; }, onWheel } };
 }

@@ -6,21 +6,24 @@ export function useTranscriptScroll(active: boolean, threadId: string | undefine
   const content = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const geometry = useRef({ height: 0, viewport: 0, top: 0 });
-  const readingAnchor = useRef<number | null>(null);
+  const readingAnchor = useRef<number | 'bottom' | null>(null);
 
-  function preservePosition() {
+  function preservePosition(keepBottom = false) {
     const el = transcript.current;
     if (!el) return;
     follow.current = false;
-    // Preserve the content's screen position when mobile chrome changes height.
-    readingAnchor.current = el.scrollTop - el.getBoundingClientRect().top;
+    // When controls return at the end, keep the last line above the composer.
+    // Otherwise preserve the screen-space anchor without resuming auto-follow.
+    readingAnchor.current = keepBottom && el.scrollHeight - el.scrollTop - el.clientHeight <= 1
+      ? 'bottom' : el.scrollTop - el.getBoundingClientRect().top;
   }
 
   function sync() {
     const el = transcript.current;
     if (!el || !el.clientHeight) return; // Hidden terminal/chat tabs have no useful geometry.
     if (readingAnchor.current !== null) {
-      el.scrollTop = readingAnchor.current + el.getBoundingClientRect().top;
+      el.scrollTop = readingAnchor.current === 'bottom'
+        ? el.scrollHeight : readingAnchor.current + el.getBoundingClientRect().top;
       readingAnchor.current = null;
     } else if (follow.current) el.scrollTop = el.scrollHeight;
     geometry.current = { height: el.scrollHeight, viewport: el.clientHeight, top: el.scrollTop };
