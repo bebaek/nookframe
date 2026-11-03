@@ -11,7 +11,7 @@ async function fixture() {
   const notifications: any[] = [];
   const scope = { location: { origin: 'https://example.test' },
     addEventListener: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
-    clients: { get: async (id: string) => id === client.id ? client : undefined,
+    clients: { matchAll: async () => [client], get: async (id: string) => id === client.id ? client : undefined,
       openWindow: async (url: string) => calls.push(url), claim: async () => {} },
     skipWaiting() {}, registration: {
       showNotification: async (title: string, options: any) => notifications.push({ title, ...options, close() { this.closed = true; } }),
@@ -38,6 +38,16 @@ test('worker binds notifications to exact sender, focuses before navigating, and
   assert.equal(f.calls[1].threadId, 'a');
   await f.emit('message', { source: f.client, data: { type: 'clear-attention' } });
   assert.equal(notification.closed, true);
+});
+
+test('push displays generic content without an open page and clicks focus Nookframe', async () => {
+  const f = await fixture();
+  await f.emit('push', {});
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.notifications[0].tag, 'nookframe:push');
+  assert.equal(f.notifications[0].data.push, true);
+  await f.emit('notificationclick', { notification: f.notifications[0] });
+  assert.equal(f.calls[0], 'focus');
 });
 
 test('takeover notification opens the request without approving it', async () => {
