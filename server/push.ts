@@ -47,14 +47,17 @@ export class PushNotifications {
     for (const [id, subscription] of Object.entries(this.saved.subscriptions)) {
       if (!this.valid(id)) { this.remove(id); continue; }
       if ((only && only !== id) || this.pending.has(id)) continue;
-      // Suppress only if every completed conversation is being viewed by this
-      // login. Another browser/device's focus cannot silence this subscription.
-      if (finished?.length && finished.every(threadId => this.focused(id, threadId))) continue;
       this.pending.add(id);
       try {
-        await this.send(subscription, JSON.stringify({ type: 'attention' }), {
-          vapidDetails: { subject: this.subject, ...this.saved.keys }, TTL: 3600, timeout: 10000,
-        });
+        // Each completion needs its own encrypted destination. Never include
+        // conversation text/title or put the identifier in provider headers.
+        for (const threadId of finished ?? [undefined]) {
+          if (!this.valid(id) || this.saved.subscriptions[id] !== subscription) break;
+          if (threadId && this.focused(id, threadId)) continue;
+          await this.send(subscription, JSON.stringify({ type: 'attention', ...(threadId ? { threadId } : {}) }), {
+            vapidDetails: { subject: this.subject, ...this.saved.keys }, TTL: 3600, timeout: 10000,
+          });
+        }
       } catch (error) {
         // Never expose endpoint URLs or provider responses in logs.
         if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0) && this.saved.subscriptions[id] === subscription) this.remove(id);

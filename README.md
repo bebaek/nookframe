@@ -227,9 +227,14 @@ is reported on visibility/focus changes and renewed every 15 seconds; stale repo
 expire after 45 seconds so a suspended page cannot silence notifications indefinitely.
 The suppression happens before sending push, not by silently discarding incoming
 push events (which can trigger browser fallback notifications). Push notifications
-contain only generic text, never conversation titles, identifiers, or content.
-Clicking focuses an existing Nookframe window or opens the home page. Enable each
-device separately; the controls report whether background push was enabled.
+display only generic text, never conversation titles or content. The encrypted
+payload carries the opaque conversation identifier for navigation. Each completion
+in a batch gets its own destination and notification tag.
+Clicking opens the exact conversation URL directly, avoiding Firefox Android's
+unreliable activation of an arbitrary existing tab. This may open a new tab; it
+does not deliberately navigate unrelated tabs away from unsent drafts. Browser/OS
+policies still control activation. Older notifications without a destination open
+the home page. Enable each device separately; controls report push setup status.
 
 Delivery depends on internet access, browser/OS background access, and the browser
 vendor's push service (Firefox/Mozilla, Chromium/FCM, or Apple). Push is best effort:

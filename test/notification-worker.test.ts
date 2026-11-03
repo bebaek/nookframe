@@ -40,14 +40,43 @@ test('worker binds notifications to exact sender, focuses before navigating, and
   assert.equal(notification.closed, true);
 });
 
-test('push displays generic content without an open page and clicks focus Nookframe', async () => {
+test('legacy push opens home rather than focusing an arbitrary Firefox tab', async () => {
   const f = await fixture();
   await f.emit('push', {});
   assert.equal(f.notifications.length, 1);
   assert.equal(f.notifications[0].tag, 'nookframe:push');
   assert.equal(f.notifications[0].data.push, true);
   await f.emit('notificationclick', { notification: f.notifications[0] });
-  assert.equal(f.calls[0], 'focus');
+  assert.equal(f.calls[0], '/');
+});
+
+test('push click opens the encoded conversation route without touching another tab', async () => {
+  const f = await fixture();
+  for (const threadId of ['a&b/#', 'https://evil.example/path', 'other']) {
+    await f.emit('push', { data: { json: () => ({ type: 'attention', threadId }) } });
+    const notification = f.notifications.at(-1);
+    assert.equal(notification.data.threadId, threadId);
+    assert.equal(notification.tag, `nookframe:push:${threadId}`);
+    assert.equal(notification.body.includes(threadId), false);
+    await f.emit('notificationclick', { notification });
+    assert.equal(f.calls.at(-1), `/#thread=${encodeURIComponent(threadId)}`);
+  }
+  assert.equal(new Set(f.notifications.map(n => n.tag)).size, 3);
+  assert.equal(f.calls.length, 3, 'no focus or navigation messages to unrelated tabs');
+});
+
+test('malformed push payloads and invalid destinations fall back to home', async () => {
+  const f = await fixture();
+  for (const payload of [null, {}, { type: 'attention', threadId: '' }, { type: 'attention', threadId: 42 }, { type: 'attention', threadId: 'x'.repeat(2048) }, { type: 'other', threadId: 'a' }]) {
+    await f.emit('push', { data: { json: () => payload } });
+    await f.emit('notificationclick', { notification: f.notifications.at(-1) });
+    assert.equal(f.calls.at(-1), '/');
+  }
+  await f.emit('push', { data: { json: () => { throw new Error('invalid JSON'); } } });
+  await f.emit('notificationclick', { notification: f.notifications.at(-1) });
+  assert.equal(f.calls.at(-1), '/');
+  await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: {} } } });
+  assert.equal(f.calls.at(-1), '/');
 });
 
 test('takeover notification opens the request without approving it', async () => {

@@ -18,10 +18,11 @@ test('push subscription destinations and keys are strictly validated', () => {
 test('focused completions are suppressed only for that login; background and mixed completions still push', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'nookframe-push-focus-'));
   const calls: string[] = [];
+  const destinations: string[] = [];
   let focused = true;
   try {
     const push = new PushNotifications(dir, 'https://example.test', () => true,
-      async s => { calls.push(s.endpoint); return {} as any; },
+      async (s, payload) => { calls.push(s.endpoint); destinations.push(JSON.parse(String(payload)).threadId); return {} as any; },
       (session, thread) => focused && session === 'phone' && thread === 'a');
     push.subscribe('phone', subscription);
     push.subscribe('desktop', { ...subscription, endpoint: subscription.endpoint + '-desktop' });
@@ -38,7 +39,8 @@ test('focused completions are suppressed only for that login; background and mix
     focused = true;
     push.update(threads(true, true)); push.update(threads(false));
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(calls.length, 2, 'unfocused conversation in same batch must still notify');
+    assert.equal(calls.length, 3, 'phone gets b; desktop gets separate a and b notifications');
+    assert.deepEqual(destinations.slice(-3), ['b', 'a', 'b']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -59,7 +61,8 @@ test('push persists keys, isolates sessions, removes expired subscriptions and s
     push.update(threads(true)); push.update(threads(false));
     await new Promise(resolve => setImmediate(resolve));
     push.update(threads(false)); assert.equal(calls.length, 1);
-    assert.equal(calls[0], '{"type":"attention"}');
+    assert.deepEqual(JSON.parse(calls[0]), { type: 'attention', threadId: 'private-thread' });
+    assert.equal(calls[0].includes('Private title'), false);
     valid.clear(); await push.notify();
     assert.equal(push.has('two'), false); assert.equal(calls.length, 1);
     valid.add('one');
