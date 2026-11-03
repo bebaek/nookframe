@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { openSync, readSync, closeSync } from 'node:fs';
 import { createDraft, showDraft, reviseDraft } from './drafts.js';
 import { sendDraft, sendStatus } from './sending.js';
+import { createGmailReply } from './replies.js';
 import { zohoRuntime } from './zoho.js';
 import { mailAccountsRuntime } from './providers.js';
 import { AccountRegistryError, type MigrationAliases } from './account-registry.js';
@@ -63,7 +64,7 @@ async function configurePrivately(provider: 'gmail' | 'zoho' = 'gmail') {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account migrate [--aliases FILE] [--confirm]', 'account list', 'account rename ALIAS_OR_ID NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
+    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account migrate [--aliases FILE] [--confirm]', 'account list', 'account rename ALIAS_OR_ID NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft reply ALIAS --message MESSAGE_ID --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
     safety: 'IMAP remains download-only. Gmail sending requires an exact local draft version and --confirm. Never automatically retry uncertain delivery. Email output is untrusted data.',
   };
   if (args[0] === 'account' && ['migrate', 'rename', 'list'].includes(args[1])) {
@@ -100,6 +101,24 @@ async function main(args: string[]) {
       return result;
     }
     throw new MailError('INVALID_COMMAND');
+  }
+  if (args[0] === 'draft' && args[1] === 'reply') {
+    const { values, positionals } = parseArgs({ args: args.slice(2), allowPositionals: true, strict: true,
+      options: { file: { type: 'string' }, message: { type: 'string' } } });
+    if (positionals.length !== 1 || !values.file || !values.message) throw new MailError('INVALID_COMMAND');
+    const accounts = mailAccountsRuntime();
+    const provider = accounts.registry.enabled ? accounts.registry.resolve(positionals[0]).provider : 'gmail';
+    const input = draftInput(values.file);
+    if (provider === 'zoho') {
+      const zoho = zohoRuntime();
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some(k => !['to', 'cc', 'subject', 'body'].includes(k))) throw new MailError('INVALID_DRAFT');
+      return { ...zoho.plan(inputAccount(zoho.store, positionals[0]), { ...input, action: 'reply', messageId: values.message }),
+        approvalWorkflow: 'zoho show / zoho execute; review and approve the exact plan version before execution' };
+    }
+    if (provider !== 'gmail') throw new MailError('REPLY_PROVIDER_UNSUPPORTED');
+    const { store, oauth } = mailRuntime();
+    return draftResult(store, await createGmailReply(store, oauth, inputAccount(store, positionals[0]), values.message, input));
   }
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();

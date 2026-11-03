@@ -48,6 +48,7 @@ export function mimeMessage(draft: Draft, status: SendStatus): string {
   const body = Buffer.from(draft.body.replace(/\r\n|\r|\n/g, '\r\n')).toString('base64').match(/.{1,76}/g)?.join('\r\n') ?? '';
   return [`From: ${draft.from}`, `To: ${draft.to.join(',\r\n ')}`, ...(draft.cc.length ? [`Cc: ${draft.cc.join(',\r\n ')}`] : []),
     `Subject: ${words.join('\r\n ')}`, `Date: ${new Date(status.attemptedAt).toUTCString()}`, `Message-ID: ${status.messageId}`,
+    ...(draft.reply ? [`In-Reply-To: ${draft.reply.messageId}`, `References: ${draft.reply.references.join('\r\n ')}`] : []),
     'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', body, ''].join('\r\n');
 }
 export async function sendDraft(store: MailStore, oauth: Pick<MailOAuth, 'accessToken'>, id: string, version: number, request: typeof fetch = fetch) {
@@ -66,7 +67,7 @@ export async function sendDraft(store: MailStore, oauth: Pick<MailOAuth, 'access
     try {
       const response = await request('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw }), redirect: 'error', signal: AbortSignal.timeout(30000),
+        body: JSON.stringify({ raw, ...(draft.reply ? { threadId: draft.reply.gmail.threadId } : {}) }), redirect: 'error', signal: AbortSignal.timeout(30000),
       });
       if (response.ok) {
         const data = await response.json();
