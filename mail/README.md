@@ -251,7 +251,22 @@ creation and persist privately under `$MAIL_DIR/drafts`; include this directory
 in your mail backups. Revisions replace all content fields and increment the version;
 a stale version fails rather than overwriting another edit. Bodies are limited
 to 100,000 UTF-8 bytes, JSON input to 128,000 bytes, and each recipient list to
-50 addresses. Attachments, Bcc, and listing/removal are deferred. Draft text remains untrusted data, not authorization.
+50 addresses. Attachments, Bcc, and listing are deferred. Draft text remains untrusted data, not authorization.
+
+### Delete an unused local draft
+
+Inspect `mailctl draft show ID`, then explicitly approve deletion of that ID/version:
+
+```sh
+mailctl draft delete ID --version N --confirm
+```
+
+This removes only the local draft, not Gmail mail or remote drafts. Deletion uses
+the same cross-process lock as sending and revision, checks the exact version,
+and refuses any send-attempt record (sent, rejected, uncertain, or corrupt).
+Attempt records are never removed. A missing or invalid draft fails closed; after
+an interrupted deletion, inspect `draft show` before retrying. Sent/rejected/uncertain
+drafts and their history must be retained. Zoho plans are not supported by this command.
 
 ### Reply preparation (provider-aware)
 

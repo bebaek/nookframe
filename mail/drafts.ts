@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { validateReply, type ReplyMetadata } from './reply-metadata.js';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { MailError, MailStore, validEmail } from './store.js';
 
 export interface DraftContent { to: string[]; cc: string[]; subject: string; body: string }
@@ -48,6 +48,28 @@ export function createDraft(store: MailStore, account: string, input: unknown, r
   store.write(draftPath(store, draft.id), draft);
   return draft;
 }
+export async function deleteDraft(store: MailStore, id: string, expectedVersion: number) {
+  const path = draftPath(store, id);
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new MailError('INVALID_DRAFT_VERSION');
+  return store.withDraftLock(id, async () => {
+    // Any directory entry is a submission marker, including a corrupt file or
+    // dangling symlink. Never remove attempt history or infer safety from content.
+    try {
+      lstatSync(store.path('outbox', id + '.json'));
+      throw new MailError('DRAFT_ALREADY_SUBMITTED');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const draft = showDraft(store, id);
+    if (draft.version !== expectedVersion) throw new MailError('DRAFT_VERSION_CONFLICT');
+    if (!lstatSync(path).isFile()) throw new MailError('INVALID_DRAFT');
+    unlinkSync(path);
+    const fd = openSync(store.path('drafts'), 'r');
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+    return { draftId: id, version: expectedVersion, deleted: true, scope: 'local' };
+  });
+}
+
 export async function reviseDraft(store: MailStore, id: string, expectedVersion: number, input: unknown): Promise<Draft> {
   // Serialize revisions across CLI processes; later send must use this same lock.
   draftPath(store, id);

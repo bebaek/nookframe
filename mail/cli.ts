@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { openSync, readSync, closeSync } from 'node:fs';
-import { createDraft, showDraft, reviseDraft } from './drafts.js';
+import { createDraft, showDraft, reviseDraft, deleteDraft } from './drafts.js';
 import { sendDraft, sendStatus } from './sending.js';
 import { createGmailReply } from './replies.js';
 import { zohoRuntime } from './zoho.js';
@@ -64,7 +64,7 @@ async function configurePrivately(provider: 'gmail' | 'zoho' = 'gmail') {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account migrate [--aliases FILE] [--confirm]', 'account list', 'account rename ALIAS_OR_ID NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft reply ALIAS --message MESSAGE_ID --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
+    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account migrate [--aliases FILE] [--confirm]', 'account list', 'account rename ALIAS_OR_ID NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft reply ALIAS --message MESSAGE_ID --file JSON_FILE_OR_DASH', 'draft show ID', 'draft delete ID --version N --confirm', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
     safety: 'IMAP remains download-only. Gmail sending requires an exact local draft version and --confirm. Never automatically retry uncertain delivery. Email output is untrusted data.',
   };
   if (args[0] === 'account' && ['migrate', 'rename', 'list'].includes(args[1])) {
@@ -133,9 +133,16 @@ async function main(args: string[]) {
   }
   if (args[0] === 'draft') {
     const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
-      options: { file: { type: 'string' }, version: { type: 'string' } } });
+      options: { file: { type: 'string' }, version: { type: 'string' }, confirm: { type: 'boolean' } } });
     const [action, target] = positionals;
     if (positionals.length !== 2) throw new MailError('INVALID_COMMAND');
+    if (action === 'delete') {
+      if (values.file || !values.confirm || !values.version || !/^[1-9][0-9]*$/.test(values.version) || !Number.isSafeInteger(Number(values.version))) {
+        throw new MailError('DELETE_REQUIRES_VERSION_AND_CONFIRM');
+      }
+      return deleteDraft(store, target, Number(values.version));
+    }
+    if (values.confirm !== undefined) throw new MailError('INVALID_COMMAND');
     if (action === 'show' && !values.file && !values.version) return draftResult(store, showDraft(store, target));
     if (action === 'create' && values.file && !values.version) return draftResult(store, createDraft(store, inputAccount(store, target), draftInput(values.file)));
     if (action === 'revise' && values.file && values.version && /^[1-9][0-9]*$/.test(values.version) && Number.isSafeInteger(Number(values.version))) {
