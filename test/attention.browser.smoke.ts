@@ -50,11 +50,13 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.route('**/api/push', route => route.fulfill({ status: 503 }));
     const threads = [{ id: 'a', title: 'Private A', updatedAt: '2026-01-01', busy: false }, { id: 'b', title: 'Private B', updatedAt: '2026-01-01', busy: false }];
     const state: Snapshot = { threadId: 'a', threads, busy: false, available: true, messages: [], tools: {}, liveText: '', model: 'fixture', models: [], modelSource: 'pi', modelChanging: false, threadChanging: false, notice: '' };
+    const focusReports: { threadId: string; focused: boolean }[] = [];
     let socket: WebSocketRoute;
     await page.routeWebSocket('**/ws', ws => {
       socket = ws;
       ws.onMessage(raw => {
         const message = JSON.parse(String(raw));
+        if (message.type === 'push_focus') focusReports.push(message);
         if (message.type === 'auth') ws.send(JSON.stringify({ type: 'snapshot', state, selected: true }));
         if (message.type === 'switch_thread') {
           state.threadId = message.targetId;
@@ -75,6 +77,7 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
       }
     }
     await run('b'); assert.equal(await count(), 0, 'no notification before opt-in');
+    assert.ok(focusReports.some(report => report.threadId === 'a' && report.focused), 'focused chat reported to server');
     assert.equal(await page.evaluate(() => (window as any).permissionRequests), 0);
     await page.getByRole('button', { name: 'Enable notifications', exact: true }).click();
     await page.getByRole('button', { name: 'Disable notifications', exact: true }).waitFor();
@@ -83,8 +86,16 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     assert.equal(await page.evaluate(() => JSON.stringify((window as any).notifications).includes('Private')), false);
     await page.evaluate(() => (window as any).notifications[0].onclick());
     await page.waitForFunction(() => location.hash === '#thread=b');
-    await page.evaluate(() => { (window as any).fixtureFocus = false; });
+    await page.evaluate(() => { (window as any).fixtureFocus = false; window.dispatchEvent(new Event('blur')); });
     await run('b'); assert.equal(await count(), 2, 'unfocused active conversation notifies');
+    assert.equal(focusReports.at(-1)?.focused, false, 'blur immediately clears foreground suppression');
+    assert.equal(focusReports.at(-1)?.threadId, 'b');
+    await page.evaluate(() => { (window as any).fixtureFocus = true; window.dispatchEvent(new Event('focus')); });
+    await run('b'); assert.equal(await count(), 2, 'returning to focused chat is silent');
+    assert.equal(focusReports.at(-1)?.focused, true);
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await page.waitForTimeout(40);
+    assert.equal(focusReports.at(-1)?.focused, false, 'page exit clears foreground suppression');
     await page.getByRole('button', { name: 'Disable notifications', exact: true }).click();
     await run('a'); assert.equal(await count(), 2);
     assert.equal(await page.evaluate(() => (window as any).notifications.every((n: any) => n.closed)), true);
