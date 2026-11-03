@@ -221,7 +221,12 @@ The layout uses the browser's native Popover API (current Chrome/Safari/Firefox)
 Use **⋯ → Enable notifications** to opt in. On HTTPS with persistent server state,
 Nookframe subscribes this browser to encrypted Web Push. Server-observed run
 completions (including failures and stops) notify even when the page is suspended
-or closed. Push notifications currently include foreground completions too; they
+or closed. Push is suppressed for this browser login when the completed conversation
+is visible and focused. Other conversations and other devices still notify. Focus
+is reported on visibility/focus changes and renewed every 15 seconds; stale reports
+expire after 45 seconds so a suspended page cannot silence notifications indefinitely.
+The suppression happens before sending push, not by silently discarding incoming
+push events (which can trigger browser fallback notifications). Push notifications
 contain only generic text, never conversation titles, identifiers, or content.
 Clicking focuses an existing Nookframe window or opens the home page. Enable each
 device separately; the controls report whether background push was enabled.

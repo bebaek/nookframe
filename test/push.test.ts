@@ -15,6 +15,33 @@ test('push subscription destinations and keys are strictly validated', () => {
   assert.throws(() => validateSubscription({ ...subscription, keys: {} }));
 });
 
+test('focused completions are suppressed only for that login; background and mixed completions still push', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nookframe-push-focus-'));
+  const calls: string[] = [];
+  let focused = true;
+  try {
+    const push = new PushNotifications(dir, 'https://example.test', () => true,
+      async s => { calls.push(s.endpoint); return {} as any; },
+      (session, thread) => focused && session === 'phone' && thread === 'a');
+    push.subscribe('phone', subscription);
+    push.subscribe('desktop', { ...subscription, endpoint: subscription.endpoint + '-desktop' });
+    const threads = (a: boolean, b = false) => [{ id: 'a', busy: a }, { id: 'b', busy: b }] as ThreadChoice[];
+    push.update(threads(true)); push.update(threads(false));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [subscription.endpoint + '-desktop']);
+    calls.length = 0;
+    focused = false;
+    push.update(threads(true)); push.update(threads(false));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.length, 2);
+    calls.length = 0;
+    focused = true;
+    push.update(threads(true, true)); push.update(threads(false));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.length, 2, 'unfocused conversation in same batch must still notify');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('push persists keys, isolates sessions, removes expired subscriptions and sends generic completions once', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'nookframe-push-'));
   const calls: string[] = [];

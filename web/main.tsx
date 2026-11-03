@@ -9,6 +9,7 @@ import { useInputHistory } from './useInputHistory';
 import { useMobileReading } from './useMobileReading';
 import { AgentPresence } from './AgentPresence';
 import { useAttentionNotifications } from './useAttentionNotifications';
+import { usePushFocus } from './usePushFocus';
 import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
@@ -52,6 +53,7 @@ function App() {
   const socket = useRef<WebSocket | null>(null);
   const activeThread = useRef(initialThread());
   const [attentionTarget, setAttentionTarget] = useState<string>();
+  usePushFocus(socket.current, connected, state?.threadId, tab === 'chat');
   const attention = useAttentionNotifications(state?.threadId, tab === 'chat', id => {
     setTab('chat'); setAttentionTarget(id);
   }, signedIn);

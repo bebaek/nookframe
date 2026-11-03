@@ -21,7 +21,8 @@ export class PushNotifications {
   private busy = new Set<string>();
   private pending = new Set<string>();
   constructor(directory: string, private subject: string, private valid: (session: string) => boolean,
-    private send: typeof webpush.sendNotification = webpush.sendNotification) {
+    private send: typeof webpush.sendNotification = webpush.sendNotification,
+    private focused: (session: string, threadId: string) => boolean = () => false) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     this.file = join(directory, 'push.json');
     this.saved = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : { keys: webpush.generateVAPIDKeys(), subscriptions: {} };
@@ -38,14 +39,17 @@ export class PushNotifications {
   }
   remove(session: string) { delete this.saved.subscriptions[session]; this.save(); }
   update(threads: ThreadChoice[]) {
-    const finished = threads.some(t => this.busy.has(t.id) && t.busy === false);
+    const finished = threads.filter(t => this.busy.has(t.id) && t.busy === false).map(t => t.id);
     this.busy = new Set(threads.filter(t => t.busy).map(t => t.id));
-    if (finished) void this.notify();
+    if (finished.length) void this.notify(undefined, finished);
   }
-  async notify(only?: string) {
+  async notify(only?: string, finished?: string[]) {
     for (const [id, subscription] of Object.entries(this.saved.subscriptions)) {
       if (!this.valid(id)) { this.remove(id); continue; }
       if ((only && only !== id) || this.pending.has(id)) continue;
+      // Suppress only if every completed conversation is being viewed by this
+      // login. Another browser/device's focus cannot silence this subscription.
+      if (finished?.length && finished.every(threadId => this.focused(id, threadId))) continue;
       this.pending.add(id);
       try {
         await this.send(subscription, JSON.stringify({ type: 'attention' }), {
