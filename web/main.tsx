@@ -50,7 +50,7 @@ function App() {
   const [attentionTarget, setAttentionTarget] = useState<string>();
   const attention = useAttentionNotifications(state?.threadId, tab === 'chat', id => {
     setTab('chat'); setAttentionTarget(id);
-  });
+  }, signedIn);
   const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[]; decision?: string } | null>(null);
   function rememberSelection(threadId: string, explicitRelease = false) {
     activeThread.current = threadId;
@@ -290,7 +290,7 @@ function App() {
       <div className="controls-heading"><h2>Workspace controls</h2><button type="button" className="secondary" aria-label="Close controls" popoverTarget="workspace-controls" popoverTargetAction="hide">×</button></div>
       <section aria-label="Agent notifications">
         <button type="button" className="secondary" disabled={!attention.available} aria-pressed={attention.enabled} onClick={() => void attention.toggle()}>{attention.enabled ? 'Disable notifications' : 'Enable notifications'}</button>
-        <p><small>{attention.available ? 'Notify when an agent run ends outside the focused chat. Keep this page open and connected.' : 'Browser notifications are unavailable here.'}</small></p>
+        <p><small>{attention.available ? 'Background push notifies this browser when a run ends, even with the page closed. Delivery requires internet and browser background access. If push is unavailable, keep this page open and connected.' : 'Browser notifications are unavailable here.'}</small></p>
         {attention.status && <p role="status">{attention.status}</p>}
       </section>
       {state && <section className="thread-picker">

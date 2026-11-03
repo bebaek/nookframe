@@ -5,7 +5,7 @@ import { AttentionTracker, chatNeedsAttention } from './attention';
 const preference = 'nookframe.attentionNotifications';
 const supported = () => typeof Notification !== 'undefined' && window.isSecureContext;
 
-export function useAttentionNotifications(selected: string | undefined, chat: boolean, open: (id: string) => void) {
+export function useAttentionNotifications(selected: string | undefined, chat: boolean, open: (id: string) => void, signedIn = true) {
   const [enabled, setEnabled] = useState(() => {
     try { return supported() && Notification.permission === 'granted' && localStorage.getItem(preference) === 'true'; }
     catch { return false; }
@@ -15,6 +15,25 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   const notifications = useRef(new Set<Notification>());
   const worker = useRef<Promise<ServiceWorker | undefined> | undefined>(undefined);
   const generation = useRef(0);
+  const pushEnabled = useRef(false);
+  const pushSetup = useRef<Promise<void>>(Promise.resolve());
+  const toggling = useRef(false);
+
+  async function enablePush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error();
+    const active = await prepareWorker();
+    if (!active) throw new Error();
+    const registration = await navigator.serviceWorker.ready;
+    const response = await fetch('/api/push');
+    if (!response.ok) throw new Error();
+    const { publicKey } = await response.json();
+    const key = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const subscription = await registration.pushManager.getSubscription() ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    const saved = await fetch('/api/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
+    if (!saved.ok) throw new Error();
+    pushEnabled.current = true;
+    setStatus('Background push notifications enabled for this browser.');
+  }
 
   function prepareWorker() {
     if (!('serviceWorker' in navigator)) return Promise.resolve(undefined);
@@ -51,12 +70,26 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     navigator.serviceWorker.addEventListener('message', receive);
     return () => { navigator.serviceWorker.removeEventListener('message', receive); clear(); };
   }, []);
-  useEffect(() => { if (enabled) void prepareWorker(); }, [enabled]);
+  useEffect(() => {
+    pushEnabled.current = false;
+    if (enabled && signedIn) pushSetup.current = pushSetup.current.then(enablePush).catch(() => setStatus('Background push is unavailable. Notifications require this page to stay connected.'));
+  }, [enabled, signedIn]);
 
   async function toggle() {
+    if (toggling.current) return;
     if (enabled) {
+      toggling.current = true;
       current.current.enabled = false;
       setEnabled(false); clear();
+      try {
+        await pushSetup.current;
+        const response = await fetch('/api/push', { method: 'DELETE' });
+        if (!response.ok && response.status !== 503) throw new Error();
+        pushEnabled.current = false;
+      } catch {
+        setEnabled(true);
+        setStatus('Could not disable background notifications. Reconnect and try again.'); return;
+      } finally { toggling.current = false; }
       try { localStorage.removeItem(preference); } catch { /* Session-only preference. */ }
       setStatus('');
       return;
@@ -75,6 +108,7 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   }
 
   async function notify(id: string, takeover = false) {
+    if (!takeover && pushEnabled.current) return;
     const version = generation.current;
     const active = await prepareWorker();
     const view = current.current;
