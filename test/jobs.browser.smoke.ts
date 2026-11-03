@@ -68,14 +68,14 @@ test('background thread: two viewers, Stop, confirmed shutdown and same-thread c
     await b.getByRole('button', { name: 'Stop', exact: true }).waitFor();
     for (const page of [a, b]) {
       await page.getByLabel('Message', { exact: true }).fill('Follow up');
-      assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).count(), 0);
     }
     assert.deepEqual(profiles, [true]);
     await a.getByRole('button', { name: 'Stop', exact: true }).click();
     await b.getByRole('button', { name: 'Stopping…', exact: true }).waitFor();
     const finishing = runner.tick(); await stopping;
     assert.equal((await store.runs())[0].status, 'stopping');
-    assert.equal(await b.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
+    assert.equal(await b.getByRole('button', { name: 'Send', exact: true }).count(), 0);
     finishStop(); await finishing;
     for (const page of [a, b]) {
       await page.getByText('Ready', { exact: true }).waitFor();
