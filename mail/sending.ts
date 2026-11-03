@@ -53,7 +53,7 @@ export function mimeMessage(draft: Draft, status: SendStatus): string {
 export async function sendDraft(store: MailStore, oauth: Pick<MailOAuth, 'accessToken'>, id: string, version: number, request: typeof fetch = fetch) {
   path(store, id);
   if (!Number.isSafeInteger(version) || version < 1) throw new MailError('INVALID_DRAFT_VERSION');
-  return store.withDraftLock(id, async () => {
+  return store.withAccountSyncLock(showDraft(store, id).account, () => store.withDraftLock(id, async () => {
     const draft = showDraft(store, id);
     if (draft.version !== version) throw new MailError('DRAFT_VERSION_CONFLICT');
     if (existsSync(path(store, id))) throw new MailError('SEND_ALREADY_ATTEMPTED_CHECK_STATUS');
@@ -80,5 +80,5 @@ export async function sendDraft(store: MailStore, oauth: Pick<MailOAuth, 'access
     try { persist(store, status); }
     catch { throw new MailError('SEND_STATUS_WRITE_FAILED_CHECK_STATUS_DO_NOT_RETRY'); }
     return status;
-  });
+  }));
 }

@@ -45,6 +45,12 @@ export class MailOAuth {
     alias(name);
     return this.store.locked('oauth', async () => {
       const client = this.client();
+      if (this.store.registry?.enabled) {
+        // Preserve the existing shared-Google connection convention when free.
+        // Reusing a display alias must never reuse another account's connection.
+        const used = this.store.registry.accounts().some(a => a.provider === this.store.provider && a.connectionRef === name);
+        name = (await this.store.registry.reserve(this.store.provider, name, used ? undefined : name)).id;
+      }
       // Pending authorizations expire after 15 minutes and are never replayable.
       for (const file of readdirSync(this.store.path('pending'))) {
         if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
@@ -53,8 +59,8 @@ export class MailOAuth {
       const state = randomBytes(32).toString('base64url'), verifier = randomBytes(32).toString('base64url');
       this.store.write(this.store.path('pending', hash(state) + '.json'), { alias: name, verifier, expiresAt: this.now() + 15 * 60000, clientId: client.clientId } satisfies Pending);
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...new Set([MAIL_SCOPE, 'openid', 'email', ...(this.store.google?.account(name)?.scopes ?? [])])].join(' '), include_granted_scopes: 'true', access_type: 'offline', prompt: 'consent select_account', state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
-      return { account: name, status: 'authorization_pending', authorizationUrl: url.href, expiresInSeconds: 900 };
+      url.search = new URLSearchParams({ client_id: client.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: [...new Set([MAIL_SCOPE, 'openid', 'email', ...(this.store.google?.account(this.store.credentialKey(name))?.scopes ?? [])])].join(' '), include_granted_scopes: 'true', access_type: 'offline', prompt: 'consent select_account', state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
+      return { account: this.store.accountLabel(name), accountId: this.store.accountId(name), status: 'authorization_pending', authorizationUrl: url.href, expiresInSeconds: 900 };
     });
   }
   private async json(url: string, options: RequestInit): Promise<any> {
@@ -96,8 +102,8 @@ export class MailOAuth {
         if (!validEmail(identity.email) || identity.email_verified !== true) throw new MailError('VERIFIED_EMAIL_REQUIRED');
         const existing = existsSync(this.store.path('accounts', pending.alias + '.json')) ? this.store.account(pending.alias) : undefined;
         if (existing && existing.email.toLowerCase() !== identity.email.toLowerCase()) throw new MailError('WRONG_ACCOUNT_FOR_ALIAS');
-        if (this.store.accounts().some(a => a.alias !== pending.alias && a.email.toLowerCase() === identity.email.toLowerCase()) || this.store.google?.accounts().some(a => a.alias !== pending.alias && (a.email.toLowerCase() === identity.email.toLowerCase() || (a.subject && a.subject === identity.sub)))) throw new MailError('ACCOUNT_ALREADY_CONNECTED');
-        const shared = this.store.google?.account(pending.alias);
+        if (this.store.accounts().some(a => a.alias !== pending.alias && a.email.toLowerCase() === identity.email.toLowerCase()) || this.store.google?.accounts().some(a => a.alias !== this.store.credentialKey(pending.alias) && (a.email.toLowerCase() === identity.email.toLowerCase() || (a.subject && a.subject === identity.sub)))) throw new MailError('ACCOUNT_ALREADY_CONNECTED');
+        const shared = this.store.google?.account(this.store.credentialKey(pending.alias));
         if (shared && (shared.email.toLowerCase() !== identity.email.toLowerCase() || (shared.subject && shared.subject !== identity.sub))) throw new MailError('WRONG_ACCOUNT_FOR_ALIAS');
         if (this.store.google && !secret(identity.sub)) throw new MailError('VERIFIED_EMAIL_REQUIRED');
         const previous = shared ?? existing;

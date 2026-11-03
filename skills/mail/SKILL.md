@@ -30,6 +30,14 @@ Permanent deletion, attachments, Bcc, scheduled sending, remote draft editing, l
 
 Gmail IMAP requires the broad `https://mail.google.com/` OAuth scope. Download-only behavior is enforced by the generated sync configuration, **not** by that scope. Google OAuth Testing mode usually gives seven-day refresh tokens for these scopes; discuss production/personal-app policy before relying on unattended sync.
 
+## Provider-independent account management
+
+Use `mailctl account list`, `mailctl account status ALIAS_OR_ID`, and `mailctl account rename ALIAS_OR_ID NEW_ALIAS` for any registered provider. Prefer the stable account ID when identity must survive renames or alias reuse. Rename is local metadata only: no credential changes, directory moves, job pause, reauthorization or provider request. The backing provider is not a rename argument. Provider-specific read/write commands remain available.
+
+If the registry needs migration, read `/app/docs/mail.md` first. `mailctl account migrate` is a read-only preflight; ask for approval before `--confirm`. Every process accessing the state must run the new release; pause Gmail jobs, drain active work, and finish or wait out pending consent. Duplicate aliases require an explicit reviewed `--aliases FILE` mapping, not a guess. Migration preserves provider files and approval records and is restartable. Never remove/edit the registry, credentials or approval files to bypass errors.
+
+Draft/plan previews include the current account identity separately from immutable stored content. Show the stable ID/current alias and sender when obtaining approval. A rename alone does not change the approved sender or operation; changing content still requires fresh review. Legacy approvals are bound to immutable provider references during migration, not to a reusable display alias. Unresolved identities block migration. Attempt history and all uncertain-outcome/no-retry rules remain unchanged.
+
 ## Gmail search and read
 
 - `mailctl account status` — sanitized account and sync state; no credentials.

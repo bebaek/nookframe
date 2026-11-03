@@ -1,4 +1,11 @@
-// Notification activation only: no fetch interception, caching, or push subscription.
+// Notifications only: no fetch interception or caching.
+self.addEventListener('push', event => {
+  // Generic content only; no conversation text or identifiers cross the push service.
+  event.waitUntil(self.registration.showNotification('Nookframe needs your attention', {
+    body: 'An agent run has ended. Open Nookframe to review the result.',
+    tag: 'nookframe:push', data: { push: true },
+  }));
+});
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 self.addEventListener('message', event => {
@@ -21,6 +28,15 @@ self.addEventListener('message', event => {
 });
 self.addEventListener('notificationclick', event => {
   event.notification.close();
+  if (event.notification.data?.push === true) {
+    event.waitUntil((async () => {
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const client = clients.find(client => new URL(client.url).origin === self.location.origin);
+      if (client) await client.focus();
+      else await self.clients.openWindow('/');
+    })());
+    return;
+  }
   const { clientId, threadId } = event.notification.data || {};
   if (typeof clientId !== 'string' || typeof threadId !== 'string' || !threadId || threadId.length >= 2048) return;
   event.waitUntil((async () => {

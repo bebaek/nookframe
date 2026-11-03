@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MailError, MailStore, alias, validEmail } from './store.js';
+import { MailAccountRegistry } from './account-registry.js';
 
 // Zoho .com only. Never trust callback accounts-server/api_domain as an endpoint.
 export const ZOHO_CALLBACK = '/mail/zoho/oauth/callback';
@@ -61,12 +62,12 @@ export function validateZohoAction(input: unknown): ZohoAction {
 export class ZohoMail {
   readonly store: MailStore;
   readonly redirectUri: string;
-  constructor(root: string, origin: string, private request: typeof fetch = fetch, private now: () => number = Date.now) {
+  constructor(root: string, origin: string, private request: typeof fetch = fetch, private now: () => number = Date.now, registry?: MailAccountRegistry) {
     const url = new URL(origin);
     if (url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)))) fail('HTTPS_ORIGIN_REQUIRED');
     this.redirectUri = url.origin + ZOHO_CALLBACK;
     // No GoogleStore: Zoho credentials cannot enter shared Google connections.
-    this.store = new MailStore(root);
+    this.store = new MailStore(root, undefined, registry, 'zoho');
     for (const dir of ['plans', 'attempts']) mkdirSync(this.store.path(dir), { recursive: true, mode: 0o700 });
   }
   private load(path: string): any {
@@ -79,15 +80,16 @@ export class ZohoMail {
   }
   private account(name: string): Account {
     const a = this.load(this.store.path('accounts', alias(name) + '.json'));
-    if (a?.alias !== name || !validEmail(a.email) || !secret(a.clientId) || !secret(a.refreshToken) || !secret(a.accessToken) || !Number.isFinite(a.expiresAt)) fail('ZOHO_ACCOUNT_NOT_CONNECTED');
+    if (a?.alias !== this.store.connectionKey(name) || !validEmail(a.email) || !secret(a.clientId) || !secret(a.refreshToken) || !secret(a.accessToken) || !Number.isFinite(a.expiresAt)) fail('ZOHO_ACCOUNT_NOT_CONNECTED');
     id(a.accountId);
-    return a;
+    return { ...a, alias: this.store.accountId(name) };
   }
   private names(): string[] { return readdirSync(this.store.path('accounts')).filter(f => /^[a-z][a-z0-9-]{0,31}\.json$/.test(f)).map(f => f.slice(0, -5)); }
+  connections() { return this.names().map(storageRef => ({ storageRef, suggestedAlias: storageRef })); }
   status(name?: string) {
     let configured = false; try { this.client(); configured = true; } catch {}
     return { provider: 'zoho', region: 'com', configured, callbackUrl: this.redirectUri,
-      accounts: (name ? [alias(name)] : this.names()).map(n => { const a = this.account(n); return { alias: a.alias, email: a.email, accountId: a.accountId }; }) };
+      accounts: (name ? [alias(name)] : this.names()).map(n => { const a = this.account(n); return { alias: this.store.accountLabel(a.alias), ...(this.store.registry?.enabled ? { localAccountId: a.alias } : {}), email: a.email, accountId: a.accountId }; }) };
   }
   async configure(clientId: string, clientSecret: string) {
     if (!/^1000\.[A-Za-z0-9]+$/.test(clientId) || !secret(clientSecret)) fail('INVALID_OAUTH_CLIENT');
@@ -103,6 +105,7 @@ export class ZohoMail {
     alias(name); if (!validEmail(email)) fail('INVALID_EMAIL');
     return this.store.locked('oauth', async () => {
       const c = this.client();
+      if (this.store.registry?.enabled) name = (await this.store.registry.reserve(this.store.provider, name)).id;
       const existing = existsSync(this.store.path('accounts', name + '.json')) ? this.account(name) : undefined;
       if (existing && existing.email.toLowerCase() !== email.toLowerCase()) fail('WRONG_ACCOUNT_FOR_ALIAS');
       for (const file of readdirSync(this.store.path('pending'))) {
@@ -114,7 +117,7 @@ export class ZohoMail {
       this.store.write(this.store.path('pending', digest(state) + '.json'), { alias: name, email, clientId: c.clientId, expiresAt: this.now() + 900000 } satisfies Pending);
       const url = new URL(AUTH + '/auth');
       url.search = new URLSearchParams({ client_id: c.clientId, redirect_uri: this.redirectUri, response_type: 'code', scope: ZOHO_SCOPES.join(','), access_type: 'offline', prompt: 'consent', state }).toString();
-      return { account: name, email, authorizationUrl: url.href, expiresInSeconds: 900 };
+      return { account: this.store.accountLabel(name), localAccountId: this.store.accountId(name), email, authorizationUrl: url.href, expiresInSeconds: 900 };
     });
   }
   private async response(url: string, options: RequestInit): Promise<{ status: number; data: any }> {
@@ -159,10 +162,10 @@ export class ZohoMail {
         const accountId = id(String(matches[0].accountId));
         const previous = existsSync(this.store.path('accounts', p.alias + '.json')) ? this.account(p.alias) : undefined;
         if (previous && (previous.accountId !== accountId || previous.email.toLowerCase() !== p.email.toLowerCase())) fail('WRONG_ACCOUNT_FOR_ALIAS');
-        if (this.names().some(n => n !== p.alias && this.account(n).accountId === accountId)) fail('ACCOUNT_ALREADY_CONNECTED');
+        if (this.names().some(n => this.store.accountId(n) !== this.store.accountId(p.alias) && this.account(n).accountId === accountId)) fail('ACCOUNT_ALREADY_CONNECTED');
         const refreshToken = d.refresh_token ?? (previous?.clientId === c.clientId ? previous.refreshToken : undefined);
         if (!secret(refreshToken)) fail('REFRESH_TOKEN_REQUIRED_REAUTHORIZE');
-        this.store.write(this.store.path('accounts', p.alias + '.json'), { alias: p.alias, email: p.email, accountId, clientId: c.clientId, refreshToken, accessToken: d.access_token, expiresAt: this.now() + d.expires_in * 1000 } satisfies Account);
+        this.store.write(this.store.path('accounts', p.alias + '.json'), { alias: this.store.connectionKey(p.alias), email: p.email, accountId, clientId: c.clientId, refreshToken, accessToken: d.access_token, expiresAt: this.now() + d.expires_in * 1000 } satisfies Account);
       }, true);
     });
   }
@@ -174,7 +177,7 @@ export class ZohoMail {
       const d = await this.exchange(c, { grant_type: 'refresh_token', refresh_token: a.refreshToken });
       if (d.refresh_token !== undefined && !secret(d.refresh_token)) fail('ZOHO_REAUTHORIZE');
       a.accessToken = d.access_token; a.expiresAt = this.now() + d.expires_in * 1000; a.refreshToken = d.refresh_token ?? a.refreshToken;
-      this.store.write(this.store.path('accounts', name + '.json'), a);
+      this.store.write(this.store.path('accounts', name + '.json'), { ...a, alias: this.store.connectionKey(name) });
       return a.accessToken;
     }, true);
   }
@@ -186,7 +189,7 @@ export class ZohoMail {
   async folders(name: string) {
     const a = this.account(name); const data = await this.api(await this.token(name), `/${a.accountId}/folders`);
     if (!Array.isArray(data) || data.length > 1000) fail('INVALID_ZOHO_DATA');
-    return { untrusted: true, account: name, folders: data.map(f => ({ folderId: id(String(f.folderId)), name: String(f.folderName ?? '').slice(0, 500), type: String(f.folderType ?? '').slice(0, 100) })) };
+    return { untrusted: true, account: this.store.accountLabel(name), localAccountId: this.store.accountId(name), folders: data.map(f => ({ folderId: id(String(f.folderId)), name: String(f.folderName ?? '').slice(0, 500), type: String(f.folderType ?? '').slice(0, 100) })) };
   }
   async search(name: string, query: string, start = 1, limit = 20) {
     if (!query || query.length > 2000 || !Number.isSafeInteger(start) || start < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail('INVALID_SEARCH');
@@ -194,7 +197,7 @@ export class ZohoMail {
     const params = new URLSearchParams({ searchKey: query, start: String(start), limit: String(limit), includeto: 'true', receivedTime: String(this.now()) });
     const data = await this.api(await this.token(name), `/${a.accountId}/messages/search?${params}`);
     if (!Array.isArray(data) || data.length > limit) fail('INVALID_ZOHO_DATA');
-    return { untrusted: true, source: 'live_zoho', account: name, start, limit, possiblyMore: data.length === limit,
+    return { untrusted: true, source: 'live_zoho', account: this.store.accountLabel(name), localAccountId: this.store.accountId(name), start, limit, possiblyMore: data.length === limit,
       nextStart: data.length === limit ? start + limit : null,
       messages: data.map(m => ({ messageId: id(String(m.messageId)), folderId: id(String(m.folderId)),
         ...Object.fromEntries(['fromAddress', 'toAddress', 'ccAddress', 'subject', 'summary', 'status', 'receivedTime', 'receivedtime'].filter(k => m[k] !== undefined).map(k => [k, String(m[k]).slice(0, 4000)])) })) };
@@ -204,10 +207,11 @@ export class ZohoMail {
     const data = await this.api(await this.token(name), `/${a.accountId}/folders/${id(folderId)}/messages/${id(messageId)}/content?includeBlockContent=true`);
     if (typeof data?.content !== 'string') fail('INVALID_ZOHO_DATA');
     // Inert serialized text, never rendered as HTML or fetched for remote images.
-    return { untrusted: true, account: name, folderId, messageId, format: 'inert_html', content: data.content.slice(0, 50000), truncated: data.content.length > 50000 };
+    return { untrusted: true, account: this.store.accountLabel(name), localAccountId: this.store.accountId(name), folderId, messageId, format: 'inert_html', content: data.content.slice(0, 50000), truncated: data.content.length > 50000 };
   }
   plan(name: string, input: unknown) {
     const a = this.account(name);
+    name = a.alias;
     const plan: Plan = { id: randomBytes(16).toString('hex'), account: name, accountId: a.accountId, from: a.email, createdAt: new Date(this.now()).toISOString(), operation: validateZohoAction(input) };
     this.store.write(this.store.path('plans', plan.id + '.json'), plan);
     return this.show(plan.id);
@@ -217,7 +221,8 @@ export class ZohoMail {
     const p: Plan = this.load(this.store.path('plans', planId + '.json'));
     if (p.id !== planId || !validEmail(p.from) || !Number.isFinite(Date.parse(p.createdAt))) fail('INVALID_ZOHO_PLAN');
     alias(p.account); id(p.accountId); p.operation = validateZohoAction(p.operation);
-    return { untrusted: true, plan: p, version: digest(JSON.stringify(p)) };
+    return { untrusted: true, plan: p, version: digest(JSON.stringify(p)),
+      ...(this.store.registry?.enabled ? { accountIdentity: this.store.registry.findBinding(this.store.provider, p.account) ?? null } : {}) };
   }
   attempt(planId: string): Attempt | { id: string; state: 'not_attempted' } {
     this.show(planId);
@@ -239,7 +244,7 @@ export class ZohoMail {
   }
   async execute(planId: string, version: string) {
     this.show(planId);
-    return this.store.withDraftLock(planId, async () => {
+    return this.store.withAccountSyncLock(this.show(planId).plan.account, () => this.store.withDraftLock(planId, async () => {
       const shown = this.show(planId), p = shown.plan;
       if (version !== shown.version) fail('PLAN_VERSION_CONFLICT');
       if (existsSync(this.store.path('attempts', planId + '.json'))) fail('ZOHO_ALREADY_ATTEMPTED_CHECK_STATUS');
@@ -267,10 +272,10 @@ export class ZohoMail {
       } catch { /* An unknown write outcome is never automatically retried. */ }
       this.persist(attempt);
       return attempt;
-    });
+    }));
   }
 }
 export function zohoRuntime() {
   const mailRoot = resolve(process.env.MAIL_DIR ?? join(resolve(process.env.STATE_DIR ?? '.local/state'), '..', 'mail'));
-  return new ZohoMail(join(mailRoot, 'zoho'), process.env.PUBLIC_ORIGIN ?? `http://localhost:${process.env.PORT ?? 3000}`);
+  return new ZohoMail(join(mailRoot, 'zoho'), process.env.PUBLIC_ORIGIN ?? `http://localhost:${process.env.PORT ?? 3000}`, fetch, Date.now, new MailAccountRegistry(mailRoot));
 }

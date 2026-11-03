@@ -46,6 +46,8 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     // Exercise the basic fallback when service-worker registration is unavailable.
     await page.route('**/notification-worker.js', route => route.abort());
     await page.route('**/auth/session', route => route.fulfill({ json: { authenticated: true } }));
+    // This fixture exercises local fallback, not a push-capable HTTPS server.
+    await page.route('**/api/push', route => route.fulfill({ status: 503 }));
     const threads = [{ id: 'a', title: 'Private A', updatedAt: '2026-01-01', busy: false }, { id: 'b', title: 'Private B', updatedAt: '2026-01-01', busy: false }];
     const state: Snapshot = { threadId: 'a', threads, busy: false, available: true, messages: [], tools: {}, liveText: '', model: 'fixture', models: [], modelSource: 'pi', modelChanging: false, threadChanging: false, notice: '' };
     let socket: WebSocketRoute;

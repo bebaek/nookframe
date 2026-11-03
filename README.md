@@ -218,20 +218,33 @@ Send alongside it; Stop appears while working. Tool output starts collapsed,
 including running tools, and reading earlier messages prevents auto-scroll.
 The layout uses the browser's native Popover API (current Chrome/Safari/Firefox).
 
-Use **⋯ → Enable notifications** to opt in to browser notifications when an
-observed agent run ends outside the focused chat (including failed or stopped
-runs). Clicking the notification opens its conversation without discarding drafts.
-When supported, notifications use a service worker to focus the exact originating
-browser tab via `WindowClient.focus()` and select the conversation without reloading.
-If that tab has closed, clicking opens the conversation in a new window/tab.
-Firefox/Wayland and OS activation policies may still prevent raising the window;
-unsupported workers fall back to basic notifications with a notice in controls.
-The worker does not intercept requests, cache pages, or subscribe to push.
-Notification text contains no conversation titles or content. Permission is only
-requested when you click Enable; **Disable notifications** turns them off again.
-This requires a supported browser on HTTPS or localhost, with the page open and
-connected; it is not push delivery after closing the page. Reloads/reconnections
-do not replay missed completions. Each enabled tab observes runs independently.
+Use **⋯ → Enable notifications** to opt in. On HTTPS with persistent server state,
+Nookframe subscribes this browser to encrypted Web Push. Server-observed run
+completions (including failures and stops) notify even when the page is suspended
+or closed. Push notifications currently include foreground completions too; they
+contain only generic text, never conversation titles, identifiers, or content.
+Clicking focuses an existing Nookframe window or opens the home page. Enable each
+device separately; the controls report whether background push was enabled.
+
+Delivery depends on internet access, browser/OS background access, and the browser
+vendor's push service (Firefox/Mozilla, Chromium/FCM, or Apple). Push is best effort:
+transient failures are not retried, notifications expire after one hour, and
+simultaneous completions can coalesce. Server downtime is not replayed. No external
+account or manual VAPID-key setup is needed. The server generates private VAPID keys
+and stores subscriptions in `STATE_DIR/push.json` (mode 0600); treat that file as
+credentials, preserve it across restarts, and never commit it. Each server's state
+directory must have a single writer. Outbound HTTPS to the supported vendor push
+hosts is required. Login expiry/token rotation invalidates subscriptions; sign-out
+removes the current login's subscription. Sign in again to renew it.
+
+If background push cannot be enabled, local notifications still work while the
+page stays connected. These notify only outside the focused conversation and
+open the originating conversation. Reconnection does not replay missed local
+notifications. Unsupported workers fall back to basic desktop notifications.
+**Disable notifications** removes this login's push subscription and turns off local
+notifications in this tab; other open tabs may retain their own local preference.
+The worker does not intercept requests or cache pages. Permission is requested
+only after clicking Enable. OS focus policies may prevent raising a window.
 There is no separate approval-needed or stalled-run detection yet.
 
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.

@@ -1,5 +1,6 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { MailStore } from '../mail/store.js';
+import { MailAccountRegistry } from '../mail/account-registry.js';
 import { MAIL_SCOPE } from '../mail/oauth.js';
 import { GoogleStore } from './store.js';
 
@@ -7,12 +8,14 @@ import { GoogleStore } from './store.js';
 // old workers; shared locks exclude new workers. Never reacquire the same sync
 // lock: the capability directory (and hence sync locks) does not move.
 export async function migrateMail(mailRoot: string, google: GoogleStore) {
-  const legacy = new MailStore(mailRoot);
-  const target = new MailStore(mailRoot, google);
+  const registry = new MailAccountRegistry(mailRoot);
+  const legacy = new MailStore(mailRoot, undefined, registry);
+  const target = new MailStore(mailRoot, google, registry);
   return legacy.locked('oauth', async () => {
     const names = target.accounts().map(a => a.alias).sort();
     const importLocked = () => target.locked('oauth', async () => {
-      const sharedNames = [...new Set([...names, ...google.accounts().map(a => a.alias)])].sort();
+      const mapped = new Set(names.map(name => target.credentialKey(name)));
+      const sharedNames = [...new Set([...names, ...google.accounts().filter(a => !mapped.has(a.alias)).map(a => a.alias)])].sort();
       const perform = async () => {
         const accounts = target.accounts();
         if (accounts.some(a => a.polling)) throw new Error('PAUSE_MAIL_JOBS_FIRST');
@@ -23,7 +26,7 @@ export async function migrateMail(mailRoot: string, google: GoogleStore) {
         for (const account of accounts) {
           if (account.oauth.clientId !== client.clientId) throw new Error('RECONNECT_ACCOUNT');
           if (account.scopes && !account.scopes.includes(MAIL_SCOPE)) throw new Error('MAIL_CONSENT_REQUIRED');
-          if (google.accounts().some(a => a.alias !== account.alias && a.email.toLowerCase() === account.email.toLowerCase())) throw new Error('ACCOUNT_ALREADY_CONNECTED');
+          if (google.accounts().some(a => a.alias !== target.credentialKey(account.alias) && a.email.toLowerCase() === account.email.toLowerCase())) throw new Error('ACCOUNT_ALREADY_CONNECTED');
         }
         if (!configured) google.configure(client);
         for (const account of accounts) target.saveAccount(account);

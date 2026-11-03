@@ -52,7 +52,7 @@ export function prepareConfig(store: MailStore, account: Account) {
   for (const path of [store.path('maildir', name), store.path('index', name), store.path('state', name), ...['cur', 'new', 'tmp'].map(p => store.path('maildir', name, 'INBOX', p))]) mkdirSync(path, { recursive: true, mode: 0o700 });
   const mbsync = store.path('state', name, 'mbsyncrc');
   const notmuch = store.path('state', name, 'notmuch-config');
-  store.writeText(mbsync, renderMbsync(store.root, account));
+  store.writeText(mbsync, renderMbsync(store.root, { ...account, alias: store.connectionKey(account.alias) }, `/usr/local/libexec/pi-mail-token ${account.alias}`));
   store.writeText(notmuch, `[database]\npath=${store.path('index', name)}\nmail_root=${store.path('maildir', name)}\n[user]\nname=Pi Mail\nprimary_email=${account.email}\n[new]\ntags=unread;\n[maildir]\nsynchronize_flags=true\n`);
   return { mbsync, notmuch };
 }

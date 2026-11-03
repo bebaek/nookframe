@@ -98,13 +98,13 @@ export async function syncMail(store: MailStore, name?: string, scheduled = fals
       state.failures = state.status === 'ok' || state.downloadCompletedAt ? 0 : Math.min(1000, (previous?.failures ?? 0) + 1);
       state.completedAt = new Date().toISOString();
       store.write(store.path('state', account.alias + '.json'), state);
-      results.push({ account: account.alias, ...state });
+      results.push({ account: store.accountLabel(account.alias), ...state });
       });
     } catch (error) {
       if (!(error instanceof MailError) || error.code !== 'MAIL_BUSY') throw error;
       if (name && !scheduled) throw error;
       // Busy accounts do not block other accounts or overwrite active status.
-      results.push({ account: selected.alias, status: 'busy' as const, error: 'MAIL_BUSY' });
+      results.push({ account: store.accountLabel(selected.alias), status: 'busy' as const, error: 'MAIL_BUSY' });
     }
   }
   return { results };
@@ -129,15 +129,15 @@ async function indexUnlocked(store: MailStore, account: Account, run: typeof pri
 export async function indexMail(store: MailStore, name: string, run: typeof privateCommand = privateCommand, scheduled = false) {
   return store.withAccountSyncLock(name, async () => {
     const account = store.account(name), sync = store.status(name);
-    if (scheduled && (!account.polling || nextMailWork(sync, store.indexStatus(name)) !== 'index')) return { account: name, skipped: true };
+    if (scheduled && (!account.polling || nextMailWork(sync, store.indexStatus(name)) !== 'index')) return { account: store.accountLabel(name), skipped: true };
     const state = await indexUnlocked(store, account, run, sync?.downloadCompletedAt);
-    return { account: name, index: state, partial: !state.completeThrough };
+    return { account: store.accountLabel(name), index: state, partial: !state.completeThrough };
   });
 }
 export function freshness(store: MailStore, name: string) {
   const sync = store.status(name), index = store.indexStatus(name);
   const downloadComplete = sync?.status === 'ok' || (sync?.phase === 'index' && !!sync.downloadCompletedAt);
-  return { account: name, indexedAt: index?.lastSuccess ?? sync?.lastSuccess ?? null,
+  return { account: store.accountLabel(name), indexedAt: index?.lastSuccess ?? sync?.lastSuccess ?? null,
     partial: index ? !index.completeThrough || !downloadComplete || index.status !== 'ok' : sync?.status !== 'ok',
     lastDownload: sync?.downloadCompletedAt ?? sync?.lastSuccess ?? null };
 }
@@ -162,9 +162,9 @@ export async function searchMail(store: MailStore, options: { account?: string; 
       if (!Array.isArray(found)) throw new Error();
       for (const item of found.slice(0, limit)) {
         if (typeof item.thread !== 'string' || !/^[a-f0-9]{16,64}$/.test(item.thread)) continue;
-        results.push({ account: account.alias, ref: `${account.alias}:${item.thread}`, subject: short(item.subject, 500), authors: short(item.authors, 500), timestamp: Number(item.timestamp) || 0, unread: Array.isArray(item.tags) && item.tags.includes('unread'), messages: Number(item.total) || 0 });
+        results.push({ account: store.accountLabel(account.alias), ref: `${account.alias}:${item.thread}`, subject: short(item.subject, 500), authors: short(item.authors, 500), timestamp: Number(item.timestamp) || 0, unread: Array.isArray(item.tags) && item.tags.includes('unread'), messages: Number(item.total) || 0 });
       }
-    } catch (error) { errors.push({ account: account.alias, error: error instanceof MailError ? error.code : 'SEARCH_FAILED' }); }
+    } catch (error) { errors.push({ account: store.accountLabel(account.alias), error: error instanceof MailError ? error.code : 'SEARCH_FAILED' }); }
   }
   return { untrustedEmail: true, scope: 'Downloaded IMAP folder archive; remote removals are not mirrored', freshness: accounts.map(a => freshness(store, a.alias)), results: results.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit), errors };
 }
@@ -206,6 +206,6 @@ export async function readMail(store: MailStore, ref: string) {
   if (!match) throw new MailError('INVALID_MAIL_REFERENCE');
   const account = store.account(match[1]);
   const raw = await privateCommand('/usr/bin/notmuch', [...indexArgs(store, account), 'show', '--format=json', '--body=true', '--include-html', '--decrypt=false', '--entire-thread=true', '--', `thread:${match[2]}`]);
-  try { return { untrustedEmail: true, account: account.alias, freshness: freshness(store, account.alias), ref, ...projectThread(JSON.parse(raw)) }; }
+  try { return { untrustedEmail: true, account: store.accountLabel(account.alias), freshness: freshness(store, account.alias), ref, ...projectThread(JSON.parse(raw)) }; }
   catch { throw new MailError('MESSAGE_UNAVAILABLE_OR_TOO_LARGE'); }
 }
