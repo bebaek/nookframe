@@ -15,7 +15,7 @@ test('push subscription destinations and keys are strictly validated', () => {
   assert.throws(() => validateSubscription({ ...subscription, keys: {} }));
 });
 
-test('focused completions are suppressed only for that login; background and mixed completions still push', async () => {
+test('focused completions are suppressed across devices; different threads still push', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'nookframe-push-focus-'));
   const calls: string[] = [];
   const destinations: string[] = [];
@@ -23,13 +23,13 @@ test('focused completions are suppressed only for that login; background and mix
   try {
     const push = new PushNotifications(dir, 'https://example.test', () => true,
       async (s, payload) => { calls.push(s.endpoint); destinations.push(JSON.parse(String(payload)).threadId); return {} as any; },
-      (session, thread) => focused && session === 'phone' && thread === 'a');
+      thread => focused && thread === 'a');
     push.subscribe('phone', subscription);
     push.subscribe('desktop', { ...subscription, endpoint: subscription.endpoint + '-desktop' });
     const threads = (a: boolean, b = false) => [{ id: 'a', busy: a }, { id: 'b', busy: b }] as ThreadChoice[];
     push.update(threads(true)); push.update(threads(false));
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(calls, [subscription.endpoint + '-desktop']);
+    assert.deepEqual(calls, [], 'same thread focused on any device silences all subscriptions');
     calls.length = 0;
     focused = false;
     push.update(threads(true)); push.update(threads(false));
@@ -39,8 +39,8 @@ test('focused completions are suppressed only for that login; background and mix
     focused = true;
     push.update(threads(true, true)); push.update(threads(false));
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(calls.length, 3, 'phone gets b; desktop gets separate a and b notifications');
-    assert.deepEqual(destinations.slice(-3), ['b', 'a', 'b']);
+    assert.equal(calls.length, 2, 'only b notifies both devices when a is focused');
+    assert.deepEqual(destinations.slice(-2), ['b', 'b']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

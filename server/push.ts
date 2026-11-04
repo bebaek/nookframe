@@ -22,7 +22,7 @@ export class PushNotifications {
   private pending = new Set<string>();
   constructor(directory: string, private subject: string, private valid: (session: string) => boolean,
     private send: typeof webpush.sendNotification = webpush.sendNotification,
-    private focused: (session: string, threadId: string) => boolean = () => false) {
+    private focused: (threadId: string) => boolean = () => false) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     this.file = join(directory, 'push.json');
     this.saved = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : { keys: webpush.generateVAPIDKeys(), subscriptions: {} };
@@ -44,6 +44,10 @@ export class PushNotifications {
     if (finished.length) void this.notify(undefined, finished);
   }
   async notify(only?: string, finished?: string[]) {
+    // Freeze the completion-time decision across devices; focus changing during
+    // delivery must not cause only some devices to receive a suppressed event.
+    const destinations = finished?.filter(threadId => !this.focused(threadId));
+    if (destinations?.length === 0) return;
     for (const [id, subscription] of Object.entries(this.saved.subscriptions)) {
       if (!this.valid(id)) { this.remove(id); continue; }
       if ((only && only !== id) || this.pending.has(id)) continue;
@@ -51,9 +55,8 @@ export class PushNotifications {
       try {
         // Each completion needs its own encrypted destination. Never include
         // conversation text/title or put the identifier in provider headers.
-        for (const threadId of finished ?? [undefined]) {
+        for (const threadId of destinations ?? [undefined]) {
           if (!this.valid(id) || this.saved.subscriptions[id] !== subscription) break;
-          if (threadId && this.focused(id, threadId)) continue;
           await this.send(subscription, JSON.stringify({ type: 'attention', ...(threadId ? { threadId } : {}) }), {
             vapidDetails: { subject: this.subject, ...this.saved.keys }, TTL: 3600, timeout: 10000,
           });

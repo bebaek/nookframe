@@ -45,9 +45,9 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   const cookieName = secure ? '__Host-pi-workspace-session' : 'pi-workspace-session';
   const cookie = (value: string, seconds: number) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${seconds}${secure ? '; Secure' : ''}`;
   const sessions = new BrowserSessions(config.token, config.stateDir);
-  const pushFocus = new PushFocus();
+  const pushFocus = new PushFocus(Date.now, session => sessions.valid(session));
   const push = secure && config.stateDir ? new PushNotifications(config.stateDir, origin, id => sessions.valid(id), undefined,
-    (session, threadId) => pushFocus.has(session, threadId)) : undefined;
+    threadId => pushFocus.has(threadId)) : undefined;
   const browserSockets = new Map<WebSocket, string>();
   const photos = config.stateDir ? new PhotoStore(join(config.stateDir, 'photos')) : undefined;
   const artifacts = config.stateDir ? new ArtifactStore(config.stateDir) : undefined;
