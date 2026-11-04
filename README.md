@@ -235,14 +235,18 @@ payload carries the opaque conversation identifier for navigation. Each completi
 in a batch gets its own destination and notification tag.
 Clicking searches Nookframe tabs across windows for the exact conversation and
 asks each live tab for its current conversation, then tries to focus a match on
-desktop and mobile. Cached browser tab URLs are not trusted after in-app navigation.
+desktop and other mobile browsers. Firefox Android instead opens the exact
+conversation URL directly: it can report successful focus while displaying its
+last active tab. This narrow user-agent workaround may create a new tab, but does
+not navigate unrelated tabs away from drafts. Desktop-site/user-agent overrides
+may prevent Firefox Android detection. Cached browser tab URLs are not trusted
+after in-app navigation.
 Discovery times out after 800 ms for unresponsive tabs. A resolved focus result is
 accepted without requiring its potentially stale `focused` field to be true.
 If discovery fails, no matching tab exists, or focus fails, it opens the conversation URL in a new
 tab. Unrelated tabs are never navigated away from unsent drafts. Browser/OS policies
-still control activation; Firefox Android may report focus success while merely
-foregrounding the app, which the worker cannot reliably detect. Older notifications without a destination open
-the home page. Enable each device separately; controls report push setup status.
+still control activation. Older notifications without a destination open the home
+page. Enable each device separately; controls report push setup status.
 
 Delivery depends on internet access, browser/OS background access, and the browser
 vendor's push service (Firefox/Mozilla, Chromium/FCM, or Apple). Push is best effort:

@@ -52,6 +52,14 @@ self.addEventListener('notificationclick', event => {
   if (event.notification.data?.push === true) {
     const threadId = event.notification.data.threadId;
     const target = validThreadId(threadId) ? `/#thread=${encodeURIComponent(threadId)}` : '/';
+    // Firefox Android can resolve focus() successfully yet show its last active
+    // tab. No capability probe distinguishes that behavior, so narrowly bypass
+    // reuse for this browser/platform; desktop and other browsers keep discovery.
+    const userAgent = self.navigator?.userAgent ?? '';
+    if (/\bAndroid\b/i.test(userAgent) && /\bFirefox\//i.test(userAgent)) {
+      event.waitUntil(self.clients.openWindow(target));
+      return;
+    }
     event.waitUntil((async () => {
       if (validThreadId(threadId)) {
         try {
