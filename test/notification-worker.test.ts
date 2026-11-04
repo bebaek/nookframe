@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { MessageChannel, type MessagePort } from 'node:worker_threads';
 
-async function fixture() {
+async function fixture(userAgent = 'Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0') {
   const listeners = new Map<string, (event: any) => void>();
   const calls: any[] = [];
   const client = { id: 'exact-tab', type: 'window', url: 'https://example.test/#thread=other',
@@ -13,7 +13,7 @@ async function fixture() {
       else calls.push(JSON.parse(JSON.stringify(data)));
     } };
   const notifications: any[] = [];
-  const scope = { location: { origin: 'https://example.test' },
+  const scope = { location: { origin: 'https://example.test' }, navigator: { userAgent },
     addEventListener: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
     clients: { matchAll: async () => [client], get: async (id: string) => id === client.id ? client : undefined,
       openWindow: async (url: string) => calls.push(url), claim: async () => {} },
@@ -29,6 +29,33 @@ async function fixture() {
   }
   return { emit, client, calls, notifications, clients: scope.clients };
 }
+
+test('Firefox Android opens the exact push URL without attempting tab reuse', async () => {
+  for (const ua of [
+    'Mozilla/5.0 (Android 15; Mobile; rv:155.0) Gecko/155.0 Firefox/155.0',
+    'Mozilla/5.0 (Android 15; Tablet; rv:155.0) Gecko/155.0 Firefox/155.0',
+  ]) {
+    const f = await fixture(ua);
+    f.clients.matchAll = async () => { throw new Error('Firefox Android must not discover clients'); };
+    for (const threadId of ['other', 'a&b/#', undefined]) {
+      await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId } } });
+      assert.equal(f.calls.at(-1), threadId ? `/#thread=${encodeURIComponent(threadId)}` : '/');
+    }
+    assert.equal(f.calls.length, 3, 'no focus or navigation messages sent to existing tabs');
+  }
+});
+
+test('desktop Firefox and Android Chromium still reuse matching live tabs', async () => {
+  for (const ua of [
+    'Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0',
+    'Mozilla/5.0 (Android 15; Mobile) AppleWebKit/537.36 Chrome/142.0.0.0 Mobile Safari/537.36',
+    '',
+  ]) {
+    const f = await fixture(ua);
+    await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'other' } } });
+    assert.deepEqual(f.calls, ['focus', { type: 'open-attention', threadId: 'other' }]);
+  }
+});
 
 test('worker binds notifications to exact sender, focuses before navigating, and clears only its notifications', async () => {
   const f = await fixture();
