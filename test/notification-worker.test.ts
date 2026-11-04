@@ -2,12 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+import { MessageChannel, type MessagePort } from 'node:worker_threads';
 
 async function fixture() {
   const listeners = new Map<string, (event: any) => void>();
   const calls: any[] = [];
   const client = { id: 'exact-tab', type: 'window', url: 'https://example.test/#thread=other',
-    focus: async (): Promise<{ focused: boolean } | undefined> => { calls.push('focus'); return { focused: true }; }, postMessage: (data: unknown) => calls.push(data) };
+    focus: async (): Promise<{ focused: boolean } | undefined> => { calls.push('focus'); return { focused: true }; }, postMessage(data: any, ports?: MessagePort[]) {
+      if (data.type === 'query-attention-view') ports?.[0].postMessage({ type: 'attention-view', threadId: new URLSearchParams(new URL(this.url).hash.slice(1)).get('thread') });
+      else calls.push(JSON.parse(JSON.stringify(data)));
+    } };
   const notifications: any[] = [];
   const scope = { location: { origin: 'https://example.test' },
     addEventListener: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
@@ -17,7 +21,7 @@ async function fixture() {
       showNotification: async (title: string, options: any) => notifications.push({ title, ...options, close() { this.closed = true; } }),
       getNotifications: async () => notifications,
     } };
-  runInNewContext(await readFile('web/public/notification-worker.js', 'utf8'), { self: scope, URL, URLSearchParams });
+  runInNewContext(await readFile('web/public/notification-worker.js', 'utf8'), { self: scope, URL, URLSearchParams, MessageChannel, setTimeout, clearTimeout });
   async function emit(name: string, data: any) {
     const work: Promise<unknown>[] = [];
     listeners.get(name)!({ ...data, waitUntil: (promise: Promise<unknown>) => work.push(promise) });
@@ -75,7 +79,7 @@ test('push reuses an exact thread in another window, including uncontrolled clie
       focus: async () => { f.calls.push('other-window-focus'); return { focused: true }; } }];
   };
   await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId } } });
-  assert.deepEqual(f.calls, ['other-window-focus']);
+  assert.deepEqual(f.calls, ['other-window-focus', { type: 'open-attention', threadId }]);
 });
 
 test('push tries remaining matches after a closed tab and ignores foreign or non-app URLs', async () => {
@@ -88,7 +92,7 @@ test('push tries remaining matches after a closed tab and ignores foreign or non
     { ...f.client, url: 'https://example.test/#thread=a', focus: async () => { f.calls.push('match'); return { focused: true }; } },
   ];
   await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'a' } } });
-  assert.deepEqual(f.calls, ['match']);
+  assert.deepEqual(f.calls, ['match', { type: 'open-attention', threadId: 'a' }]);
 });
 
 test('push opens a new tab if discovery fails or focus is denied or unconfirmed', async () => {
@@ -104,6 +108,27 @@ test('push opens a new tab if discovery fails or focus is denied or unconfirmed'
     await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'a' } } });
     assert.deepEqual(f.calls, ['/#thread=a']);
   }
+});
+
+test('live thread wins over stale URL and resolved focus does not require focused snapshot', async () => {
+  const f = await fixture();
+  f.client.postMessage = (data, ports) => {
+    if (data.type === 'query-attention-view') ports?.[0].postMessage({ type: 'attention-view', threadId: 'actual' });
+    else f.calls.push(JSON.parse(JSON.stringify(data)));
+  };
+  f.client.focus = async () => { f.calls.push('focus'); return { focused: false }; };
+  await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'actual' } } });
+  assert.deepEqual(f.calls, ['focus', { type: 'open-attention', threadId: 'actual' }]);
+  f.calls.length = 0;
+  await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'other' } } });
+  assert.deepEqual(f.calls, ['/#thread=other'], 'cached URL cannot override live page');
+});
+
+test('unresponsive tabs time out and fall back rather than trusting cached URLs', async () => {
+  const f = await fixture();
+  f.client.postMessage = () => {};
+  await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'other' } } });
+  assert.deepEqual(f.calls, ['/#thread=other']);
 });
 
 test('malformed push payloads and invalid destinations fall back to home', async () => {

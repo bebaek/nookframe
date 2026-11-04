@@ -49,8 +49,8 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
       finally { clearTimeout(timer); }
     })();
   }
-  const current = useRef({ selected, chat, open, enabled });
-  current.current = { selected, chat, open, enabled };
+  const current = useRef({ selected, chat, open, enabled, signedIn });
+  current.current = { selected, chat, open, enabled, signedIn };
 
   function clear() {
     tracker.current.reset();
@@ -62,7 +62,12 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return () => clear();
     const receive = (event: MessageEvent) => {
-      if (!current.current.enabled || event.origin !== location.origin) return;
+      if (event.origin !== location.origin) return;
+      if (event.data?.type === 'query-attention-view') {
+        event.ports[0]?.postMessage({ type: 'attention-view', threadId: current.current.signedIn ? current.current.selected ?? null : null });
+        return;
+      }
+      if (!current.current.signedIn) return;
       if (event.data?.type === 'open-attention' && typeof event.data.threadId === 'string') {
         current.current.open(event.data.threadId);
       } else if (event.data?.type === 'attention-error') setStatus('Notifications could not be displayed by this browser.');
