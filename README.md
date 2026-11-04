@@ -233,10 +233,12 @@ push events (which can trigger browser fallback notifications). Push notificatio
 display only generic text, never conversation titles or content. The encrypted
 payload carries the opaque conversation identifier for navigation. Each completion
 in a batch gets its own destination and notification tag.
-Clicking opens the exact conversation URL directly, avoiding Firefox Android's
-unreliable activation of an arbitrary existing tab. This may open a new tab; it
-does not deliberately navigate unrelated tabs away from unsent drafts. Browser/OS
-policies still control activation. Older notifications without a destination open
+Clicking searches Nookframe tabs across windows for the exact conversation and
+tries to focus a match, on desktop and mobile. If discovery fails, no matching tab
+exists, or focus fails/cannot be confirmed, it opens the conversation URL in a new
+tab. Unrelated tabs are never navigated away from unsent drafts. Browser/OS policies
+still control activation; Firefox Android may report focus success while merely
+foregrounding the app, which the worker cannot reliably detect. Older notifications without a destination open
 the home page. Enable each device separately; controls report push setup status.
 
 Delivery depends on internet access, browser/OS background access, and the browser
