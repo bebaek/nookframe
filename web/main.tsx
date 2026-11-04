@@ -5,9 +5,11 @@ import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } fro
 import './style.css';
 import { ToolCard } from './ToolCard';
 import { useTranscriptScroll } from './useTranscriptScroll';
+import { useInputHistory } from './useInputHistory';
 import { useMobileReading } from './useMobileReading';
 import { AgentPresence } from './AgentPresence';
 import { useAttentionNotifications } from './useAttentionNotifications';
+import { usePushFocus } from './usePushFocus';
 import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
 import { UserMessageContent } from './UserMessageContent';
@@ -33,6 +35,9 @@ function App() {
   const catalog = useRef<ThreadChoice[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const draft = drafts[state?.threadId ?? ''] ?? '';
+  const inputHistory = useInputHistory(state?.threadId, draft, state?.messages ?? [], text => {
+    setDrafts(current => ({ ...current, [state?.threadId ?? '']: text }));
+  });
   const [photoDrafts, setPhotoDrafts] = useState<Record<string, DraftPhoto[]>>({});
   const photos = photoDrafts[state?.threadId ?? ''] ?? [];
   const [uploading, setUploading] = useState(false);
@@ -49,9 +54,10 @@ function App() {
   const socket = useRef<WebSocket | null>(null);
   const activeThread = useRef(initialThread());
   const [attentionTarget, setAttentionTarget] = useState<string>();
+  usePushFocus(socket.current, connected, state?.threadId, tab === 'chat');
   const attention = useAttentionNotifications(state?.threadId, tab === 'chat', id => {
     setTab('chat'); setAttentionTarget(id);
-  });
+  }, signedIn);
   const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[]; decision?: string } | null>(null);
   function rememberSelection(threadId: string, explicitRelease = false) {
     activeThread.current = threadId;
@@ -78,6 +84,7 @@ function App() {
     scroll.transcript, scroll.preservePosition);
 
   function lock() {
+    inputHistory.reset();
     setSignedIn(false); setConnected(false); setState(undefined); setDrafts({});
     setTerminalOpened(false); setTab('chat'); setToken('');
     sent.current = null; setPending(false);
@@ -228,6 +235,7 @@ function App() {
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
   function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
+    if (type === 'prompt') inputHistory.reset();
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
     reading.show();
     const id = crypto.randomUUID();
@@ -291,7 +299,7 @@ function App() {
       <div className="controls-heading"><h2>Workspace controls</h2><button type="button" className="secondary" aria-label="Close controls" popoverTarget="workspace-controls" popoverTargetAction="hide">×</button></div>
       <section aria-label="Agent notifications">
         <button type="button" className="secondary" disabled={!attention.available} aria-pressed={attention.enabled} onClick={() => void attention.toggle()}>{attention.enabled ? 'Disable notifications' : 'Enable notifications'}</button>
-        <p><small>{attention.available ? 'Notify when an agent run ends outside the focused chat. Keep this page open and connected.' : 'Browser notifications are unavailable here.'}</small></p>
+        <p><small>{attention.available ? 'Background push notifies this browser when a run ends, even with the page closed. Delivery requires internet and browser background access. If push is unavailable, keep this page open and connected.' : 'Browser notifications are unavailable here.'}</small></p>
         {attention.status && <p role="status">{attention.status}</p>}
       </section>
       {state && <section className="thread-picker">
@@ -338,6 +346,7 @@ function App() {
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2>
           {!!state?.promptExamples?.length && <div className="prompt-examples" aria-label="Prompt examples">{state.promptExamples.map((example, index) =>
             <button key={index} type="button" className="secondary" disabled={!connected || !state.available || state.busy || state.threadChanging || pending || uploading || !!draft.trim() || photos.length > 0} onClick={() => {
+              inputHistory.reset();
               setDrafts(current => ({ ...current, [state.threadId]: example }));
               composer.current?.focus();
             }}>{example}</button>
@@ -347,14 +356,15 @@ function App() {
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><MessageContent text={state.liveText} /></article>}
         </div>
       </main>
-      <footer onFocusCapture={event => setComposerFocused((event.target as HTMLElement).matches('textarea, input, select, [contenteditable="true"]'))} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setComposerFocused(false); }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !state?.available || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
+      <footer onFocusCapture={event => setComposerFocused((event.target as HTMLElement).matches('textarea, input, select, [contenteditable="true"]'))} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setComposerFocused(false); }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !state?.available || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
+        inputHistory.onKeyDown(e);
         // Keep mobile Enter and IME confirmation native (229 covers Safari IME).
         if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches ||
           e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey ||
           e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         e.preventDefault();
         if (!e.repeat && canSend) e.currentTarget.form?.requestSubmit();
-      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state?.available || state.threadChanging} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) && <button type="button" className="secondary" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button>}<button disabled={!canSend}>Send</button></div></form></footer>
+      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => { inputHistory.reset(); setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value })); }} disabled={!state?.available || state.threadChanging} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) ? <button key="stop" type="button" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button> : <button key="send" type="submit" disabled={!canSend}>Send</button>}</div></form></footer>
       </section>
       {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}

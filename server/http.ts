@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { PushNotifications } from './push.js';
+import { PushFocus } from './push-focus.js';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -44,6 +46,9 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   const cookieName = secure ? '__Host-pi-workspace-session' : 'pi-workspace-session';
   const cookie = (value: string, seconds: number) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${seconds}${secure ? '; Secure' : ''}`;
   const sessions = new BrowserSessions(config.token, config.stateDir);
+  const pushFocus = new PushFocus(Date.now, session => sessions.valid(session));
+  const push = secure && config.stateDir ? new PushNotifications(config.stateDir, origin, id => sessions.valid(id), undefined,
+    threadId => pushFocus.has(threadId)) : undefined;
   const browserSockets = new Map<WebSocket, string>();
   const photos = config.stateDir ? new PhotoStore(join(config.stateDir, 'photos')) : undefined;
   const artifacts = config.stateDir ? new ArtifactStore(config.stateDir) : undefined;
@@ -134,12 +139,36 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
           const id = sessions.identify(req.headers.cookie, cookieName);
           if (id) {
             sessions.revoke(id);
+            push?.remove(id);
             for (const [ws, session] of browserSockets) if (session === id) ws.close(1008, 'Signed out');
           }
           res.setHeader('Set-Cookie', cookie('', 0));
         }
         res.end(JSON.stringify({ ok: true }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
+      return;
+    }
+    if (req.url === '/api/push') {
+      res.setHeader('Content-Type', 'application/json');
+      const id = sessions.identify(req.headers.cookie, cookieName);
+      if (!id) { res.writeHead(401).end(); return; }
+      if (!push) { res.writeHead(503).end(); return; }
+      if (req.method === 'GET') {
+        if (req.headers.origin && !acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(); return; }
+        res.end(JSON.stringify({ publicKey: push.publicKey, subscribed: push.has(id) })); return;
+      }
+      if (!acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(); return; }
+      try {
+        if (req.method === 'DELETE') push.remove(id);
+        else if (req.method === 'POST') {
+          if (req.headers['content-type']?.split(';')[0] !== 'application/json') { res.writeHead(415).end(); return; }
+          let body = '';
+          for await (const chunk of req) { body += chunk.toString(); if (Buffer.byteLength(body) > 8192) throw new Error(); }
+          if (!sessions.valid(id)) { res.writeHead(401).end(); return; }
+          push.subscribe(id, JSON.parse(body));
+        } else { res.writeHead(405).end(); return; }
+        res.end(JSON.stringify({ ok: true }));
+      } catch { res.writeHead(400).end(JSON.stringify({ error: 'Push subscription could not be saved' })); }
       return;
     }
     if (req.url === '/api/operations' || req.url?.startsWith('/api/operations/')) {
@@ -320,6 +349,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   let timer: ReturnType<typeof setTimeout> | undefined;
   const dirty = new Set<Workspace>();
   const unsubscribe = workspace.subscribe((changed?: Workspace) => {
+    push?.update(pool ? pool.snapshot().threads : single!.state.threads);
     if (pool) {
       for (const [ws, lease] of selected) {
         if (!pool.hasThread(lease.workspace.state.threadId)) {
@@ -376,7 +406,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       else { alive = false; ws.ping(); }
     }, 30000);
     ws.on('error', () => { /* Socket close cleans up; never stop the agent. */ });
-    ws.on('close', () => { clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); outgoing.delete(ws); browserSockets.delete(ws); selected.get(ws)?.release(); selected.delete(ws); detachTerminal?.(); });
+    ws.on('close', () => { pushFocus.remove(ws); clearTimeout(timeout); clearInterval(heartbeat); authenticated.delete(ws); outgoing.delete(ws); browserSockets.delete(ws); selected.get(ws)?.release(); selected.delete(ws); detachTerminal?.(); });
     ws.on('message', async (raw, binary) => {
       let id: string | undefined;
       try {
@@ -427,6 +457,14 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
           else throw new Error('Invalid terminal command');
           return;
         }
+        if (command.type === 'push_focus') {
+          if (typeof command.focused !== 'boolean' || typeof command.threadId !== 'string' || command.threadId.length > 255) throw new Error('Invalid focus report');
+          const threadId = pool ? selected.get(ws)?.workspace.state.threadId : single!.state.threadId;
+          if (session) pushFocus.update(ws, session, command.threadId, command.focused && command.threadId === threadId);
+          return;
+        }
+        // Selection-changing commands invalidate the previous view immediately.
+        if (['switch_thread', 'new_thread', 'release_thread', 'delete_thread', 'takeover_open'].includes(command.type)) pushFocus.remove(ws);
         if (typeof command.id !== 'string' || command.id.length > 100) throw new Error('Request ID required');
         id = command.id;
         if (commandPending) throw new Error('A command is pending');

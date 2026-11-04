@@ -90,6 +90,27 @@ test('account management accepts a third provider; migration and rename never re
   assert.deepEqual(snapshot(f.root), before);
 });
 
+test('provider-aware reply CLI prepares a Zoho reply plan without sending', async t => {
+  const f = fixture(t);
+  await f.accounts.migrate();
+  const run = (input: unknown, extra: string[] = []) => spawnSync(process.execPath,
+    ['--import', 'tsx', 'mail/cli.ts', 'draft', 'reply', 'work', '--message', '1234567890123456789', '--file', '-', ...extra], {
+      encoding: 'utf8', input: JSON.stringify(input),
+      env: { ...process.env, MAIL_DIR: f.registry.root, PUBLIC_ORIGIN: 'https://example.com' },
+    });
+  const input = { to: ['sender@example.com'], subject: 'Re: Hello', body: 'Thanks' };
+  const result = run(input);
+  assert.equal(result.status, 0, result.stdout);
+  const shown = JSON.parse(result.stdout);
+  assert.equal(shown.plan.operation.action, 'reply');
+  assert.equal(shown.plan.operation.messageId, '1234567890123456789');
+  assert.equal(shown.accountIdentity.provider, 'zoho');
+  assert.equal(f.zoho.attempt(shown.plan.id).state, 'not_attempted');
+  assert.equal(run({ ...input, action: 'send' }).status, 1);
+  assert.equal(run(input, ['--confirm']).status, 1);
+  assert.deepEqual(f.calls, []);
+});
+
 test('migration reports collisions and applies explicit aliases atomically, without touching approvals or history', async t => {
   const f = fixture(t);
   f.store.saveAccount({ ...original, alias: 'work', email: 'second@example.com' });

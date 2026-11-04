@@ -64,6 +64,15 @@ test('HTTPS cookie flags, login/logout CSRF checks, cookie-backed chat and termi
     for (const flag of ['HttpOnly', 'SameSite=Strict', 'Secure', 'Path=/', `Max-Age=${SESSION_SECONDS}`]) assert.ok(header.includes(flag));
     const cookie = header.split(';')[0];
     assert.deepEqual(await (await fetch(url + '/auth/session', { headers: { Cookie: cookie } })).json(), { authenticated: true });
+    assert.equal((await fetch(url + '/api/push')).status, 401);
+    assert.equal((await post('/api/push', 'https://evil.example', {}, cookie)).status, 403);
+    assert.equal((await post('/api/push', origin, { endpoint: 'https://localhost/' }, cookie)).status, 400);
+    const subscription = { endpoint: 'https://updates.push.services.mozilla.com/wpush/v2/test', keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) } };
+    assert.equal((await post('/api/push', origin, subscription, cookie)).status, 200);
+    const pushConfig = await (await fetch(url + '/api/push', { headers: { Cookie: cookie } })).json();
+    assert.equal(pushConfig.subscribed, true);
+    assert.equal(typeof pushConfig.publicKey, 'string');
+    assert.equal(pushConfig.privateKey, undefined);
     for (const path of ['/ws', '/terminal']) {
       const ws = new WebSocket(url.replace('http:', 'ws:') + path, { origin, headers: { Cookie: cookie } }); sockets.push(ws);
       await once(ws, 'open');
@@ -77,6 +86,8 @@ test('HTTPS cookie flags, login/logout CSRF checks, cookie-backed chat and termi
     const logout = await post('/auth/logout', origin, {}, cookie);
     assert.equal(logout.status, 200); assert.match(logout.headers.get('set-cookie')!, /Max-Age=0/);
     for (const [code] of await Promise.all(closed)) assert.equal(code, 1008);
+    assert.equal(Object.keys(JSON.parse(readFileSync(join(dir, 'push.json'), 'utf8')).subscriptions).length, 0);
+    assert.equal((await post('/api/push', origin, subscription, cookie)).status, 401);
     assert.deepEqual(await (await fetch(url + '/auth/session', { headers: { Cookie: cookie } })).json(), { authenticated: false });
   } finally { for (const ws of sockets) ws.terminate(); await app.close(); await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
 });

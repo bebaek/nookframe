@@ -106,6 +106,9 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await atBottom();
       await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '6500px'; });
       await atBottom();
+      // Let ResizeObserver finish recording the new geometry before simulating
+      // user scrolling; browser scroll anchoring can reach bottom before it runs.
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       await transcript.evaluate(el => { el.scrollTop -= 40; });
       await page.waitForTimeout(100);
       const afterSendReadingTop = await transcript.evaluate(el => el.scrollTop);
@@ -204,7 +207,8 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       assert.deepEqual(contexts, [{ timezone: 'Asia/Seoul', timezoneSource: 'browser', city: 'Seoul', location: { latitude: 37.57, longitude: 126.98, source: 'browser' } }]);
       await input.fill('keep while busy');
       await input.press('Enter');
-      assert.equal(await send.isDisabled(), true);
+      assert.equal(await send.count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).isEnabled(), true);
       assert.equal(await input.inputValue(), 'keep while busy');
       await page.waitForTimeout(100);
       assert.equal(prompts.length, 1);
@@ -233,6 +237,50 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
       assert.equal(contexts.length, 3);
       assert.equal(contexts[2], undefined);
+      workspace.state.busy = false;
+      workspace.state.messages = [
+        { id: 100, role: 'user', text: 'oldest prompt', details: '' },
+        { id: 101, role: 'assistant', text: 'not input history', details: '' },
+        { id: 102, role: 'user', text: '', details: '' },
+        { id: 103, role: 'user', text: 'newest\nmultiline prompt', details: '' },
+      ];
+      await page.reload();
+      await page.getByText('Ready', { exact: true }).waitFor();
+      await input.fill('unsent draft');
+      await input.press('ArrowDown');
+      assert.equal(await input.inputValue(), 'unsent draft');
+      await input.press('ArrowUp');
+      assert.equal(await input.inputValue(), 'newest\nmultiline prompt');
+      await input.press('ArrowUp');
+      assert.equal(await input.inputValue(), 'oldest prompt');
+      await input.press('ArrowUp');
+      assert.equal(await input.inputValue(), 'oldest prompt');
+      await input.press('ArrowDown');
+      assert.equal(await input.inputValue(), 'newest\nmultiline prompt');
+      await input.press('ArrowDown');
+      assert.equal(await input.inputValue(), 'unsent draft');
+      await input.press('ArrowUp');
+      await input.fill('edited recall');
+      await input.press('ArrowDown');
+      assert.equal(await input.inputValue(), 'edited recall', 'editing ends history navigation');
+      await input.press('ArrowUp');
+      await input.evaluate(el => { const textarea = el as HTMLTextAreaElement; textarea.setSelectionRange(textarea.value.length, textarea.value.length); });
+      await input.press('ArrowDown');
+      assert.equal(await input.inputValue(), 'edited recall', 'new traversal preserves edited draft');
+      await input.fill('first\nsecond');
+      await input.press('ArrowUp');
+      assert.equal(await input.inputValue(), 'first\nsecond', 'Up within multiline input moves the caret');
+      await input.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(0, 0));
+      await input.press('ArrowDown');
+      assert.equal(await input.inputValue(), 'first\nsecond', 'Down within multiline input moves the caret');
+      await input.fill('protected');
+      for (const properties of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }, { shiftKey: true }]) {
+        await input.dispatchEvent('keydown', { key: 'ArrowUp', ...properties });
+        assert.equal(await input.inputValue(), 'protected');
+      }
+      await input.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(0, 4));
+      await input.press('ArrowUp');
+      assert.equal(await input.inputValue(), 'protected', 'selected text is not replaced');
       await page.close();
     }
   } finally {

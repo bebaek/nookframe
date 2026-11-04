@@ -1,0 +1,30 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { PushFocus } from '../server/push-focus.js';
+
+test('any valid device viewing the same thread suppresses push; leases remain per connection', () => {
+  let now = 0;
+  const valid = new Set(['phone', 'desktop']);
+  const focus = new PushFocus(() => now, session => valid.has(session));
+  const a = {}, b = {};
+  focus.update(a, 'phone', 'chat-a', true);
+  assert.equal(focus.has('chat-a'), true);
+  assert.equal(focus.has('chat-b'), false);
+  focus.update(b, 'desktop', 'chat-a', true);
+  focus.update(a, 'phone', 'chat-a', false);
+  assert.equal(focus.has('chat-a'), true, 'another device still views the same conversation');
+  focus.remove(b);
+  assert.equal(focus.has('chat-a'), false, 'last focused device disconnected');
+  focus.update(a, 'phone', 'chat-b', true);
+  assert.equal(focus.has('chat-a'), false, 'different conversation does not suppress');
+  now = 44000;
+  assert.equal(focus.has('chat-b'), true);
+  focus.update(a, 'phone', 'chat-b', true);
+  now = 45000;
+  assert.equal(focus.has('chat-b'), true, 'heartbeat renews lease');
+  now = 89000;
+  assert.equal(focus.has('chat-b'), false, 'suspended tab expires');
+  focus.update(a, 'phone', 'chat-a', true);
+  valid.delete('phone');
+  assert.equal(focus.has('chat-a'), false, 'expired/revoked login cannot silence other devices');
+});
