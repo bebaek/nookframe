@@ -10,6 +10,7 @@ import { AgentPresence } from './AgentPresence';
 import { useAttentionNotifications } from './useAttentionNotifications';
 import { useClientContext } from './ClientContext';
 import { MessageContent, ResponseImages } from './MessageContent';
+import { UserMessageContent } from './UserMessageContent';
 import { PhotoPicker, PhotoPreviews, type DraftPhoto } from './Photos';
 const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ default: module.TerminalPane })));
 
@@ -198,8 +199,8 @@ function App() {
   async function uploadPhotos(items: DraftPhoto[], retry = false) {
     if (upload.current || pending || !state || state.threadChanging) return;
     const threadId = state.threadId;
-    if (!retry && photos.length + items.length > 4) { setError('Attach at most four photos per message'); return; }
-    if (items.some(p => p.file.size > 20 * 1024 * 1024)) { setError('Photos must be at most 20 MB each'); return; }
+    if (!retry && photos.length + items.length > 4) { setError('Attach at most four files or photos per message'); return; }
+    if (items.some(p => p.file.size > 20 * 1024 * 1024)) { setError('Files must be at most 20 MB each'); return; }
     if (!retry) setPhotoDrafts(current => ({ ...current, [threadId]: [...(current[threadId] ?? []), ...items] }));
     const controller = new AbortController(); upload.current = controller;
     setUploading(true); setError('');
@@ -209,7 +210,7 @@ function App() {
         if (controller.signal.aborted) break;
         update(item.key, { error: undefined });
         try {
-          const response = await fetch('/photos', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Thread-Id': threadId }, body: item.file, signal: controller.signal });
+          const response = await fetch(item.kind === 'file' ? '/files' : '/photos', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Thread-Id': threadId, 'X-File-Name': encodeURIComponent(item.file.name) }, body: item.file, signal: controller.signal });
           if (!response.ok) {
             const result = await response.json().catch(() => ({}));
             throw new Error(result.error || `Photo upload failed (${response.status})`);
@@ -222,7 +223,7 @@ function App() {
       }
     } finally { upload.current = null; setUploading(false); }
   }
-  function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file }))); }
+  function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file, kind: /^image\/(jpeg|png|webp|heic|heif)$/.test(file.type) || /\.(heic|heif)$/i.test(file.name) ? 'photo' : 'file' }))); }
   const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
@@ -235,7 +236,7 @@ function App() {
     // Persist intent before dispatch so a lost acknowledgement cannot reopen the thread.
     if (type === 'release_thread') rememberSelection('', true);
     setPending(true); setError('');
-    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
+    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.filter(p => p.kind !== 'file').map(p => p.id), files: photos.filter(p => p.kind === 'file').map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
     // A new prompt resumes following; ordinary renders and incoming updates do not.
     if (type === 'prompt') scroll.resume();
   }
@@ -342,7 +343,7 @@ function App() {
             }}>{example}</button>
           )}</div>}
         </div>}
-        {state?.messages.map(message => message.tool ? <ToolCard key={`${state.threadId}:${message.tool.id}`} tool={message.tool} /> : <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : message.role === 'assistant' ? <MessageContent text={message.text} /> : <div className="text">{message.text}</div>}<PhotoPreviews photos={message.photos} /><ResponseImages images={message.images} />{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
+        {state?.messages.map(message => message.tool ? <ToolCard key={`${state.threadId}:${message.tool.id}`} tool={message.tool} /> : <article key={message.id} className={`message ${message.role}`}><label>{message.role === 'toolResult' ? 'Tool result' : message.role}</label>{message.role === 'toolResult' ? <details><summary>Output</summary><pre>{message.text}</pre></details> : message.role === 'assistant' ? <MessageContent text={message.text} /> : <UserMessageContent text={message.text} />}<PhotoPreviews photos={message.photos} /><ResponseImages images={message.images} />{message.details && <details><summary>Tool calls</summary><pre>{message.details}</pre></details>}{message.error && <p className="error">{message.error}</p>}</article>)}
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><MessageContent text={state.liveText} /></article>}
         </div>
       </main>

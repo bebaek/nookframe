@@ -120,10 +120,10 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
         if (kind === 'paste') document.querySelector('textarea')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
         else document.querySelector('footer')!.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
       }, { data: [...png], kind });
-      await page.getByText('Uploading and processing photos…', { exact: true }).waitFor({ state: 'hidden' });
+      await page.getByText('Uploading attachments…', { exact: true }).waitFor({ state: 'hidden' });
     }
     assert.equal(await page.locator('.draft-photo img').count(), 2);
-    assert.equal(await page.locator('.photo-picker small').textContent(), 'Photos are converted to JPEG and stripped of metadata. Originals are not retained. Unsent uploads expire after 24 hours.');
+    assert.equal(await page.locator('.photo-picker small').textContent(), 'Photos are converted to JPEG and stripped of metadata. Originals are not retained. Unsent photos expire after 24 hours. Other files retain their original bytes and are stored durably, including unsent uploads. Up to four attachments, 20 MB each.');
     const large = await sharp({ create: { width: 2400, height: 100, channels: 3, background: 'blue' } }).png().toBuffer();
     await picker.setInputFiles({ name: 'large.png', mimeType: 'image/png', buffer: large });
     const resizeNotice = page.getByText('Resized to fit within 2048 × 2048 pixels.', { exact: true });
@@ -223,6 +223,28 @@ test('photos browser: HEIC preview, image-only send, paste/drop, failure retains
     assert.equal(await scrollRegion.evaluate(el => el.scrollWidth > el.clientWidth), true);
     assert.equal(await scrollRegion.evaluate(el => { el.scrollLeft = 100; return el.scrollLeft > 0; }), true);
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    // Generic files work with text-only models and survive transcript reloads.
+    workspace.state.threadId = 'files.jsonl';
+    await page.reload();
+    await page.getByText('Ready', { exact: true }).waitFor();
+    workspace.state.models[0].images = false;
+    await picker.setInputFiles({ name: 'report.csv', mimeType: 'text/csv', buffer: Buffer.from('a,b\n1,2') });
+    await page.locator('.draft-photo').filter({ hasText: 'Uploaded' }).waitFor();
+    assert.equal(await page.locator('.draft-photo img').count(), 0);
+    await send.click();
+    const attachment = page.getByRole('link', { name: 'Attached file: report.csv (7 bytes)', exact: true });
+    await attachment.waitFor();
+    const href = await attachment.getAttribute('href');
+    assert.match(href!, /^\/files\/[a-f0-9]{64}\/[a-f0-9]{64}\/download$/);
+    assert.equal(prompts.at(-1)!.images, undefined);
+    assert.match(prompts.at(-1)!.text, /untrusted data/);
+    await page.reload();
+    await attachment.waitFor();
+    const downloadPromise = page.waitForEvent('download');
+    await attachment.click();
+    const downloaded = await downloadPromise;
+    assert.equal(downloaded.suggestedFilename(), 'report.csv');
+    assert.equal(await readFile((await downloaded.path())!, 'utf8'), 'a,b\n1,2');
   } finally {
     await browser.close(); await app.close(); await workspace.close(); await rm(dir, { recursive: true, force: true });
   }
