@@ -1,5 +1,21 @@
 // Notifications only: no fetch interception or caching.
 const validThreadId = value => typeof value === 'string' && value.length > 0 && value.length < 2048;
+// WindowClient.url can lag behind SPA history changes. Ask the live page rather
+// than trusting its cached URL. Bound discovery so suspended tabs cannot hang a tap.
+function currentThread(client) {
+  return new Promise(resolve => {
+    const channel = new MessageChannel();
+    const finish = value => {
+      clearTimeout(timer);
+      channel.port1.close(); channel.port2.close();
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(undefined), 800);
+    channel.port1.onmessage = event => finish(event.data?.type === 'attention-view' ? event.data.threadId : undefined);
+    try { client.postMessage({ type: 'query-attention-view' }, [channel.port2]); }
+    catch { finish(undefined); }
+  });
+}
 self.addEventListener('push', event => {
   // Only the opaque destination is included in the encrypted payload; never chat text.
   let payload;
@@ -41,14 +57,24 @@ self.addEventListener('notificationclick', event => {
         try {
           // Includes tabs in other windows and tabs not yet controlled by this worker.
           const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-          for (const client of clients) {
+          const views = await Promise.all(clients.map(async client => {
             try {
               const url = new URL(client.url);
-              if (url.origin !== self.location.origin || url.pathname !== '/' ||
-                  new URLSearchParams(url.hash.slice(1)).get('thread') !== threadId) continue;
+              if (url.origin !== self.location.origin || url.pathname !== '/') return undefined;
+              return await currentThread(client) === threadId ? client : undefined;
+            } catch { return undefined; }
+          }));
+          for (const client of views) {
+            if (!client) continue;
+            try {
               const focused = await client.focus();
-              if (focused?.focused === true) return;
-            } catch { /* Closed tab, invalid URL, or denied focus: try the next match. */ }
+              // A resolved WindowClient is the API's success signal. Requiring its
+              // focused snapshot to already be true can create duplicate tabs.
+              if (focused) {
+                client.postMessage({ type: 'open-attention', threadId });
+                return;
+              }
+            } catch { /* Closed tab or denied focus: try the next match. */ }
           }
         } catch { /* Client discovery failed: open the destination instead. */ }
       }

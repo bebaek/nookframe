@@ -234,8 +234,11 @@ display only generic text, never conversation titles or content. The encrypted
 payload carries the opaque conversation identifier for navigation. Each completion
 in a batch gets its own destination and notification tag.
 Clicking searches Nookframe tabs across windows for the exact conversation and
-tries to focus a match, on desktop and mobile. If discovery fails, no matching tab
-exists, or focus fails/cannot be confirmed, it opens the conversation URL in a new
+asks each live tab for its current conversation, then tries to focus a match on
+desktop and mobile. Cached browser tab URLs are not trusted after in-app navigation.
+Discovery times out after 800 ms for unresponsive tabs. A resolved focus result is
+accepted without requiring its potentially stale `focused` field to be true.
+If discovery fails, no matching tab exists, or focus fails, it opens the conversation URL in a new
 tab. Unrelated tabs are never navigated away from unsent drafts. Browser/OS policies
 still control activation; Firefox Android may report focus success while merely
 foregrounding the app, which the worker cannot reliably detect. Older notifications without a destination open

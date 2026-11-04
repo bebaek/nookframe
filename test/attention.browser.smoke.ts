@@ -128,6 +128,19 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.waitForFunction(() => location.hash === '#thread=a');
     await page.getByRole('button', { name: 'Disable notifications', exact: true }).click();
     await page.waitForFunction(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length === 0);
+    // Discovery must return live React selection even with notifications disabled
+    // and the URL deliberately stale (SPA navigation may outpace client metadata).
+    await page.evaluate(() => history.replaceState(null, '', '/#thread=stale'));
+    const view = await worker.evaluate(`(async () => {
+      const [client] = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      return await new Promise((resolve, reject) => {
+        const channel = new MessageChannel();
+        const timer = setTimeout(() => { channel.port1.close(); reject(new Error('No live view response')); }, 2000);
+        channel.port1.onmessage = event => { clearTimeout(timer); channel.port1.close(); resolve(event.data); };
+        client.postMessage({ type: 'query-attention-view' }, [channel.port2]);
+      });
+    })()`);
+    assert.deepEqual(view, { type: 'attention-view', threadId: 'a' });
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
