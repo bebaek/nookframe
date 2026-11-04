@@ -340,6 +340,43 @@ provider receives shared hints, and answers or tool calls can mention them and t
 persist in normal conversation history. Disabling sharing affects future messages,
 not already submitted runs or previous answers.
 
+## File uploads and downloads
+
+Use **Attach files**, paste, or drop files into the composer. Up to four files
+and photos combined can be sent, each at most 20 MiB. Non-photo files retain
+exact original bytes; filenames are normalized for safe downloads. The draft
+shows filename, size, and upload status. Sent files have download links in the
+transcript, including after reload. Text-only models can use non-photo files
+through the agent's local file tools; binary format support depends on those tools.
+
+The bundled **files** skill provides generated downloads:
+
+```sh
+filectl context
+# Write the output inside the returned directory, then:
+filectl publish /absolute/path/to/output.csv
+```
+
+Return the command's `markdown` link to the user. Agents are bound to their own
+thread; terminal users must supply `filectl --thread THREAD` before the command.
+Only copies published from that thread's output directory can be downloaded;
+symlinks and arbitrary filesystem paths are rejected. Downloads are always
+attachments with `application/octet-stream`, never inline executable content.
+
+Uploads and downloads require browser authentication; uploads also require an
+allowed Origin. File IDs are resolved within their originating thread. Like
+chat histories, all files belong to the one authenticated Nookframe owner—not
+separate per-conversation users. Uploaded content is untrusted, not executable
+instructions. Do not upload secrets or publish files containing credentials.
+
+Files live in `chat-files/` under the configured state directory, with generated
+staging outputs in `file-output/`. Shared state makes them available across slots.
+Include these directories in backups. The durable store is capped at 512 MiB
+and 1024 files; reaching the cap rejects new files without deleting old ones.
+Unsent generic uploads also persist, and deleting a conversation does not delete
+its files. Automatic expiration and a file-removal UI are not included yet.
+Photo processing and expiration remain separate, as described below.
+
 ## Photo attachments
 
 Attach phone photos (including HEIC/HEIF), paste screenshots, or drop images onto
