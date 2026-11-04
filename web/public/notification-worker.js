@@ -36,10 +36,26 @@ self.addEventListener('notificationclick', event => {
   if (event.notification.data?.push === true) {
     const threadId = event.notification.data.threadId;
     const target = validThreadId(threadId) ? `/#thread=${encodeURIComponent(threadId)}` : '/';
-    // Firefox Android can foreground the app without selecting a focused client.
-    // Open the exact same-origin route directly in the click lifetime instead.
-    // Do not navigate an unrelated tab: it may contain an unsent draft.
-    event.waitUntil(self.clients.openWindow(target));
+    event.waitUntil((async () => {
+      if (validThreadId(threadId)) {
+        try {
+          // Includes tabs in other windows and tabs not yet controlled by this worker.
+          const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+          for (const client of clients) {
+            try {
+              const url = new URL(client.url);
+              if (url.origin !== self.location.origin || url.pathname !== '/' ||
+                  new URLSearchParams(url.hash.slice(1)).get('thread') !== threadId) continue;
+              const focused = await client.focus();
+              if (focused?.focused === true) return;
+            } catch { /* Closed tab, invalid URL, or denied focus: try the next match. */ }
+          }
+        } catch { /* Client discovery failed: open the destination instead. */ }
+      }
+      // Never navigate an unrelated tab away from an unsent draft.
+      // Firefox/OS controls activation; open a tab when reuse cannot be confirmed.
+      await self.clients.openWindow(target);
+    })());
     return;
   }
   const { clientId, threadId } = event.notification.data || {};

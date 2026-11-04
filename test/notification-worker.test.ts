@@ -7,7 +7,7 @@ async function fixture() {
   const listeners = new Map<string, (event: any) => void>();
   const calls: any[] = [];
   const client = { id: 'exact-tab', type: 'window', url: 'https://example.test/#thread=other',
-    focus: async () => { calls.push('focus'); }, postMessage: (data: unknown) => calls.push(data) };
+    focus: async (): Promise<{ focused: boolean } | undefined> => { calls.push('focus'); return { focused: true }; }, postMessage: (data: unknown) => calls.push(data) };
   const notifications: any[] = [];
   const scope = { location: { origin: 'https://example.test' },
     addEventListener: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
@@ -17,13 +17,13 @@ async function fixture() {
       showNotification: async (title: string, options: any) => notifications.push({ title, ...options, close() { this.closed = true; } }),
       getNotifications: async () => notifications,
     } };
-  runInNewContext(await readFile('web/public/notification-worker.js', 'utf8'), { self: scope, URL });
+  runInNewContext(await readFile('web/public/notification-worker.js', 'utf8'), { self: scope, URL, URLSearchParams });
   async function emit(name: string, data: any) {
     const work: Promise<unknown>[] = [];
     listeners.get(name)!({ ...data, waitUntil: (promise: Promise<unknown>) => work.push(promise) });
     await Promise.all(work);
   }
-  return { emit, client, calls, notifications };
+  return { emit, client, calls, notifications, clients: scope.clients };
 }
 
 test('worker binds notifications to exact sender, focuses before navigating, and clears only its notifications', async () => {
@@ -52,7 +52,7 @@ test('legacy push opens home rather than focusing an arbitrary Firefox tab', asy
 
 test('push click opens the encoded conversation route without touching another tab', async () => {
   const f = await fixture();
-  for (const threadId of ['a&b/#', 'https://evil.example/path', 'other']) {
+  for (const threadId of ['a&b/#', 'https://evil.example/path', 'another']) {
     await f.emit('push', { data: { json: () => ({ type: 'attention', threadId }) } });
     const notification = f.notifications.at(-1);
     assert.equal(notification.data.threadId, threadId);
@@ -63,6 +63,47 @@ test('push click opens the encoded conversation route without touching another t
   }
   assert.equal(new Set(f.notifications.map(n => n.tag)).size, 3);
   assert.equal(f.calls.length, 3, 'no focus or navigation messages to unrelated tabs');
+});
+
+test('push reuses an exact thread in another window, including uncontrolled clients', async () => {
+  const f = await fixture();
+  const threadId = 'a&b/#';
+  f.clients.matchAll = async (...args: any[]) => {
+    assert.equal(args[0].type, 'window');
+    assert.equal(args[0].includeUncontrolled, true);
+    return [f.client, { ...f.client, id: 'other-window', url: `https://example.test/#thread=${encodeURIComponent(threadId)}`,
+      focus: async () => { f.calls.push('other-window-focus'); return { focused: true }; } }];
+  };
+  await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId } } });
+  assert.deepEqual(f.calls, ['other-window-focus']);
+});
+
+test('push tries remaining matches after a closed tab and ignores foreign or non-app URLs', async () => {
+  const f = await fixture();
+  f.clients.matchAll = async () => [
+    { ...f.client, url: 'https://foreign.test/#thread=a' },
+    { ...f.client, url: 'https://example.test/auth/#thread=a' },
+    { ...f.client, url: 'not a URL' },
+    { ...f.client, url: 'https://example.test/#thread=a', focus: async () => { throw new Error('closed'); } },
+    { ...f.client, url: 'https://example.test/#thread=a', focus: async () => { f.calls.push('match'); return { focused: true }; } },
+  ];
+  await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'a' } } });
+  assert.deepEqual(f.calls, ['match']);
+});
+
+test('push opens a new tab if discovery fails or focus is denied or unconfirmed', async () => {
+  for (const mode of ['discovery', 'denied', 'unconfirmed']) {
+    const f = await fixture();
+    f.clients.matchAll = async () => {
+      if (mode === 'discovery') throw new Error('unavailable');
+      return [{ ...f.client, url: 'https://example.test/#thread=a', focus: async () => {
+        if (mode === 'denied') throw new Error('denied');
+        return undefined;
+      } }];
+    };
+    await f.emit('notificationclick', { notification: { close() {}, data: { push: true, threadId: 'a' } } });
+    assert.deepEqual(f.calls, ['/#thread=a']);
+  }
 });
 
 test('malformed push payloads and invalid destinations fall back to home', async () => {
