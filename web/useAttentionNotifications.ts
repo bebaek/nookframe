@@ -5,7 +5,7 @@ import { AttentionTracker, chatNeedsAttention } from './attention';
 const preference = 'nookframe.attentionNotifications';
 const supported = () => typeof Notification !== 'undefined' && window.isSecureContext;
 
-export function useAttentionNotifications(selected: string | undefined, chat: boolean, open: (id: string) => void) {
+export function useAttentionNotifications(selected: string | undefined, chat: boolean, open: (id: string) => void, signedIn = true) {
   const [enabled, setEnabled] = useState(() => {
     try { return supported() && Notification.permission === 'granted' && localStorage.getItem(preference) === 'true'; }
     catch { return false; }
@@ -15,6 +15,64 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   const notifications = useRef(new Set<Notification>());
   const worker = useRef<Promise<ServiceWorker | undefined> | undefined>(undefined);
   const generation = useRef(0);
+  const focusChannel = useRef<BroadcastChannel | undefined>(undefined);
+
+  // Ask live tabs rather than caching focus, which can become stale after a tab closes.
+  // Respond even when this tab has notifications disabled: it may still be reading the chat.
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel('nookframe.attentionFocus');
+    focusChannel.current = channel;
+    channel.onmessage = ({ data }) => {
+      if (data?.type !== 'query' || typeof data.requestId !== 'string' || typeof data.threadId !== 'string') return;
+      const view = current.current;
+      if (view.signedIn && document.visibilityState === 'visible' && document.hasFocus() &&
+        (data.takeover === true || (view.chat && view.selected === data.threadId))) {
+        channel.postMessage({ type: 'focused', requestId: data.requestId });
+      }
+    };
+    return () => { focusChannel.current = undefined; channel.close(); };
+  }, []);
+
+  function focusedElsewhere(threadId: string, takeover: boolean): Promise<boolean> {
+    const channel = focusChannel.current;
+    if (!channel) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const requestId = crypto.randomUUID();
+      const finish = (focused: boolean) => {
+        clearTimeout(timer);
+        channel.removeEventListener('message', receive);
+        resolve(focused);
+      };
+      const receive = ({ data }: MessageEvent) => {
+        if (data?.type === 'focused' && data.requestId === requestId) finish(true);
+      };
+      // Unfocused/background tabs need not answer, so they cannot delay notification delivery.
+      const timer = setTimeout(() => finish(false), 150);
+      channel.addEventListener('message', receive);
+      channel.postMessage({ type: 'query', requestId, threadId, takeover });
+    });
+  }
+
+  const pushEnabled = useRef(false);
+  const pushSetup = useRef<Promise<void>>(Promise.resolve());
+  const toggling = useRef(false);
+
+  async function enablePush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error();
+    const active = await prepareWorker();
+    if (!active) throw new Error();
+    const registration = await navigator.serviceWorker.ready;
+    const response = await fetch('/api/push');
+    if (!response.ok) throw new Error();
+    const { publicKey } = await response.json();
+    const key = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const subscription = await registration.pushManager.getSubscription() ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    const saved = await fetch('/api/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
+    if (!saved.ok) throw new Error();
+    pushEnabled.current = true;
+    setStatus('Background push notifications enabled for this browser.');
+  }
 
   function prepareWorker() {
     if (!('serviceWorker' in navigator)) return Promise.resolve(undefined);
@@ -30,8 +88,8 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
       finally { clearTimeout(timer); }
     })();
   }
-  const current = useRef({ selected, chat, open, enabled });
-  current.current = { selected, chat, open, enabled };
+  const current = useRef({ selected, chat, open, enabled, signedIn });
+  current.current = { selected, chat, open, enabled, signedIn };
 
   function clear() {
     tracker.current.reset();
@@ -43,7 +101,12 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return () => clear();
     const receive = (event: MessageEvent) => {
-      if (!current.current.enabled || event.origin !== location.origin) return;
+      if (event.origin !== location.origin) return;
+      if (event.data?.type === 'query-attention-view') {
+        event.ports[0]?.postMessage({ type: 'attention-view', threadId: current.current.signedIn ? current.current.selected ?? null : null });
+        return;
+      }
+      if (!current.current.signedIn) return;
       if (event.data?.type === 'open-attention' && typeof event.data.threadId === 'string') {
         current.current.open(event.data.threadId);
       } else if (event.data?.type === 'attention-error') setStatus('Notifications could not be displayed by this browser.');
@@ -51,12 +114,26 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     navigator.serviceWorker.addEventListener('message', receive);
     return () => { navigator.serviceWorker.removeEventListener('message', receive); clear(); };
   }, []);
-  useEffect(() => { if (enabled) void prepareWorker(); }, [enabled]);
+  useEffect(() => {
+    pushEnabled.current = false;
+    if (enabled && signedIn) pushSetup.current = pushSetup.current.then(enablePush).catch(() => setStatus('Background push is unavailable. Notifications require this page to stay connected.'));
+  }, [enabled, signedIn]);
 
   async function toggle() {
+    if (toggling.current) return;
     if (enabled) {
+      toggling.current = true;
       current.current.enabled = false;
       setEnabled(false); clear();
+      try {
+        await pushSetup.current;
+        const response = await fetch('/api/push', { method: 'DELETE' });
+        if (!response.ok && response.status !== 503) throw new Error();
+        pushEnabled.current = false;
+      } catch {
+        setEnabled(true);
+        setStatus('Could not disable background notifications. Reconnect and try again.'); return;
+      } finally { toggling.current = false; }
       try { localStorage.removeItem(preference); } catch { /* Session-only preference. */ }
       setStatus('');
       return;
@@ -75,8 +152,10 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   }
 
   async function notify(id: string, takeover = false) {
+    if (!takeover && pushEnabled.current) return;
     const version = generation.current;
     const active = await prepareWorker();
+    if (await focusedElsewhere(id, takeover)) return;
     const view = current.current;
     if (version !== generation.current || !view.enabled || Notification.permission !== 'granted' ||
       (takeover ? document.visibilityState === 'visible' && document.hasFocus() : !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus()))) return;

@@ -23,12 +23,12 @@ Requires Node.js 24+, Bash, Python 3, make, and a C++ compiler. From the
 Nookframe checkout:
 
 ```bash
-# 1. Install (token authentication by default).
+# 1. Install (existing Pi + token authentication by default).
 bash scripts/install-native.sh
 # For tokenless access on a private single-user host, use --local instead.
 
-# 2. Configure pi: /login, choose a model, then exit.
-PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi
+# 2. Close terminal Pi for any chats you will open in Nookframe.
+# Existing credentials/settings are reused; no separate login.
 
 # 3. Start; open http://localhost:3000.
 .local/start
@@ -37,8 +37,40 @@ PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi
 For token authentication, read `.local/access-token` privately in your editor
 and enter it in the browser. Never commit or log the token.
 
-Defaults: loopback-only port **3000**, workspace **`.local/workspace`**, pi
-profile/conversations **`.local/agent`**, application state **`.local/state`**.
+Defaults: loopback-only port **3000**, new-chat workspace **`.local/workspace`**,
+existing Pi profile **`PI_CODING_AGENT_DIR` or `~/.pi/agent`**, application state
+**`.local/state`**. Native installation now defaults to an **existing-Pi PoC**:
+Pi must be a stable **1.x release, version 1.5.0 or newer**, installed with the
+official `pi.dev/install.sh` installer or npm, resolved from `NOOKFRAME_PI_BIN`
+or `PATH`. Nookframe checks `pi --version` and executes the selected launcher
+directly, preserving its managed Node/runtime setup. Required RPC read commands
+and the selected session are checked when opening a chat. Prereleases, older
+versions and unknown major versions are rejected; there is no silent bundled
+fallback. Existing-Pi mode requires Node.js 24+ on macOS or Linux. The pinned dependency still supplies the
+RPC client and session reader, but foreground agents use your installed CLI.
+
+Existing chats across projects are listed in place with their project paths.
+Each resumes in its original working directory with Pi restoring its model.
+New chats use Pi's normal cwd-grouped session layout. An absolute
+`PI_CODING_AGENT_SESSION_DIR` selects a flat custom session directory; if you
+use a `sessionDir` setting, supply that environment variable explicitly.
+Symlink session roots/directories/files are not supported in this PoC.
+
+**One UI at a time per chat:** close terminal Pi before opening that chat here.
+Stop Nookframe and wait for it to exit before resuming the chat in terminal Pi.
+Closing a browser tab does **not** stop its agent. Locks only coordinate
+Nookframe writers, not ordinary Pi processes. Concurrent terminal/browser
+writes can corrupt history. No automatic handoff or attachment to a live Pi
+process is provided. Background jobs are not supported in this mode.
+The terminal tab is a separate shell, not the selected chat's Pi process.
+Project extensions and skills run with your host-user privileges.
+
+Use `bash scripts/install-native.sh --isolated` for the previous dedicated
+`.local/agent` profile and bundled CLI, then log in with
+`PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi`.
+Existing launchers and container/manual deployments are unchanged; the server
+uses this PoC only when `NOOKFRAME_PI_MODE=existing`. No sessions are migrated
+from the legacy `workspace-sessions` directory.
 The installer builds this checkout and creates the launcher; it does not use
 sudo, install a service, start the server, or overwrite an existing launcher.
 
@@ -49,8 +81,9 @@ WORKSPACE_DIR="$HOME/projects/my-project" .local/start
 ```
 
 For a permanent choice, set `export WORKSPACE_DIR="/absolute/project/path"`
-in `.local/start`. The workspace is pi's working directory, shared by all chat
-threads—not chat storage or a sandbox. Use separate profiles/state for unrelated
+in `.local/start`. In existing-Pi mode the workspace is the working directory for **new** chats;
+existing chats retain their own working directories. In isolated mode it is
+shared by all chat threads. It is not chat storage or a sandbox. Use separate profiles/state for unrelated
 projects rather than repurposing existing conversations.
 
 Manual tokenless startup uses `NOOKFRAME_LOCAL_ACCESS=1` instead of
@@ -218,20 +251,55 @@ Send alongside it; Stop appears while working. Tool output starts collapsed,
 including running tools, and reading earlier messages prevents auto-scroll.
 The layout uses the browser's native Popover API (current Chrome/Safari/Firefox).
 
-Use **⋯ → Enable notifications** to opt in to browser notifications when an
-observed agent run ends outside the focused chat (including failed or stopped
-runs). Clicking the notification opens its conversation without discarding drafts.
-When supported, notifications use a service worker to focus the exact originating
-browser tab via `WindowClient.focus()` and select the conversation without reloading.
-If that tab has closed, clicking opens the conversation in a new window/tab.
-Firefox/Wayland and OS activation policies may still prevent raising the window;
-unsupported workers fall back to basic notifications with a notice in controls.
-The worker does not intercept requests, cache pages, or subscribe to push.
-Notification text contains no conversation titles or content. Permission is only
-requested when you click Enable; **Disable notifications** turns them off again.
-This requires a supported browser on HTTPS or localhost, with the page open and
-connected; it is not push delivery after closing the page. Reloads/reconnections
-do not replay missed completions. Each enabled tab observes runs independently.
+Use **⋯ → Enable notifications** to opt in. On HTTPS with persistent server state,
+Nookframe subscribes this browser to encrypted Web Push. Server-observed run
+completions (including failures and stops) notify even when the page is suspended
+or closed. Push is suppressed on all devices when the completed conversation
+is visible and focused on any signed-in device connected to this server. A focused
+tab showing a different conversation does not suppress it. This is a single-user
+workspace; invalid or expired logins do not count, and separate server slots do not
+share live focus state. Focus
+is reported on visibility/focus changes and renewed every 15 seconds; stale reports
+expire after 45 seconds so a suspended page cannot silence notifications indefinitely.
+The suppression happens before sending push, not by silently discarding incoming
+push events (which can trigger browser fallback notifications). Push notifications
+display only generic text, never conversation titles or content. The encrypted
+payload carries the opaque conversation identifier for navigation. Each completion
+in a batch gets its own destination and notification tag.
+Clicking searches Nookframe tabs across windows for the exact conversation and
+asks each live tab for its current conversation, then tries to focus a match on
+desktop and other mobile browsers. Firefox Android instead opens the exact
+conversation URL directly: it can report successful focus while displaying its
+last active tab. This narrow user-agent workaround may create a new tab, but does
+not navigate unrelated tabs away from drafts. Desktop-site/user-agent overrides
+may prevent Firefox Android detection. Cached browser tab URLs are not trusted
+after in-app navigation.
+Discovery times out after 800 ms for unresponsive tabs. A resolved focus result is
+accepted without requiring its potentially stale `focused` field to be true.
+If discovery fails, no matching tab exists, or focus fails, it opens the conversation URL in a new
+tab. Unrelated tabs are never navigated away from unsent drafts. Browser/OS policies
+still control activation. Older notifications without a destination open the home
+page. Enable each device separately; controls report push setup status.
+
+Delivery depends on internet access, browser/OS background access, and the browser
+vendor's push service (Firefox/Mozilla, Chromium/FCM, or Apple). Push is best effort:
+transient failures are not retried, notifications expire after one hour, and
+simultaneous completions can coalesce. Server downtime is not replayed. No external
+account or manual VAPID-key setup is needed. The server generates private VAPID keys
+and stores subscriptions in `STATE_DIR/push.json` (mode 0600); treat that file as
+credentials, preserve it across restarts, and never commit it. Each server's state
+directory must have a single writer. Outbound HTTPS to the supported vendor push
+hosts is required. Login expiry/token rotation invalidates subscriptions; sign-out
+removes the current login's subscription. Sign in again to renew it.
+
+If background push cannot be enabled, local notifications still work while the
+page stays connected. These notify only outside the focused conversation and
+open the originating conversation. Reconnection does not replay missed local
+notifications. Unsupported workers fall back to basic desktop notifications.
+**Disable notifications** removes this login's push subscription and turns off local
+notifications in this tab; other open tabs may retain their own local preference.
+The worker does not intercept requests or cache pages. Permission is requested
+only after clicking Enable. OS focus policies may prevent raising a window.
 There is no separate approval-needed or stalled-run detection yet.
 
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
@@ -304,6 +372,43 @@ client timezone/location is distinct from the server or home location. The model
 provider receives shared hints, and answers or tool calls can mention them and thus
 persist in normal conversation history. Disabling sharing affects future messages,
 not already submitted runs or previous answers.
+
+## File uploads and downloads
+
+Use **Attach files**, paste, or drop files into the composer. Up to four files
+and photos combined can be sent, each at most 20 MiB. Non-photo files retain
+exact original bytes; filenames are normalized for safe downloads. The draft
+shows filename, size, and upload status. Sent files have download links in the
+transcript, including after reload. Text-only models can use non-photo files
+through the agent's local file tools; binary format support depends on those tools.
+
+The bundled **files** skill provides generated downloads:
+
+```sh
+filectl context
+# Write the output inside the returned directory, then:
+filectl publish /absolute/path/to/output.csv
+```
+
+Return the command's `markdown` link to the user. Agents are bound to their own
+thread; terminal users must supply `filectl --thread THREAD` before the command.
+Only copies published from that thread's output directory can be downloaded;
+symlinks and arbitrary filesystem paths are rejected. Downloads are always
+attachments with `application/octet-stream`, never inline executable content.
+
+Uploads and downloads require browser authentication; uploads also require an
+allowed Origin. File IDs are resolved within their originating thread. Like
+chat histories, all files belong to the one authenticated Nookframe owner—not
+separate per-conversation users. Uploaded content is untrusted, not executable
+instructions. Do not upload secrets or publish files containing credentials.
+
+Files live in `chat-files/` under the configured state directory, with generated
+staging outputs in `file-output/`. Shared state makes them available across slots.
+Include these directories in backups. The durable store is capped at 512 MiB
+and 1024 files; reaching the cap rejects new files without deleting old ones.
+Unsent generic uploads also persist, and deleting a conversation does not delete
+its files. Automatic expiration and a file-removal UI are not included yet.
+Photo processing and expiration remain separate, as described below.
 
 ## Photo attachments
 

@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { PresenceStore } from './agent-presence.js';
 
 export default function agentPresence(pi: ExtensionAPI) {
