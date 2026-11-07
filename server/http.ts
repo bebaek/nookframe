@@ -30,6 +30,9 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
   pool?.takeovers.configureOrigin(config.origin);
   const single = pool ? undefined : workspace as Workspace;
   const selected = new Map<WebSocket, WorkspaceLease>();
+  // Recover first-send selection without replaying the prompt. Bound memory
+  // without evicting receipts and accidentally allowing duplicate creation.
+  const starts = new Map<string, Promise<string>>();
   const snapshot = (ws: WebSocket) => ({
     ...(pool ? pool.snapshot(selected.get(ws)?.workspace) : single!.state),
     promptExamples: config.promptExamples ?? defaultPromptExamples,
@@ -232,9 +235,12 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
         if (req.method === 'POST' && req.url === '/photos') {
           if (!acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(); return; }
           if (Number(req.headers['content-length'] ?? 0) > MAX_PHOTO_BYTES) { res.writeHead(413).end(); return; }
-          workspace.assertThread(req.headers['x-thread-id']);
+          // Authenticated draft uploads use the same temporary photo store but
+          // do not allocate an agent or a conversation.
+          const draftUpload = !!pool && req.headers['x-thread-id'] === '';
+          if (!draftUpload) workspace.assertThread(req.headers['x-thread-id']);
           const photo = await photos.upload(req);
-          workspace.assertThread(req.headers['x-thread-id']);
+          if (!draftUpload) workspace.assertThread(req.headers['x-thread-id']);
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(photo));
         } else if (req.method === 'GET') {
@@ -365,8 +371,15 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
                 // Other slots or CLI sessions may have created threads while this client was offline.
                 // Refresh even for an empty selection or a resident workspace that needs no reload.
                 await pool.refreshThreadCatalog();
-                if (command.threadId !== '') {
-                  const lease = await pool.connect(command.threadId);
+                let requested = command.threadId;
+                if (command.startRequestId !== undefined) {
+                  if (typeof command.startRequestId !== 'string' || command.startRequestId.length > 100) throw new Error('Invalid first-send request');
+                  const receipt = starts.get(`${session ?? 'token'}:${command.startRequestId}`);
+                  if (!receipt) throw new Error('First-send outcome is unknown. Check saved threads before sending again.');
+                  requested = await receipt;
+                }
+                if (requested !== '') {
+                  const lease = await pool.connect(requested);
                   if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
                   selected.set(ws, lease);
                 }
@@ -432,8 +445,8 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
           } finally { commandPending = false; }
           return;
         }
-        if (!['prompt', 'stop', 'set_model', 'new_thread', 'switch_thread', 'delete_thread', 'release_thread'].includes(command.type)) throw new Error('Unsupported command');
-        const current = selected.get(ws)?.workspace ?? single;
+        if (!['prompt', 'stop', 'set_model', 'new_thread', 'draft_thread', 'switch_thread', 'delete_thread', 'release_thread'].includes(command.type)) throw new Error('Unsupported command');
+        let current = selected.get(ws)?.workspace ?? single;
         if (pool && command.threadId !== (current?.state.threadId ?? '')) throw new Error('The selected thread changed. Review it before retrying.');
         current?.assertThread(command.threadId);
         if (command.type === 'switch_thread' && (typeof command.targetId !== 'string' || !command.targetId || command.targetId.length > 255)) throw new Error('Thread ID required');
@@ -453,9 +466,33 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
               try { data = await photos.read(id); } catch { throw new Error('Photo expired or unavailable; attach it again'); }
               images.push({ type: 'image', data: data.toString('base64'), mimeType: 'image/jpeg' });
             }
+            if (!current && pool) {
+              const key = `${session ?? 'token'}:${command.id}`;
+              if (starts.has(key)) throw new Error('First-send request already received. Reconnect to inspect its thread; do not replay it.');
+              if (starts.size >= 1000) throw new Error('First-send receipt capacity reached. Open a thread explicitly.');
+              const creation = pool.connect(undefined, true);
+              const receipt = creation.then(lease => lease.workspace.state.threadId);
+              starts.set(key, receipt);
+              void receipt.catch(() => {});
+              const lease = await creation;
+              if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
+              selected.set(ws, lease);
+              current = lease.workspace;
+              // Publish selection before submission, including when submission fails.
+              send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
+            }
             if (!current) throw new Error('Select a thread first');
-            current.assertThread(command.threadId);
+            if (command.threadId) current.assertThread(command.threadId);
             await current.prompt(command.text, images, command.clientContext);
+          }
+          else if (command.type === 'draft_thread') {
+            if (pool) {
+              selected.get(ws)?.release();
+              selected.delete(ws);
+            } else {
+              // Legacy single-workspace integrations have no detached selection.
+              await single!.switchThread();
+            }
           }
           else if (command.type === 'release_thread') {
             const lease = selected.get(ws);

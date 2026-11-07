@@ -454,7 +454,7 @@ test('two websocket clients select independently; background runs, reconnect, ca
   const address = app.server.address(); assert.ok(address && typeof address !== 'string');
   const port = address.port;
   const sockets: WebSocket[] = [];
-  async function open(threadId = f.first) {
+  async function open(threadId = f.first, startRequestId?: string) {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin }); sockets.push(ws);
     const messages: ServerMessage[] = [];
     ws.on('message', raw => messages.push(JSON.parse(raw.toString())));
@@ -466,7 +466,7 @@ test('two websocket clients select independently; background runs, reconnect, ca
       }
       throw new Error('Message timeout');
     }
-    await once(ws, 'open'); ws.send(JSON.stringify({ type: 'auth', token, threadId }));
+    await once(ws, 'open'); ws.send(JSON.stringify({ type: 'auth', token, threadId, startRequestId }));
     const initial = await wait(m => m.type === 'snapshot');
     assert.equal(initial.type, 'snapshot');
     if (initial.type !== 'snapshot') throw new Error('Expected snapshot');
@@ -535,6 +535,32 @@ test('two websocket clients select independently; background runs, reconnect, ca
     assert.equal(f.pool.snapshot().threads.some(t => t.id === f.first), false);
     viewer.send({ type: 'prompt', threadId: f.first, id: 'deleted-prompt', text: 'stale' });
     await viewer.wait(m => m.type === 'error' && m.id === 'deleted-prompt');
+
+    const before = f.agents.size;
+    viewer.send({ type: 'draft_thread', threadId: '', id: 'blank' });
+    await viewer.wait(m => m.type === 'ack' && m.id === 'blank');
+    assert.equal(f.agents.size, before, 'opening a blank composer allocates no agent');
+    viewer.send({ type: 'prompt', threadId: '', id: 'invalid-first', text: '' });
+    await viewer.wait(m => m.type === 'error' && m.id === 'invalid-first');
+    assert.equal(f.agents.size, before, 'invalid first messages allocate nothing');
+    viewer.send({ type: 'prompt', threadId: '', id: 'first-send', text: 'A new conversation' });
+    const created = await viewer.wait(m => m.type === 'snapshot' && !!m.state.threadId);
+    assert.ok(created.type === 'snapshot');
+    const createdId = created.state.threadId;
+    await viewer.wait(m => m.type === 'ack' && m.id === 'first-send');
+    assert.equal(f.agents.size, before + 1);
+    assert.equal(f.agents.get(createdId)!.prompts, 1);
+    viewer.ws.close(); await once(viewer.ws, 'close');
+    const recovered = await open('', 'first-send');
+    assert.equal(recovered.initial.threadId, createdId, 'lost first-send selection is recoverable');
+    assert.equal(f.agents.get(createdId)!.prompts, 1, 'recovery never replays the prompt');
+    recovered.send({ type: 'draft_thread', threadId: createdId, id: 'detach' });
+    await recovered.wait(m => m.type === 'ack' && m.id === 'detach');
+    assert.equal(f.agents.get(createdId)!.stops, 0, 'New thread leaves the previous run alone');
+    recovered.send({ type: 'prompt', threadId: '', id: 'first-send', text: 'duplicate' });
+    await recovered.wait(m => m.type === 'error' && m.id === 'first-send');
+    assert.equal(f.agents.size, before + 1, 'duplicate first-send IDs cannot create another thread');
+    assert.equal(f.agents.get(createdId)!.prompts, 1);
   } finally {
     for (const ws of sockets) ws.terminate();
     await app.close(); await f.close();

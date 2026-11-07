@@ -16,8 +16,7 @@ const TerminalPane = lazy(() => import('./TerminalPane').then(module => ({ defau
 function initialThread() {
   const thread = new URLSearchParams(location.hash.slice(1)).get('thread');
   if (thread !== null) return thread;
-  try { return sessionStorage.getItem('nookframe.threadChooser') === 'true' ? '' : undefined; }
-  catch { return undefined; }
+  return '';
 }
 
 function App() {
@@ -47,19 +46,25 @@ function App() {
   const [terminalOpened, setTerminalOpened] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const activeThread = useRef(initialThread());
+  const startRequest = useRef<string | undefined>((() => {
+    try { return sessionStorage.getItem('nookframe.startRequest') ?? undefined; }
+    catch { return undefined; }
+  })());
+  function rememberStart(id?: string) {
+    startRequest.current = id;
+    try {
+      if (id) sessionStorage.setItem('nookframe.startRequest', id);
+      else sessionStorage.removeItem('nookframe.startRequest');
+    } catch { /* Reconnect recovery still works within this page. */ }
+  }
   const [attentionTarget, setAttentionTarget] = useState<string>();
   const attention = useAttentionNotifications(state?.threadId, tab === 'chat', id => {
     setTab('chat'); setAttentionTarget(id);
   });
   const sent = useRef<{ id: string; type: string; text?: string; threadId: string; photos?: string[]; decision?: string } | null>(null);
-  function rememberSelection(threadId: string, explicitRelease = false) {
+  function rememberSelection(threadId: string) {
     activeThread.current = threadId;
-    let hash = threadId ? `#thread=${encodeURIComponent(threadId)}` : location.hash === '#thread=' ? '#thread=' : '';
-    try {
-      if (threadId) sessionStorage.removeItem('nookframe.threadChooser');
-      else if (explicitRelease) sessionStorage.setItem('nookframe.threadChooser', 'true');
-    }
-    catch { if (explicitRelease) hash = '#thread='; } // URL fallback when browser storage is unavailable.
+    const hash = threadId ? `#thread=${encodeURIComponent(threadId)}` : '';
     history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
   }
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -140,12 +145,19 @@ function App() {
       attention.clear();
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
       socket.current = ws;
-      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth', threadId: activeThread.current })); };
+      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth', threadId: activeThread.current, startRequestId: startRequest.current })); };
       ws.onmessage = event => {
         if (disposed) return;
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'snapshot') {
           if (activeThread.current !== undefined && message.state.threadId !== activeThread.current && !message.selected) return;
+          if (startRequest.current && message.selected && message.state.threadId) {
+            const target = message.state.threadId;
+            setDrafts(current => ({ ...current, [target]: current[''] ?? '', '': '' }));
+            setPhotoDrafts(current => ({ ...current, [target]: current[''] ?? [], '': [] }));
+            if (sent.current?.type === 'prompt' && sent.current.threadId === '') sent.current.threadId = target;
+            rememberStart();
+          }
           rememberSelection(message.state.threadId);
           if ((message.selected || message.state.movedTo) && message.state.threadId && message.state.threadId === takeoverTarget.current) {
             setTakeoverError(''); takeoverTarget.current = undefined;
@@ -171,7 +183,8 @@ function App() {
           if (message.lockedThreadId) setLockedThreadId(message.lockedThreadId);
           if (message.id === sent.current?.id && (sent.current?.type.startsWith('takeover_') || sent.current?.type === 'switch_thread' && takeoverTarget.current)) setTakeoverError(message.message);
           if (sent.current && message.id === sent.current.id) {
-            if (sent.current.type === 'release_thread') rememberSelection(sent.current.threadId);
+            if (sent.current.type === 'release_thread' || sent.current.type === 'draft_thread') rememberSelection(sent.current.threadId);
+            if (sent.current.type === 'prompt') rememberStart();
             sent.current = null; setPending(false);
           }
         }
@@ -223,17 +236,24 @@ function App() {
     } finally { upload.current = null; setUploading(false); }
   }
   function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file }))); }
-  const canSend = !clientContext.invalidTimezone && connected && state?.available && !state.busy && !state.backgroundRun &&
+  const draftView = !!state && !state.threadId;
+  const composerAvailable = !!state && (state.available || draftView);
+  const canSend = !clientContext.invalidTimezone && connected && composerAvailable && state && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
-  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
+  function command(type: 'prompt' | 'stop' | 'set_model' | 'draft_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
     reading.show();
     const id = crypto.randomUUID();
     const threadId = state?.threadId ?? '';
     sent.current = { id, type, threadId, text: type === 'prompt' ? draft : undefined, photos: type === 'prompt' ? photos.map(p => p.key) : undefined };
     // Persist intent before dispatch so a lost acknowledgement cannot reopen the thread.
-    if (type === 'release_thread') rememberSelection('', true);
+    if (type === 'release_thread' || type === 'draft_thread') {
+      rememberSelection('');
+      rememberStart();
+    }
+    if (type === 'switch_thread') rememberStart();
+    if (type === 'prompt' && !threadId) rememberStart(id);
     setPending(true); setError('');
     socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
     // A new prompt resumes following; ordinary renders and incoming updates do not.
@@ -296,11 +316,11 @@ function App() {
       {state && <section className="thread-picker">
         <label htmlFor="thread">Thread</label>
         <select id="thread" value={state.threadId} disabled={!connected || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
-          {!state.threadId && <option value="" disabled>Choose a thread</option>}
+          {!state.threadId && <option value="" disabled>New chat</option>}
           {!!state.threadId && !state.threads.some(thread => thread.id === state.threadId) && <option value={state.threadId}>New thread (unsaved)</option>}
           {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.busy ? 'Working · ' : ''}{unread.has(thread.id) ? 'New · ' : ''}{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
         </select>
-        <button type="button" disabled={!connected || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
+        <button type="button" disabled={!connected || pending || uploading} onClick={() => command('draft_thread')}>New thread</button>
         <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => {
           const title = state.threads.find(thread => thread.id === state.threadId)?.title || 'this thread';
           if (window.confirm(`Permanently delete “${title}”? This removes its saved conversation, not shared workspace files. This cannot be undone.`)) command('delete_thread', undefined, state.threadId);
@@ -336,7 +356,7 @@ function App() {
         <div ref={scroll.content}>
         {!state?.messages.length && <div className="empty"><h2>What shall we work on?</h2>
           {!!state?.promptExamples?.length && <div className="prompt-examples" aria-label="Prompt examples">{state.promptExamples.map((example, index) =>
-            <button key={index} type="button" className="secondary" disabled={!connected || !state.available || state.busy || state.threadChanging || pending || uploading || !!draft.trim() || photos.length > 0} onClick={() => {
+            <button key={index} type="button" className="secondary" disabled={!connected || !composerAvailable || state.busy || state.threadChanging || pending || uploading || !!draft.trim() || photos.length > 0} onClick={() => {
               setDrafts(current => ({ ...current, [state.threadId]: example }));
               composer.current?.focus();
             }}>{example}</button>
@@ -346,14 +366,14 @@ function App() {
         {state?.liveText && <article className="message assistant"><label>pi · writing</label><MessageContent text={state.liveText} /></article>}
         </div>
       </main>
-      <footer onFocusCapture={event => setComposerFocused((event.target as HTMLElement).matches('textarea, input, select, [contenteditable="true"]'))} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setComposerFocused(false); }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !state?.available || state.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
+      <footer onFocusCapture={event => setComposerFocused((event.target as HTMLElement).matches('textarea, input, select, [contenteditable="true"]'))} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setComposerFocused(false); }} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={e => { e.preventDefault(); addPhotos(Array.from(e.dataTransfer.files)); }}>{!connected && <p role="status" className="notice">Disconnected — reconnecting; tasks continue</p>}{state?.notice && <p role="status" className="notice">{state.notice}</p>}{error && <p role="alert" className="error">{error}</p>}<PhotoPicker key={state?.threadId ?? ''} photos={photos} disabled={tab !== 'chat' || !connected || !composerAvailable || !!state?.threadChanging || pending} uploading={uploading} add={addPhotos} remove={key => setPhotoDrafts(current => ({ ...current, [state?.threadId ?? '']: photos.filter(p => p.key !== key) }))} retry={() => void uploadPhotos(photos.filter(p => !p.id), true)} /><form onSubmit={e => { e.preventDefault(); if (canSend) command('prompt'); }}><textarea onPaste={e => { const files = Array.from(e.clipboardData.files); if (files.length) { e.preventDefault(); addPhotos(files); } }} ref={composer} onKeyDown={e => {
         // Keep mobile Enter and IME confirmation native (229 covers Safari IME).
         if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches ||
           e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey ||
           e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         e.preventDefault();
         if (!e.repeat && canSend) e.currentTarget.form?.requestSubmit();
-      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!state?.available || state.threadChanging} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) && <button type="button" className="secondary" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button>}<button disabled={!canSend}>Send</button></div></form></footer>
+      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value }))} disabled={!composerAvailable || !!state?.threadChanging || pending} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) && <button type="button" className="secondary" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button>}<button disabled={!canSend}>Send</button></div></form></footer>
       </section>
       {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}

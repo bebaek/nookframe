@@ -50,7 +50,7 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     const errors: string[] = [];
     for (const page of [a, b]) page.on('pageerror', error => errors.push(error.message));
     async function login(page: Page) {
-      await page.goto(origin);
+      await page.goto(`${origin}/#thread=${encodeURIComponent(first)}`);
       await page.getByLabel('Access token').or(page.getByRole('button', { name: 'Workspace controls', exact: true })).first().waitFor();
       if (await page.getByLabel('Access token').isVisible()) {
         await page.getByLabel('Access token').fill(token);
@@ -88,10 +88,10 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     assert.equal(await a.locator('article.message').count(), 0);
     assert.equal(await a.getByLabel('Message', { exact: true }).inputValue(), '');
     assert.equal(await a.locator('#thread option').count(), 3);
-    assert.equal(existsSync(join(store.directory, empty)), false, 'real Pi RPC does not persist a blank session');
+    assert.equal(empty, '', 'new chat does not allocate a thread');
     assert.equal((await store.list()).length, 2, 'draft is not saved history');
     assert.equal(await b.locator('#thread option').count(), 2, 'other tabs do not list the draft');
-    assert.equal(new URLSearchParams(new URL(a.url()).hash.slice(1)).get('thread'), empty);
+    assert.equal(new URL(a.url()).hash, '');
     await a.reload(); await selected(a, empty);
     await selected(b, second);
     const stale = await a.evaluate(({ token, first, empty }) => new Promise<string>((resolve, reject) => {
@@ -124,7 +124,8 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     assert.equal(await b.locator('article.message').count(), 0);
     assert.equal((await store.list()).some(thread => thread.id === second), false);
     await a.getByRole('button', { name: 'New thread', exact: true }).click();
-    await a.waitForFunction(() => !!(document.querySelector('#thread') as HTMLSelectElement)?.value);
+    await selected(a, '');
+    assert.equal(new URL(a.url()).hash, '');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await app.close(); await workspace.close(); await rm(dir, { recursive: true, force: true }); }
 });
