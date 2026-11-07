@@ -7,7 +7,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { ThreadStore } from '../server/threads.js';
 import { fileURLToPath } from 'node:url';
 import { ConfirmedRpcClient } from '../server/jobs/agent.js';
-import { existingPiRuntime } from '../server/existing-pi.js';
+import { existingPiRuntime, verifyExistingPiRpc } from '../server/existing-pi.js';
 
 function fixture() { return mkdtempSync(join(tmpdir(), 'existing-pi-')); }
 function session(cwd: string, dir: string) {
@@ -78,22 +78,36 @@ test('external CLI resumes an original session and uses its project cwd over RPC
     const store = new ThreadStore(join(root, 'ui'), root, join(root, 'state'), { root: sessionRoot, flat: false });
     await store.list();
     const cli = join(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent/rpc-entry'))), 'cli.js');
-    const runtime = existingPiRuntime({ NOOKFRAME_PI_BIN: cli, PI_CODING_AGENT_DIR: agentDir, WORKSPACE_DIR: root }, root);
+    // Model the official installer's POSIX exec launcher, including environment
+    // setup and a path containing spaces/metacharacters (never shell-expanded).
+    const launcher = join(root, 'managed pi;launcher');
+    const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+    writeFileSync(launcher, `#!/bin/sh\nexport PI_MANAGED_INSTALL_ROOT=${quote(join(root, 'managed'))}\nexec ${quote(cli)} "$@"\n`, { mode: 0o700 });
+    for (const executable of [cli, launcher]) {
+    const runtime = existingPiRuntime({ NOOKFRAME_PI_BIN: executable, PI_CODING_AGENT_DIR: agentDir, WORKSPACE_DIR: root }, root);
     const options = {
       cliPath: runtime.cliPath, cwd: store.workingDirectory(file),
-      env: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1', PI_TELEMETRY: '0' },
+      env: { NOOKFRAME_PI_EXECUTABLE: runtime.executable, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1', PI_TELEMETRY: '0' },
       args: ['--session', file, '--session-dir', store.sessionDirectory(file), '--no-extensions', '--no-approve'],
     };
     client = new ConfirmedRpcClient(options);
     await client.start();
+    await verifyExistingPiRpc(client, file);
     assert.equal((await client.getState()).sessionFile, file);
     assert.ok((await client.getMessages()).some(message => message.role === 'user'));
     const result = await client.bash('pwd');
     assert.equal(result.output.trim(), cwd);
+    if (executable === launcher) {
+      assert.equal((await client.bash('printf "%s" "$PI_MANAGED_INSTALL_ROOT"')).output, join(root, 'managed'));
+    }
+    const pid = (client as unknown as { process: { pid: number } }).process.pid;
     await client.stop();
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'confirmed stop terminates the actual Pi process');
     client = new ConfirmedRpcClient(options);
     await client.start();
     assert.ok((await client.getMessages()).some(message => message.role === 'bashExecution'));
+    await client.stop();
+    }
   } finally { await client?.stop(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -103,21 +117,33 @@ test('external runtime resolves installed CLI/profile, fails closed on incompati
     const pkg = join(root, 'package');
     mkdirSync(join(pkg, 'dist'), { recursive: true });
     const cli = join(pkg, 'dist', 'cli.js');
-    writeFileSync(cli, '#!/usr/bin/env node\n'); chmodSync(cli, 0o700);
+    writeFileSync(cli, '#!/bin/sh\nprintf "1.5.0\\n"\n'); chmodSync(cli, 0o700);
     writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '1.5.0', bin: { pi: 'dist/cli.js' } }));
     const bin = join(root, 'bin'); mkdirSync(bin); symlinkSync(cli, join(bin, 'pi'));
     const env = { PATH: bin, WORKSPACE_DIR: root };
     const runtime = existingPiRuntime(env, root);
-    assert.equal(runtime.cliPath, cli);
+    assert.equal(runtime.executable, cli);
+    assert.match(runtime.cliPath, /pi-executable-entry\.(ts|js)$/);
     assert.equal(runtime.agentDir, join(root, '.pi/agent'));
     assert.equal(runtime.flatSessions, false);
     assert.equal(existingPiRuntime({ ...env, PI_CODING_AGENT_DIR: '~/profile', PI_CODING_AGENT_SESSION_DIR: join(root, 'custom') }, root).flatSessions, true);
     assert.throws(() => existingPiRuntime({ PATH: '' }, root), /not found/);
     assert.throws(() => existingPiRuntime({ ...env, PI_CODING_AGENT_SESSION_DIR: 'relative' }, root), /absolute/);
+    for (const version of ['1.5.1', '1.6.0', '1.99.3', '1.5.0+build.1']) {
+      writeFileSync(cli, `#!/bin/sh\nprintf '${version}\\n'\n`);
+      assert.equal(existingPiRuntime(env, root).executable, cli);
+    }
+    for (const version of ['1.4.9', '2.0.0', '1.6.0-beta.1', 'not-pi', '']) {
+      writeFileSync(cli, `#!/bin/sh\nprintf '${version}\\n'\n`);
+      assert.throws(() => existingPiRuntime(env, root), /stable Pi/);
+    }
+    writeFileSync(cli, '#!/bin/sh\nprintf "1.5.0\\n"\n');
     mkdirSync(runtime.agentDir, { recursive: true });
     writeFileSync(join(runtime.agentDir, 'settings.json'), JSON.stringify({ sessionDir: '/custom' }));
     assert.throws(() => existingPiRuntime(env, root), /explicitly/);
-    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '0.1.0' }));
+    writeFileSync(cli, '#!/bin/sh\nprintf "0.1.0\\n"\n');
     assert.throws(() => existingPiRuntime(env, root), /1\.5\.0/);
+    writeFileSync(cli, '#!/bin/sh\necho private-diagnostic >&2\nexit 1\n');
+    assert.throws(() => existingPiRuntime(env, root), error => error instanceof Error && /Could not run/.test(error.message) && !error.message.includes('private-diagnostic'));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

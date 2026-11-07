@@ -14,7 +14,7 @@ done
 if [[ "$pi_mode" == existing ]]; then
   pi_bin="${NOOKFRAME_PI_BIN:-$(command -v pi || true)}"
   if [[ -z "$pi_bin" ]]; then
-    printf 'Pi not found. Install Pi 1.5.0 or set NOOKFRAME_PI_BIN; use --isolated for a separate profile.\n' >&2
+    printf 'Pi not found. Install stable Pi 1.x (>=1.5.0) or set NOOKFRAME_PI_BIN; use --isolated for a separate profile.\n' >&2
     exit 1
   fi
 fi
@@ -65,7 +65,7 @@ chmod 700 .local/start
 if [[ "$pi_mode" == isolated ]]; then
   printf '\nLog in with:\n  PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi\n'
 else
-  printf '\nUses your existing Pi profile and sessions (npm Pi 1.5.0 required). No separate login.\nWARNING: Close terminal Pi before opening a shared chat. Stop Nookframe before resuming it in Pi. Closing a browser tab is NOT a handoff.\n'
+  printf '\nUses your existing Pi profile and sessions (stable Pi 1.x >=1.5.0, official installer or npm). No separate login.\nWARNING: Close terminal Pi before opening a shared chat. Stop Nookframe before resuming it in Pi. Closing a browser tab is NOT a handoff.\n'
 fi
 printf '\nRun .local/start and open http://localhost:3000\n'
 if [[ "$mode" == --local ]]; then
