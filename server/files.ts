@@ -37,6 +37,10 @@ export class FileStore {
     return { ...reference, data: await readFile(reference.path) };
   }
   async resolve(thread: string, id: string) { const { data: _, ...reference } = await this.read(this.threadKey(thread), id); return reference; }
+  async copy(sourceThread: string, targetThread: string, id: string) {
+    const file = await this.read(this.threadKey(sourceThread), id);
+    return this.save(targetThread, file.name, file.data);
+  }
   private async save(thread: string, name: string, data: Buffer) {
     const key = this.threadKey(thread);
     if (data.length > MAX_FILE_BYTES) throw new Error('Files must be at most 20 MB');

@@ -47,12 +47,13 @@ export interface Snapshot {
 }
 export type ClientCommand =
   // Empty threadId explicitly selects the chooser; omitted retains legacy default selection.
-  | { type: 'auth'; token?: string; threadId?: string }
+  | { type: 'auth'; token?: string; threadId?: string; startRequestId?: string }
   | { type: 'push_focus'; threadId: string; focused: boolean }
   | { type: 'prompt'; id: string; text: string; threadId: string; photos?: string[]; files?: string[]; clientContext?: import('./client-context.js').ClientContext }
   | { type: 'stop'; id: string; threadId: string }
   | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
   | { type: 'new_thread'; id: string; threadId: string }
+  | { type: 'draft_thread'; id: string; threadId: string }
   | { type: 'release_thread'; id: string; threadId: string }
   | { type: 'takeover_request'; id: string; targetId: string }
   | { type: 'takeover_open'; id: string; targetId: string; requestId: string }

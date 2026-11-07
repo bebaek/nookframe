@@ -66,10 +66,34 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
     const jobsStatus = JSON.parse(container('exec', name, 'nookframe', 'jobs', 'status'));
     assert.equal(jobsStatus.schedulingAvailable, false);
     assert.equal(jobsStatus.runnerLiveness, 'unknown');
+    // Fresh browser visits do not allocate a chat, even when signed in.
+    assert.equal(await page.getByLabel('Thread', { exact: true }).inputValue(), '');
+    assert.equal(new URL(page.url()).hash, '');
+    // Provision a thread explicitly through the supported protocol for the
+    // image-CLI fixture. This offline test must not submit a model prompt.
+    const threadId = await page.evaluate(() => new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      let created = '';
+      const timer = setTimeout(() => { ws.close(); reject(new Error('Fixture thread creation timed out')); }, 10000);
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', threadId: '' }));
+      ws.onmessage = event => {
+        const message = JSON.parse(event.data);
+        if (message.type === 'snapshot' && message.selected) {
+          if (!message.state.threadId) ws.send(JSON.stringify({ type: 'new_thread', id: 'image-fixture', threadId: '' }));
+          else created = message.state.threadId;
+        } else if (message.type === 'ack' && message.id === 'image-fixture') {
+          clearTimeout(timer); ws.close(); resolve(created);
+        } else if (message.type === 'error') {
+          clearTimeout(timer); ws.close(); reject(new Error(message.message));
+        }
+      };
+    }));
+    assert.ok(threadId.endsWith('.jsonl'));
+    await page.goto(`${origin}/#thread=${encodeURIComponent(threadId)}`);
+    await page.reload(); // A same-document hash change alone does not select a thread.
+    await page.waitForFunction(id => (document.querySelector('#thread') as HTMLSelectElement)?.value === id, threadId);
     // Exec/terminal processes have no selected chat. Bind the CLI explicitly;
     // real chat agents receive this identity in NOOKFRAME_IMAGE_THREAD_ID.
-    const threadId = await page.getByLabel('Thread', { exact: true }).inputValue();
-    assert.ok(threadId.endsWith('.jsonl'));
     const imageCli = (...args: string[]) => container('exec', '-e', 'NOOKFRAME_IMAGE_STATE_DIR=/data/state', name, 'imagectl', '--thread', threadId, ...args);
     const imageContext = JSON.parse(imageCli('context'));
     // docker cp cannot access this runtime tmpfs mount. Stream into an exec

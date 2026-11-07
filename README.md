@@ -303,12 +303,21 @@ only after clicking Enable. OS focus policies may prevent raising a window.
 There is no separate approval-needed or stalled-run detection yet.
 
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
-A blank thread is shown as **New thread (unsaved)** and is not added to saved
-history. Pi creates its session file at the first conversation message (including
-your first submitted prompt), not when you click **New thread**. A live draft
-can reconnect on the same server while its agent remains loaded, but cannot be
-resumed after release, idle eviction, or a server restart. Existing saved threads
-and older empty session files are unchanged.
+Fresh visits without a thread link also open this blank composer, not the server's
+existing default thread. In multi-thread mode, blank chats allocate no agent or
+thread until **Send**; the URL stays at the base address while composing or attaching
+photos. First Send creates and selects the thread, adds `#thread=…` to the URL,
+and submits the message. Reloads and explicit thread links restore that selection.
+**New thread** clears the selection without stopping work in the previous thread.
+Pi writes the session file at the first conversation message. Existing saved
+threads and older empty session files are unchanged.
+
+First-send reconnects recover the selection without replaying the message. Recovery
+receipts are session-scoped and bounded in server memory; after a server restart an
+unconfirmed first send reports an unknown outcome. Check saved threads before
+retrying. A created but still-unsaved thread cannot survive server restart or idle
+eviction. Legacy single-workspace integrations retain their immediate allocation
+behavior.
 Each thread has its own pi JSONL history; all threads share workspace files,
 and credentials, but use separate agent processes. Thread titles come from the first user message
 (or an existing pi session name). Switching itself makes no model request.
