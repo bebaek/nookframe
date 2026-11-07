@@ -67,7 +67,8 @@ export class Workspaces {
       const live = state?.threads.find(t => t.id === thread.id);
       return { ...thread, ...live, busy: !!state?.backgroundRun || (state?.busy ?? false) };
     });
-    return workspace ? { ...workspace.state, threads } : {
+    return workspace ? { ...workspace.state, threads, sessionSharingWarning: this.threads.sessionSharingWarning } : {
+      sessionSharingWarning: this.threads.sessionSharingWarning,
       messages: [], liveText: '', tools: {}, busy: false, available: false,
       model: '', models: [], modelSource: 'pi', modelChanging: false,
       notice: 'Choose a thread or create a new one. Threads share files, not running agents.',

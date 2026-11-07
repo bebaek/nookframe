@@ -23,12 +23,12 @@ Requires Node.js 24+, Bash, Python 3, make, and a C++ compiler. From the
 Nookframe checkout:
 
 ```bash
-# 1. Install (token authentication by default).
+# 1. Install (existing Pi + token authentication by default).
 bash scripts/install-native.sh
 # For tokenless access on a private single-user host, use --local instead.
 
-# 2. Configure pi: /login, choose a model, then exit.
-PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi
+# 2. Close terminal Pi for any chats you will open in Nookframe.
+# Existing credentials/settings are reused; no separate login.
 
 # 3. Start; open http://localhost:3000.
 .local/start
@@ -37,8 +37,36 @@ PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi
 For token authentication, read `.local/access-token` privately in your editor
 and enter it in the browser. Never commit or log the token.
 
-Defaults: loopback-only port **3000**, workspace **`.local/workspace`**, pi
-profile/conversations **`.local/agent`**, application state **`.local/state`**.
+Defaults: loopback-only port **3000**, new-chat workspace **`.local/workspace`**,
+existing Pi profile **`PI_CODING_AGENT_DIR` or `~/.pi/agent`**, application state
+**`.local/state`**. Native installation now defaults to an **existing-Pi PoC**:
+Pi must be npm-installed version **1.4.0**, resolved from `NOOKFRAME_PI_BIN` or
+`PATH`. Shell wrappers, standalone binaries and other versions are rejected;
+there is no silent bundled fallback. The pinned dependency still supplies the
+RPC client and session reader, but foreground agents use your installed CLI.
+
+Existing chats across projects are listed in place with their project paths.
+Each resumes in its original working directory with Pi restoring its model.
+New chats use Pi's normal cwd-grouped session layout. An absolute
+`PI_CODING_AGENT_SESSION_DIR` selects a flat custom session directory; if you
+use a `sessionDir` setting, supply that environment variable explicitly.
+Symlink session roots/directories/files are not supported in this PoC.
+
+**One UI at a time per chat:** close terminal Pi before opening that chat here.
+Stop Nookframe and wait for it to exit before resuming the chat in terminal Pi.
+Closing a browser tab does **not** stop its agent. Locks only coordinate
+Nookframe writers, not ordinary Pi processes. Concurrent terminal/browser
+writes can corrupt history. No automatic handoff or attachment to a live Pi
+process is provided. Background jobs are not supported in this mode.
+The terminal tab is a separate shell, not the selected chat's Pi process.
+Project extensions and skills run with your host-user privileges.
+
+Use `bash scripts/install-native.sh --isolated` for the previous dedicated
+`.local/agent` profile and bundled CLI, then log in with
+`PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi`.
+Existing launchers and container/manual deployments are unchanged; the server
+uses this PoC only when `NOOKFRAME_PI_MODE=existing`. No sessions are migrated
+from the legacy `workspace-sessions` directory.
 The installer builds this checkout and creates the launcher; it does not use
 sudo, install a service, start the server, or overwrite an existing launcher.
 
@@ -49,8 +77,9 @@ WORKSPACE_DIR="$HOME/projects/my-project" .local/start
 ```
 
 For a permanent choice, set `export WORKSPACE_DIR="/absolute/project/path"`
-in `.local/start`. The workspace is pi's working directory, shared by all chat
-threads—not chat storage or a sandbox. Use separate profiles/state for unrelated
+in `.local/start`. In existing-Pi mode the workspace is the working directory for **new** chats;
+existing chats retain their own working directories. In isolated mode it is
+shared by all chat threads. It is not chat storage or a sandbox. Use separate profiles/state for unrelated
 projects rather than repurposing existing conversations.
 
 Manual tokenless startup uses `NOOKFRAME_LOCAL_ACCESS=1` instead of
