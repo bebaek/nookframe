@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existingPiRuntime } from './existing-pi.js';
+import { existingPiRuntime, verifyExistingPiRpc } from './existing-pi.js';
 import { validateLocalAccess } from './local-access.js';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
@@ -68,7 +68,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
   const selection = existingPi ? { source: 'pi' as const } : selectThreadModel(stateDir, threadStateDir, agentDir, process.env, newlyCreated);
   const client = new ConfirmedRpcClient({
     cliPath: background ? fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './jobs/pi-worker.ts' : './jobs/pi-worker.js', import.meta.url)) : cliPath, cwd: threads.workingDirectory(file),
-    env: { NOOKFRAME_PRESENCE_DIR: background ? '' : presenceDir, NOOKFRAME_PRESENCE_THREAD_ID: threads.id(file), NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
+    env: { ...(existingPi ? { NOOKFRAME_PI_EXECUTABLE: existingPi.executable } : {}), NOOKFRAME_PRESENCE_DIR: background ? '' : presenceDir, NOOKFRAME_PRESENCE_THREAD_ID: threads.id(file), NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
     provider: selection.model?.provider,
     model: selection.model?.id,
     args: ['--session', file, '--session-dir', threads.sessionDirectory(file), ...(background ? backgroundArgs : [...extensionArgs, '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './agent-presence-extension.ts' : './agent-presence-extension.js', import.meta.url)), '--extension', fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './client-context-extension.ts' : './client-context-extension.js', import.meta.url)), ...(existingPi ? [] : ['--no-approve']), '--skill', join(root, 'skills/mail/SKILL.md'), '--skill', join(root, 'skills/calendar/SKILL.md'), '--skill', join(root, 'skills/images/SKILL.md'), '--skill', join(root, 'skills/files/SKILL.md'), '--skill', join(root, 'skills/jobs/SKILL.md'), '--skill', join(root, 'skills/operations/SKILL.md')])],
@@ -79,6 +79,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
   });
   return { workspace: controller, start: async () => {
     await client.start();
+    if (existingPi) await verifyExistingPiRpc(client, file);
     if (!background && !(await client.getCommands()).some(command => command.name === clientContextCommand && command.source === 'extension')) {
       throw new Error('Client context extension unavailable');
     }
