@@ -40,7 +40,7 @@ and enter it in the browser. Never commit or log the token.
 Defaults: loopback-only port **3000**, new-chat workspace **`.local/workspace`**,
 existing Pi profile **`PI_CODING_AGENT_DIR` or `~/.pi/agent`**, application state
 **`.local/state`**. Native installation now defaults to an **existing-Pi PoC**:
-Pi must be npm-installed version **1.4.0**, resolved from `NOOKFRAME_PI_BIN` or
+Pi must be npm-installed version **1.5.0**, resolved from `NOOKFRAME_PI_BIN` or
 `PATH`. Shell wrappers, standalone binaries and other versions are rejected;
 there is no silent bundled fallback. The pinned dependency still supplies the
 RPC client and session reader, but foreground agents use your installed CLI.

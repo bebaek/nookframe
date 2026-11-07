@@ -22,14 +22,14 @@ export function existingPiRuntime(env: NodeJS.ProcessEnv, home = homedir()) {
       const pkg = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
       if (pkg.name === '@earendil-works/pi-coding-agent') {
         const bin = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin?.pi;
-        compatible = pkg.version === '1.4.0' && typeof bin === 'string' && bin.endsWith('.js')
+        compatible = pkg.version === '1.5.0' && typeof bin === 'string' && bin.endsWith('.js')
           && cliPath === realpathSync(join(directory, bin));
         break;
       }
     } catch { /* Not a package root. */ }
     directory = dirname(directory);
   }
-  if (!compatible) throw new Error('Existing-Pi PoC requires the npm-installed Pi 1.4.0 CLI (not a shell wrapper). Set NOOKFRAME_PI_BIN to that CLI; no bundled fallback is used.');
+  if (!compatible) throw new Error('Existing-Pi PoC requires the npm-installed Pi 1.5.0 CLI (not a shell wrapper). Set NOOKFRAME_PI_BIN to that CLI; no bundled fallback is used.');
   const profile = env.PI_CODING_AGENT_DIR || join(home, '.pi', 'agent');
   const agentDir = resolve(profile.startsWith('~/') ? join(home, profile.slice(2)) : profile);
   const custom = env.PI_CODING_AGENT_SESSION_DIR;

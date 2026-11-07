@@ -104,7 +104,7 @@ test('external runtime resolves installed CLI/profile, fails closed on incompati
     mkdirSync(join(pkg, 'dist'), { recursive: true });
     const cli = join(pkg, 'dist', 'cli.js');
     writeFileSync(cli, '#!/usr/bin/env node\n'); chmodSync(cli, 0o700);
-    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '1.4.0', bin: { pi: 'dist/cli.js' } }));
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '1.5.0', bin: { pi: 'dist/cli.js' } }));
     const bin = join(root, 'bin'); mkdirSync(bin); symlinkSync(cli, join(bin, 'pi'));
     const env = { PATH: bin, WORKSPACE_DIR: root };
     const runtime = existingPiRuntime(env, root);
@@ -118,6 +118,6 @@ test('external runtime resolves installed CLI/profile, fails closed on incompati
     writeFileSync(join(runtime.agentDir, 'settings.json'), JSON.stringify({ sessionDir: '/custom' }));
     assert.throws(() => existingPiRuntime(env, root), /explicitly/);
     writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '0.1.0' }));
-    assert.throws(() => existingPiRuntime(env, root), /1.4.0/);
+    assert.throws(() => existingPiRuntime(env, root), /1\.5\.0/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
