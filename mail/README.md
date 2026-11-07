@@ -2,8 +2,44 @@
 
 Gmail via IMAP/XOAUTH2, `mbsync` → Maildir → per-account `notmuch` indexes.
 IMAP is download-only: no remote flag updates, deletion, or expunge.
-Local drafts can be explicitly sent through Gmail's REST API. Gmail has no SMTP,
-provider draft creation, or remote mailbox-management operations.
+Local drafts can be explicitly sent through Gmail's REST API. Approved Gmail
+message-level mark-read and trash plans also use REST; IMAP remains download-only.
+Gmail has no SMTP, provider draft creation, or permanent deletion support.
+
+## Approved Gmail mailbox actions
+
+1. Read the message with `mailctl read ACCOUNT:THREAD_ID`. Use its exact RFC
+   message `id`, not the conversation reference or a guessed Gmail ID.
+2. Create a local immutable plan (this performs live read-only Gmail lookups):
+   `mailctl gmail-action plan ALIAS_OR_ID --file FILE` (or `--file -`).
+   Input is exactly `{"action":"mark-read","messageId":"example@mail.test"}`
+   or `{"action":"trash","messageId":"example@mail.test"}`.
+3. `mailctl gmail-action show ID` shows the stored account/email, current identity,
+   exact message sender/subject/date/labels, action and version hash. Show these
+   to the user and obtain explicit approval for that plan and version.
+4. `mailctl gmail-action execute ID --version HASH --confirm` rechecks the live
+   metadata and labels before writing. Changes invalidate approval: prepare and
+   review a new plan instead. A thread's other/new messages are never targeted.
+5. `mailctl gmail-action status ID` reports `not_attempted`, `verified`, `rejected`
+   or `uncertain`. `verified` means fresh Gmail read-back showed the desired label
+   state. A timeout, ambiguous response or failed read-back stays `uncertain`.
+   Never replay an attempted plan, remove its marker, or automatically create a
+   replacement. Inspect Gmail before resolving uncertainty. Rejection requires
+   fixing the cause and fresh approval of a replacement plan.
+
+Execution durably records an attempt before POST and shares the account sync lock.
+After verified remote success, local notmuch tags are reconciled across copies:
+mark-read removes `unread`; trash adds `gmail-trash`. Unread searches exclude
+`gmail-trash`; ordinary archive searches retain those messages. IMAP remains
+Pull-only and does not push local changes. Later remote restores/removals are not
+mirrored. `localIndex=failed` or `pending` means the local archive may be stale;
+remote success must not be retried to fix indexing. A successful sync can refresh
+read flags, but does not remove the archive's `gmail-trash` tag after a remote
+restore. No automatic message classification, report-spam, archive, bulk/thread
+writes, untrash, mark-unread, or permanent deletion is implemented. Gmail normally
+permanently deletes trash after 30 days; mention that when reviewing a trash plan.
+Preflight is best-effort, not atomic with POST: Gmail has no conditional label-write
+operation here. Human or other-client changes may race with the approved action.
 
 Zoho `.com` accounts (including primary custom-domain mailboxes) use the separate
 live REST API workflow below. They do not use Gmail IMAP, the local index, the

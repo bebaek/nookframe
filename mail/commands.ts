@@ -156,7 +156,7 @@ export async function searchMail(store: MailStore, options: { account?: string; 
     try {
       const supplied = options.query?.trim() || '*';
       // Notmuch treats '*' as match-all only when it is the entire query.
-      const query = options.unread ? (supplied === '*' ? 'tag:unread' : `tag:unread AND (${supplied})`) : supplied;
+      const query = options.unread ? (supplied === '*' ? 'tag:unread AND NOT tag:gmail-trash' : `tag:unread AND NOT tag:gmail-trash AND (${supplied})`) : supplied;
       const raw = await privateCommand('/usr/bin/notmuch', [...indexArgs(store, account), 'search', '--format=json', '--output=summary', `--limit=${limit}`, '--', query]);
       const found = JSON.parse(raw);
       if (!Array.isArray(found)) throw new Error();

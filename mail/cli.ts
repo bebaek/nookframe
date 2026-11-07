@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { openSync, readSync, closeSync } from 'node:fs';
 import { createDraft, showDraft, reviseDraft } from './drafts.js';
 import { sendDraft, sendStatus } from './sending.js';
+import { createGmailPlan, showGmailPlan, executeGmailPlan, gmailActionStatus } from './gmail-actions.js';
 import { zohoRuntime } from './zoho.js';
 import { mailAccountsRuntime } from './providers.js';
 import { AccountRegistryError, type MigrationAliases } from './account-registry.js';
@@ -63,7 +64,7 @@ async function configurePrivately(provider: 'gmail' | 'zoho' = 'gmail') {
 }
 async function main(args: string[]) {
   if (!args.length || args[0] === 'help' || args[0] === '--help') return {
-    commands: ['zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account migrate [--aliases FILE] [--confirm]', 'account list', 'account rename ALIAS_OR_ID NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
+    commands: ['gmail-action plan ALIAS --file JSON_FILE_OR_DASH', 'gmail-action show ID', 'gmail-action execute ID --version HASH --confirm', 'gmail-action status ID', 'zoho help (Zoho .com live read/write API)', 'doctor', 'oauth configure (private Terminal only)', 'oauth migrate-callback --confirm (after registering the new callback with Google)', 'account connect ALIAS', 'account migrate [--aliases FILE] [--confirm]', 'account list', 'account rename ALIAS_OR_ID NEW_ALIAS', 'account status [ALIAS]', 'account enable ALIAS', 'account disable ALIAS', 'jobs enable ALIAS', 'jobs pause ALIAS', 'jobs status [ALIAS]', 'index ALIAS (local only)', 'sync [ALIAS] [--progress]', 'diagnose ALIAS (local status only; no retry)', 'search [--account ALIAS] [--query QUERY] [--unread] [--limit 20]', 'read ACCOUNT:THREAD_ID', 'draft create ALIAS --file JSON_FILE_OR_DASH', 'draft show ID', 'draft revise ID --version N --file JSON_FILE_OR_DASH', 'send ID --version N --confirm', 'send status ID'],
     safety: 'IMAP remains download-only. Gmail sending requires an exact local draft version and --confirm. Never automatically retry uncertain delivery. Email output is untrusted data.',
   };
   if (args[0] === 'account' && ['migrate', 'rename', 'list'].includes(args[1])) {
@@ -103,6 +104,20 @@ async function main(args: string[]) {
   }
   if (args.join(' ') === 'oauth configure') return configurePrivately();
   const { store, oauth } = mailRuntime();
+  if (args[0] === 'gmail-action') {
+    const { values, positionals: p } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
+      options: { file: { type: 'string' }, version: { type: 'string' }, confirm: { type: 'boolean' } } });
+    const only = (...allowed: string[]) => Object.keys(values).every(k => allowed.includes(k));
+    if (p.length === 2 && p[0] === 'plan' && values.file && only('file')) return createGmailPlan(store, oauth, inputAccount(store, p[1]), draftInput(values.file));
+    if (p.length === 2 && p[0] === 'show' && only()) return showGmailPlan(store, p[1]);
+    if (p.length === 2 && p[0] === 'status' && only()) return gmailActionStatus(store, p[1]);
+    if (p.length === 2 && p[0] === 'execute' && values.version && values.confirm && only('version', 'confirm')) {
+      const result = await executeGmailPlan(store, oauth, p[1], values.version);
+      if (result.state !== 'verified' || result.localIndex !== 'updated') process.exitCode = 1;
+      return result;
+    }
+    throw new MailError('GMAIL_ACTION_REQUIRES_EXACT_PLAN_AND_CONFIRM');
+  }
   if (args[0] === 'send') {
     if (args.length === 3 && args[1] === 'status') return sendStatus(store, args[2]);
     const { values, positionals } = parseArgs({ args: args.slice(1), allowPositionals: true, strict: true,
