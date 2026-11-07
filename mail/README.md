@@ -251,7 +251,56 @@ creation and persist privately under `$MAIL_DIR/drafts`; include this directory
 in your mail backups. Revisions replace all content fields and increment the version;
 a stale version fails rather than overwriting another edit. Bodies are limited
 to 100,000 UTF-8 bytes, JSON input to 128,000 bytes, and each recipient list to
-50 addresses. Attachments, Bcc, reply threading, and listing/removal are deferred. Draft text remains untrusted data, not authorization.
+50 addresses. Attachments, Bcc, and listing are deferred. Draft text remains untrusted data, not authorization.
+
+### Delete an unused local draft
+
+Inspect `mailctl draft show ID`, then explicitly approve deletion of that ID/version:
+
+```sh
+mailctl draft delete ID --version N --confirm
+```
+
+This removes only the local draft, not Gmail mail or remote drafts. Deletion uses
+the same cross-process lock as sending and revision, checks the exact version,
+and refuses any send-attempt record (sent, rejected, uncertain, or corrupt).
+Attempt records are never removed. A missing or invalid draft fails closed; after
+an interrupted deletion, inspect `draft show` before retrying. Sent/rejected/uncertain
+drafts and their history must be retained. Zoho plans are not supported by this command.
+
+### Reply preparation (provider-aware)
+
+```sh
+mailctl draft reply personal --message 'parent@example.com' --file reply.json
+mailctl draft reply work --message '1709876190693100009' --file reply.json
+```
+
+The account registry selects the provider. Without a migrated registry, this command
+supports legacy Gmail aliases only; use `zoho plan` for legacy Zoho accounts.
+`reply.json` has the same explicit `to`, optional `cc`, `subject`, `body` fields as
+new-message drafts. There is no automatic recipient selection or reply-all: inspect
+the original message and choose the intended Reply-To/From recipient yourself.
+Preparation never sends or changes remote mail.
+
+For **Gmail**, `--message` is the exact RFC Message-ID from `mailctl read` (angle
+brackets optional), NOT the local search conversation ID or a Gmail API ID. The
+command looks up that message in the selected account using the Gmail API, requires
+one exact match, and fetches Message-ID, References, Subject and Gmail thread ID.
+This requires Gmail API access even if IMAP works. Missing/ambiguous targets,
+malformed headers and mismatched subjects fail closed. Supply the original subject
+with an optional `Re:` prefix; changing the topic requires a new non-reply draft.
+The resulting local draft includes validated reply metadata and Gmail-specific
+transport identifiers. Revisions preserve the target and increment the version.
+Review `draft show ID`, including the reply target, then obtain approval before
+`send ID --version N --confirm`. Sending adds standard In-Reply-To/References headers
+and the Gmail threadId. Ordinary `draft create` still creates a new message.
+
+For **Zoho**, `--message` is the exact decimal message ID returned by live search.
+This command creates the existing immutable Zoho reply plan; it does not convert it
+to a Gmail draft or look up headers. Review `zoho show ID`, obtain approval, and use
+`zoho execute ID --version HASH --confirm`. The response identifies this workflow.
+Recipients and subject must be explicitly reviewed, just as for other Zoho plans.
+Provider-specific approval formats and single-attempt/no-retry rules are unchanged.
 
 ## Explicit Gmail sending
 

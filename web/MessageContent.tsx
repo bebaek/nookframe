@@ -7,7 +7,7 @@ export function inlineImageUrl(url: string) {
   return /^\/(?:photos|response-images)\/[a-f0-9]{64}$/.test(url) || /^\/artifacts\/[a-f0-9]{64}\/[a-f0-9]{64}\/(?:preview|full)$/.test(url);
 }
 function safeLink(url: string) {
-  return /^(?:https?:\/\/|mailto:)/i.test(url) || inlineImageUrl(url) || /^\/artifacts\/[a-f0-9]{64}\/[a-f0-9]{64}\/download$/.test(url) ? url : '';
+  return /^(?:https?:\/\/|mailto:)/i.test(url) || inlineImageUrl(url) || /^\/(?:artifacts|files)\/[a-f0-9]{64}\/[a-f0-9]{64}\/download$/.test(url) ? url : '';
 }
 function ImagePreview({ url, description }: { url: string; description: string }) {
   const [status, setStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');

@@ -18,7 +18,7 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
   const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
   const file = store.create(); persistSession(file, dir, 'Existing conversation');
   const existing = store.id(file);
-  let agents = 0, prompts = 0;
+  let agents = 0, prompts = 0, lastPrompt = '';
   const pool = new Workspaces(store, existing, (file, stateDir) => {
     agents++;
     let emit: (event: unknown) => void = () => {};
@@ -29,7 +29,7 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
       async getAvailableModels() { return [model]; },
       async getEntries() { return { entries: [], leafId: null }; },
       async prompt(text: string) {
-        prompts++;
+        prompts++; lastPrompt = text;
         persistSession(file, dir, text || 'Photo message');
         emit({ type: 'message_end', message: { role: 'user', content: text } });
         emit({ type: 'agent_settled' });
@@ -72,15 +72,22 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
     await page.reload(); await page.getByText('Ready', { exact: true }).waitFor();
     assert.equal(new URL(page.url()).hash, ''); assert.equal(agents, 1);
     const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'red' } }).png().toBuffer();
-    await page.locator('input[type=file]').first().setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: png });
+    await page.locator('input[type=file]').first().setInputFiles([
+      { name: 'test.png', mimeType: 'image/png', buffer: png },
+      { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Draft attachment') },
+    ]);
     await page.waitForFunction(() => !(Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Send') as HTMLButtonElement)?.disabled);
     assert.equal(agents, 1, 'photo upload must not allocate a thread');
     assert.equal(new URL(page.url()).hash, '');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForFunction(() => location.hash.startsWith('#thread='));
     await page.getByText('Ready', { exact: true }).waitFor();
-    await page.locator('.draft-photo').waitFor({ state: 'detached' });
+    await page.waitForFunction(() => !document.querySelector('.draft-photo'));
     assert.equal(prompts, 2); assert.equal(agents, 2);
+    assert.match(lastPrompt, /Attached file: notes.txt/);
+    const attachment = page.getByRole('link', { name: /Attached file: notes.txt/ }).first();
+    const download = await page.request.get(new URL((await attachment.getAttribute('href'))!, origin).href);
+    assert.equal(await download.text(), 'Draft attachment');
     assert.notEqual(page.url(), firstUrl);
     await page.goto(`${origin}/#thread=${encodeURIComponent(existing)}`);
     await page.reload(); // Load the explicit link, rather than a same-document hash change.

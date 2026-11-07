@@ -97,9 +97,13 @@ button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2p
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 360px; overflow-y: auto; }
 details { margin-top: 8px; } summary { cursor: pointer; color: #a8c2dc; font-size: 14px; }
 footer { flex-shrink: 0; padding: 8px 16px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid #29333f; }
-footer form { display: flex; gap: 8px; align-items: flex-end; }
-footer textarea { flex: 1; min-width: 0; }
-footer .actions { margin: 0; gap: 6px; flex-shrink: 0; }
+footer form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 8px; align-items: end; }
+footer textarea { min-width: 0; grid-column: 2; grid-row: 2; }
+footer .actions { margin: 0; gap: 6px; grid-column: 3; grid-row: 2; }
+.composer-menu-toggle { grid-column: 1; grid-row: 2; min-width: 44px; min-height: 44px; }
+.composer-menu { inset: auto auto max(76px, env(safe-area-inset-bottom)) 16px; margin: 0; padding: 8px; border: 1px solid #45566b; border-radius: 12px; background: #18212c; color: inherit; box-shadow: 0 8px 32px #0008; }
+.composer-menu:popover-open { display: flex; flex-direction: column; gap: 8px; }
+.composer-attachments { grid-column: 1 / -1; grid-row: 1; margin-bottom: 4px; max-height: 32dvh; overflow-y: auto; }
 footer button { padding: 8px 12px; }
 footer .notice, footer .error { margin: 0 0 8px; max-height: 100px; overflow: auto; }
 textarea, input { font: inherit; color: inherit; width: 100%; background: #171e26; border: 1px solid #3a495a; border-radius: 10px; padding: 12px; }
@@ -114,9 +118,7 @@ button.secondary { background: #29333f; color: #e2e8ef; }
 .login p, .empty p { color: #a4b4c6; line-height: 1.6; }.empty { text-align: center; padding: 48px 10px; }
 .error { color: #ffb3ab; overflow-wrap: anywhere; }.notice { color: #efd18d; }.error, .notice { font-size: 13px; }
 @media (max-width: 600px) { header { padding: max(4px, env(safe-area-inset-top)) 10px 4px; gap: 6px; } h1 { line-height: 18px; } h1 span { display: block; font-size: 12px; line-height: 16px; } .badge { padding: 5px 7px; } .tabs button { padding: 8px 10px; } .transcript { padding: 10px 12px; } footer { padding: 8px 10px max(8px, env(safe-area-inset-bottom)); } .message { padding: 12px; margin-bottom: 12px; } .message.user { margin-left: 12px; } .conversation-context { padding-inline: 12px; } }
-.photo-picker { margin-bottom: 4px; max-height: 32dvh; overflow-y: auto; }
-.photo-buttons { display: flex; gap: 8px; }
-.photo-buttons button { font-size: 12px; }
+.photo-picker { display: contents; }
 .photo-previews { display: flex; gap: 8px; overflow-x: auto; margin: 8px 0; }
 .photo-previews img { display: block; width: 112px; height: 88px; object-fit: contain; border-radius: 8px; background: #101419; }
 .draft-photo { position: relative; flex-shrink: 0; width: 140px; min-height: 88px; padding-right: 28px; }
