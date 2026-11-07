@@ -130,6 +130,27 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       assert.equal(await input.evaluate(el => el === document.activeElement), true);
       assert.equal(await exampleButton.isDisabled(), true);
       assert.deepEqual(prompts, []);
+      // Focus shortcuts preserve drafts and never submit, including when
+      // already focused. Terminal retains its own keyboard handling.
+      for (const shortcut of ['Control+Enter', 'Meta+Enter']) {
+        await input.fill('shortcut draft');
+        await page.getByRole('tab', { name: 'Chat', exact: true }).focus();
+        await page.keyboard.press(shortcut);
+        assert.equal(await input.evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press(shortcut);
+        assert.equal(await input.inputValue(), 'shortcut draft');
+        assert.deepEqual(prompts, []);
+      }
+      const chatTab = page.getByRole('tab', { name: 'Chat', exact: true });
+      await chatTab.focus();
+      await chatTab.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true });
+      assert.equal(await input.evaluate(el => el === document.activeElement), false);
+      await chatTab.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, repeat: true });
+      assert.equal(await input.evaluate(el => el === document.activeElement), false);
+      await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+      await page.keyboard.press('Control+Enter');
+      assert.equal(await input.evaluate(el => el === document.activeElement), false);
+      await chatTab.click();
       await input.fill('hello');
       if (mobile) {
         await input.press('Enter');

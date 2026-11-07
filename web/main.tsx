@@ -70,6 +70,19 @@ function App() {
     history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
   }
   const composer = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!signedIn || checkingAuth || tab !== 'chat') return;
+    function focusComposer(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) ||
+        event.shiftKey || event.altKey || event.isComposing || event.keyCode === 229) return;
+      const input = composer.current;
+      if (!input || input.disabled || document.querySelector('dialog[open], [aria-modal="true"]')) return;
+      event.preventDefault();
+      if (!event.repeat) input.focus();
+    }
+    window.addEventListener('keydown', focusComposer);
+    return () => window.removeEventListener('keydown', focusComposer);
+  }, [signedIn, checkingAuth, tab]);
   // Finish autosizing before the transcript hook measures its viewport. The
   // temporary zero height can clamp scrollTop even if the final height is unchanged.
   useLayoutEffect(() => {
@@ -364,7 +377,7 @@ function App() {
           e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         e.preventDefault();
         if (!e.repeat && canSend) e.currentTarget.form?.requestSubmit();
-      }} aria-label="Message" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => { inputHistory.reset(); setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value })); }} disabled={!state?.available || state.threadChanging} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) ? <button key="stop" type="button" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button> : <button key="send" type="submit" disabled={!canSend}>Send</button>}</div></form></footer>
+      }} aria-label="Message" aria-keyshortcuts="Control+Enter Meta+Enter" title="Focus message: Ctrl+Enter / ⌘+Enter" placeholder="Message pi…" value={draft} maxLength={32000} onChange={e => { inputHistory.reset(); setDrafts(current => ({ ...current, [state?.threadId ?? '']: e.target.value })); }} disabled={!state?.available || state.threadChanging} rows={1} /><div className="actions">{(state?.busy || state?.backgroundRun) ? <button key="stop" type="button" disabled={!connected || pending || state?.backgroundRun?.stopping} onClick={() => command('stop')}>{state?.backgroundRun?.stopping ? 'Stopping…' : 'Stop'}</button> : <button key="send" type="submit" disabled={!canSend}>Send</button>}</div></form></footer>
       </section>
       {terminalOpened && <Suspense fallback={<p hidden={tab !== 'terminal'}>Opening terminal…</p>}><TerminalPane visible={tab === 'terminal'} /></Suspense>}
     </>}
