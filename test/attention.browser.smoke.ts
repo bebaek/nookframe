@@ -21,11 +21,12 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
   try {
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     page.setDefaultTimeout(5000);
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(`(() => {
+    await page.context().addInitScript(`(() => {
       const w = window;
       w.notifications = [];
       w.permissionRequests = 0;
@@ -45,9 +46,9 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     })()`);
     // Exercise the basic fallback when service-worker registration is unavailable.
     await page.route('**/notification-worker.js', route => route.abort());
-    await page.route('**/auth/session', route => route.fulfill({ json: { authenticated: true } }));
+    await page.context().route('**/auth/session', route => route.fulfill({ json: { authenticated: true } }));
     // This fixture exercises local fallback, not a push-capable HTTPS server.
-    await page.route('**/api/push', route => route.fulfill({ status: 503 }));
+    await page.context().route('**/api/push', route => route.fulfill({ status: 503 }));
     const threads = [{ id: 'a', title: 'Private A', updatedAt: '2026-01-01', busy: false }, { id: 'b', title: 'Private B', updatedAt: '2026-01-01', busy: false }];
     const state: Snapshot = { threadId: 'a', threads, busy: false, available: true, messages: [], tools: {}, liveText: '', model: 'fixture', models: [], modelSource: 'pi', modelChanging: false, threadChanging: false, notice: '' };
     const focusReports: { threadId: string; focused: boolean }[] = [];
@@ -75,6 +76,7 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
         // A browser round trip ensures each catalog frame is consumed before assertions.
         await page.waitForTimeout(40);
       }
+      await page.waitForTimeout(200); // Allow the bounded cross-tab focus query to complete.
     }
     await run('b'); assert.equal(await count(), 0, 'no notification before opt-in');
     assert.ok(focusReports.some(report => report.threadId === 'a' && report.focused), 'focused chat reported to server');
@@ -88,16 +90,33 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.waitForFunction(() => location.hash === '#thread=b');
     await page.evaluate(() => { (window as any).fixtureFocus = false; window.dispatchEvent(new Event('blur')); });
     await run('b'); assert.equal(await count(), 2, 'unfocused active conversation notifies');
+
+    const other = await page.context().newPage();
+    await other.routeWebSocket('**/ws', ws => {
+      ws.onMessage(raw => {
+        if (JSON.parse(String(raw)).type === 'auth') {
+          ws.send(JSON.stringify({ type: 'snapshot', state: { ...state, threadId: 'b' }, selected: true }));
+        }
+      });
+    });
+    await other.goto(`http://127.0.0.1:${address.port}/#thread=b`);
+    await other.getByRole('button', { name: 'Workspace controls', exact: true }).waitFor();
+    await run('b'); assert.equal(await count(), 2, 'another focused tab reading the same chat suppresses fallback notifications');
+    await run('a'); assert.equal(await count(), 3, 'focused tab on a different chat does not suppress');
+    await other.evaluate(() => { (window as any).fixtureFocus = false; });
+    await run('b'); assert.equal(await count(), 4, 'unfocused matching tab does not suppress');
+    await other.close();
+    await run('b'); assert.equal(await count(), 5, 'closed matching tab does not leave stale focus');
     assert.equal(focusReports.at(-1)?.focused, false, 'blur immediately clears foreground suppression');
     assert.equal(focusReports.at(-1)?.threadId, 'b');
     await page.evaluate(() => { (window as any).fixtureFocus = true; window.dispatchEvent(new Event('focus')); });
-    await run('b'); assert.equal(await count(), 2, 'returning to focused chat is silent');
+    await run('b'); assert.equal(await count(), 5, 'returning to focused chat is silent');
     assert.equal(focusReports.at(-1)?.focused, true);
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
     await page.waitForTimeout(40);
     assert.equal(focusReports.at(-1)?.focused, false, 'page exit clears foreground suppression');
     await page.getByRole('button', { name: 'Disable notifications', exact: true }).click();
-    await run('a'); assert.equal(await count(), 2);
+    await run('a'); assert.equal(await count(), 5);
     assert.equal(await page.evaluate(() => (window as any).notifications.every((n: any) => n.closed)), true);
     assert.deepEqual(errors, []);
 
@@ -112,6 +131,20 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     const worker = page.context().serviceWorkers()[0];
     assert.ok(worker);
     await page.evaluate(() => { (window as any).fixtureFocus = false; });
+    const reader = await context.newPage();
+    await reader.routeWebSocket('**/ws', ws => {
+      ws.onMessage(raw => {
+        if (JSON.parse(String(raw)).type === 'auth') {
+          ws.send(JSON.stringify({ type: 'snapshot', state: { ...state, threadId: 'a' }, selected: true }));
+        }
+      });
+    });
+    await reader.goto(`http://127.0.0.1:${address.port}/#thread=a`);
+    await reader.getByRole('button', { name: 'Workspace controls', exact: true }).waitFor();
+    await run('a');
+    assert.equal(await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length), 0,
+      'another focused tab reading the same chat suppresses worker notifications');
+    await reader.close();
     await run('a');
     await page.waitForFunction(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length === 1);
     assert.equal(await count(), 0, 'worker notification does not use the page Notification constructor');

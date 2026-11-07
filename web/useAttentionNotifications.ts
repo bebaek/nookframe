@@ -15,6 +15,45 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   const notifications = useRef(new Set<Notification>());
   const worker = useRef<Promise<ServiceWorker | undefined> | undefined>(undefined);
   const generation = useRef(0);
+  const focusChannel = useRef<BroadcastChannel | undefined>(undefined);
+
+  // Ask live tabs rather than caching focus, which can become stale after a tab closes.
+  // Respond even when this tab has notifications disabled: it may still be reading the chat.
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel('nookframe.attentionFocus');
+    focusChannel.current = channel;
+    channel.onmessage = ({ data }) => {
+      if (data?.type !== 'query' || typeof data.requestId !== 'string' || typeof data.threadId !== 'string') return;
+      const view = current.current;
+      if (view.signedIn && document.visibilityState === 'visible' && document.hasFocus() &&
+        (data.takeover === true || (view.chat && view.selected === data.threadId))) {
+        channel.postMessage({ type: 'focused', requestId: data.requestId });
+      }
+    };
+    return () => { focusChannel.current = undefined; channel.close(); };
+  }, []);
+
+  function focusedElsewhere(threadId: string, takeover: boolean): Promise<boolean> {
+    const channel = focusChannel.current;
+    if (!channel) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const requestId = crypto.randomUUID();
+      const finish = (focused: boolean) => {
+        clearTimeout(timer);
+        channel.removeEventListener('message', receive);
+        resolve(focused);
+      };
+      const receive = ({ data }: MessageEvent) => {
+        if (data?.type === 'focused' && data.requestId === requestId) finish(true);
+      };
+      // Unfocused/background tabs need not answer, so they cannot delay notification delivery.
+      const timer = setTimeout(() => finish(false), 150);
+      channel.addEventListener('message', receive);
+      channel.postMessage({ type: 'query', requestId, threadId, takeover });
+    });
+  }
+
   const pushEnabled = useRef(false);
   const pushSetup = useRef<Promise<void>>(Promise.resolve());
   const toggling = useRef(false);
@@ -116,6 +155,7 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     if (!takeover && pushEnabled.current) return;
     const version = generation.current;
     const active = await prepareWorker();
+    if (await focusedElsewhere(id, takeover)) return;
     const view = current.current;
     if (version !== generation.current || !view.enabled || Notification.permission !== 'granted' ||
       (takeover ? document.visibilityState === 'visible' && document.hasFocus() : !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus()))) return;
