@@ -24,7 +24,7 @@ function checkApprovals(store: MailStore, directory: string, attempts: string, v
 }
 export function gmailAdapter(store: MailStore): MailProviderAdapter {
   return {
-    id: 'gmail', capabilities: ['local-search', 'local-read', 'sync', 'index', 'send'],
+    id: 'gmail', capabilities: ['local-search', 'local-read', 'sync', 'index', 'send', 'mailbox-write'],
     discover: () => store.accounts().map(a => ({ storageRef: store.connectionKey(a.alias), connectionRef: store.credentialKey(a.alias), suggestedAlias: store.accountLabel(a.alias) })),
     describe: key => {
       if (!existsSync(store.path('accounts', key + '.json'))) return { email: '', connected: false };
@@ -35,6 +35,10 @@ export function gmailAdapter(store: MailStore): MailProviderAdapter {
       checkPending(store);
       checkApprovals(store, 'drafts', 'outbox', draft => {
         if (store.account(draft.account).email !== draft.from) throw new Error();
+      });
+      checkApprovals(store, 'gmail-actions', 'gmail-action-attempts', plan => {
+        const account = store.account(plan.account);
+        if (account.email !== plan.email || account.subject !== plan.subject) throw new Error();
       });
       return action();
     }),

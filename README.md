@@ -501,7 +501,10 @@ Jobs use error-specific cooldowns and index local mail after failed downloads to
 `mailctl index ALIAS` makes existing downloads searchable without contacting Google.
 Search and read commands return bounded, explicitly untrusted email data with
 freshness and partial-index markers. IMAP never sends remote flag updates,
-remote deletes, or expunge. Sending is a separate explicit `mailctl send` operation. Gmail's OAuth scope is nevertheless broad, and the
+remote deletes, or expunge. Sending is a separate explicit `mailctl send` operation.
+Gmail mark-read/trash use immutable, version-approved `mailctl gmail-action` plans
+with live preflight and read-back verification (no permanent-delete endpoint).
+Gmail's OAuth scope is nevertheless broad, and the
 shared agent filesystem is not a credential sandbox.
 
 See [mail setup, Google consent requirements, limits, and trust model](mail/README.md).
