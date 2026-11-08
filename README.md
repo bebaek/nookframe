@@ -263,8 +263,15 @@ is reported on visibility/focus changes and renewed every 15 seconds; stale repo
 expire after 45 seconds so a suspended page cannot silence notifications indefinitely.
 The suppression happens before sending push, not by silently discarding incoming
 push events (which can trigger browser fallback notifications). Push notifications
-display only generic text, never conversation titles or content. The encrypted
-payload carries the opaque conversation identifier for navigation. Each completion
+display generic text by default, never conversation titles. Opt in to **Include
+response summaries in notifications** in workspace controls to show the final
+assistant response's first paragraph, with common Markdown stripped and capped at
+160 characters. No additional model call is made. Progress/tool output, failed or
+aborted responses, and empty previews fall back to generic text. Summaries can
+appear on lock screens; the preference is off by default and saved per browser
+push subscription (shared by tabs of that browser). Turning it off cannot retract
+already delivered notifications. The encrypted payload carries the opaque
+conversation identifier for navigation and, only when opted in, the summary. Each completion
 in a batch gets its own destination and notification tag.
 Clicking searches Nookframe tabs across windows for the exact conversation and
 asks each live tab for its current conversation, then tries to focus a match on

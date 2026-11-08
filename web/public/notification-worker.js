@@ -1,5 +1,6 @@
 // Notifications only: no fetch interception or caching.
 const validThreadId = value => typeof value === 'string' && value.length > 0 && value.length < 2048;
+const summaryBody = value => typeof value === 'string' ? Array.from(value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()).slice(0, 160).join('') : '';
 // WindowClient.url can lag behind SPA history changes. Ask the live page rather
 // than trusting its cached URL. Bound discovery so suspended tabs cannot hang a tap.
 function currentThread(client) {
@@ -17,12 +18,12 @@ function currentThread(client) {
   });
 }
 self.addEventListener('push', event => {
-  // Only the opaque destination is included in the encrypted payload; never chat text.
+  // Response summaries are included only for subscriptions that opted in.
   let payload;
   try { payload = event.data?.json(); } catch { /* Older/malformed pushes open home. */ }
   const threadId = payload?.type === 'attention' && validThreadId(payload.threadId) ? payload.threadId : undefined;
   event.waitUntil(self.registration.showNotification('Nookframe needs your attention', {
-    body: 'An agent run has ended. Open Nookframe to review the result.',
+    body: (payload?.type === 'attention' && summaryBody(payload.summary)) || 'An agent run has ended. Open Nookframe to review the result.',
     tag: threadId ? `nookframe:push:${threadId}` : 'nookframe:push',
     data: { push: true, ...(threadId ? { threadId } : {}) },
   }));
@@ -41,7 +42,7 @@ self.addEventListener('message', event => {
     }));
   } else if (data?.type === 'show-attention' && typeof data.threadId === 'string' && data.threadId.length > 0 && data.threadId.length < 2048) {
     event.waitUntil(self.registration.showNotification('Nookframe needs your attention', {
-      body: data.takeover === true ? 'Another slot requests this thread. Open Nookframe to allow takeover or keep it here.' : 'An agent run has ended. Open the conversation to review the result.',
+      body: data.takeover === true ? 'Another slot requests this thread. Open Nookframe to allow takeover or keep it here.' : summaryBody(data.summary) || 'An agent run has ended. Open the conversation to review the result.',
       tag: `nookframe:${client.id}:${data.threadId}`,
       data: { clientId: client.id, threadId: data.threadId },
     }).catch(() => client.postMessage({ type: 'attention-error' })));

@@ -7,6 +7,25 @@ import { PushNotifications, validateSubscription } from '../server/push.js';
 import type { ThreadChoice } from '../shared/protocol.js';
 
 const subscription = { endpoint: 'https://updates.push.services.mozilla.com/wpush/v2/example', keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) } };
+test('summaries are opt-in per subscription, persisted, and removable', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nookframe-push-summary-'));
+  const calls: { endpoint: string; payload: any }[] = [];
+  const send = async (s: any, payload: any) => { calls.push({ endpoint: s.endpoint, payload: JSON.parse(String(payload)) }); return {} as any; };
+  try {
+    let push = new PushNotifications(dir, 'https://example.test', () => true, send);
+    push.subscribe('private', subscription);
+    push.subscribe('preview', { ...subscription, endpoint: subscription.endpoint + '-preview' }, true);
+    push = new PushNotifications(dir, 'https://example.test', () => true, send);
+    await push.notify(undefined, ['thread'], new Map([['thread', '**Done**.\n\nDetails']]));
+    assert.equal(calls[0].payload.summary, undefined);
+    assert.equal(calls[1].payload.summary, 'Done.');
+    push.subscribe('preview', { ...subscription, endpoint: subscription.endpoint + '-preview' }, false);
+    calls.length = 0;
+    await push.notify(undefined, ['thread'], new Map([['thread', 'Private']]));
+    assert.ok(calls.every(call => !('summary' in call.payload)));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('push subscription destinations and keys are strictly validated', () => {
   assert.deepEqual(validateSubscription(subscription), subscription);
   for (const endpoint of ['http://updates.push.services.mozilla.com/x', 'https://localhost/x', 'https://127.0.0.1/x', 'https://updates.push.services.mozilla.com.evil.test/x', 'https://user@updates.push.services.mozilla.com/x']) {

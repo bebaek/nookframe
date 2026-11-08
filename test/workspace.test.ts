@@ -52,6 +52,34 @@ test('one run, streamed blocks, authoritative final message, settled not agent_e
   } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('notification summary is final-only and cannot carry across runs or aborts', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-summary-test-'));
+  const fake = fakeAgent();
+  const workspace = new Workspace(fake.agent, dir);
+  try {
+    await workspace.initialize();
+    workspace.state.threadId = 'thread';
+    workspace.state.threads = [{ id: 'thread', title: 'Test', updatedAt: '' }];
+    const summary = () => workspace.state.threads[0].notificationSummary;
+    await workspace.prompt('hello');
+    fake.emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '**Done**.\n\nDetails' }] } });
+    assert.equal(summary(), undefined, 'hidden until settled');
+    fake.emit({ type: 'agent_settled', aborted: false });
+    assert.equal(summary(), 'Done.');
+    for (const stopReason of ['toolUse', 'error', 'aborted', 'length']) {
+      await workspace.prompt('again');
+      assert.equal(summary(), undefined);
+      fake.emit({ type: 'message_end', message: { role: 'assistant', stopReason, content: [{ type: 'text', text: 'Not final' }] } });
+      fake.emit({ type: 'agent_settled', aborted: false });
+      assert.equal(summary(), undefined);
+    }
+    await workspace.prompt('again');
+    fake.emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Aborted run' }] } });
+    fake.emit({ type: 'agent_settled', aborted: true });
+    assert.equal(summary(), undefined);
+  } finally { await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('client context is validated before dispatch and reset for prompts without metadata', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-client-context-'));
   const fake = fakeAgent();

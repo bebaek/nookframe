@@ -7,6 +7,7 @@ import { saveModelSelection, type ModelSelection } from './models.js';
 import type { ThreadStore } from './threads.js';
 import { photoId, type PhotoContent } from './photos.js';
 import { ResponseImages } from './response-images.js';
+import { notificationSummary } from '../shared/notification-summary.js';
 import { parseClientContext, type ClientContext } from '../shared/client-context.js';
 
 export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
@@ -35,6 +36,7 @@ export class Workspace {
   private listeners = new Set<() => void>();
   private nextId = 0;
   private blocks = new Map<number, string>();
+  private finalSummary = '';
   private marker: string;
   readonly responseImages = new ResponseImages();
   private photos = new Map<string, Buffer>();
@@ -165,6 +167,7 @@ export class Workspace {
       this.threads.remember(target);
       this.state.threadId = this.threads.id(target);
       if (previous && !existsSync(previous)) this.threads.forget(previous);
+      this.finalSummary = '';
       this.state.threads = catalog;
       this.state.model = state.model ? `${state.model.provider}/${state.model.id}` : 'No model configured';
     } catch {
@@ -179,6 +182,9 @@ export class Workspace {
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private changed() {
+    this.state.threads = this.state.threads.map(thread => thread.id === this.state.threadId
+      ? { ...thread, notificationSummary: this.state.busy ? undefined : this.finalSummary || undefined }
+      : thread);
     this.pruneImages();
     for (const listener of this.listeners) listener();
   }
@@ -252,6 +258,7 @@ export class Workspace {
     }
   }
   private fail() {
+    this.finalSummary = '';
     this.state.available = false;
     this.state.busy = false;
     this.interruptTools();
@@ -262,9 +269,9 @@ export class Workspace {
   private event(event: JsonAgentSessionEvent) {
     if (this.state.threadChanging) return;
     switch (event.type) {
-      case 'agent_start': this.state.busy = true; break;
+      case 'agent_start': this.finalSummary = ''; this.state.busy = true; break;
       case 'message_start':
-        if (event.message.role === 'assistant') { this.blocks.clear(); this.state.liveText = ''; }
+        if (event.message.role === 'assistant') { this.finalSummary = ''; this.blocks.clear(); this.state.liveText = ''; }
         break;
       case 'message_update': {
         const e = event.assistantMessageEvent;
@@ -282,7 +289,12 @@ export class Workspace {
           });
         }
         this.append(event.message);
-        if (event.message.role === 'assistant') { this.state.liveText = ''; this.blocks.clear(); }
+        if (event.message.role === 'assistant') {
+          // Tool-call turns, errors and aborted responses are not final answers.
+          this.finalSummary = event.message.stopReason === 'stop'
+            ? notificationSummary(contentText(event.message.content)) : '';
+          this.state.liveText = ''; this.blocks.clear();
+        }
         break;
       case 'tool_execution_start': {
         const tool = this.operation(event.toolCallId, event.toolName, event.args);
@@ -306,6 +318,7 @@ export class Workspace {
         break;
       }
       case 'agent_settled':
+        if (event.aborted) this.finalSummary = '';
         this.state.busy = false;
         this.state.liveText = '';
         this.blocks.clear();
@@ -368,6 +381,7 @@ export class Workspace {
     // Slash commands / extensions need additional UI semantics; not exposed in v1.
     if (text.trimStart().startsWith('/')) throw new Error('Slash commands are not supported in this first version');
     writeFileSync(this.marker, new Date().toISOString(), { mode: 0o600 });
+    this.finalSummary = '';
     this.state.busy = true;
     this.state.notice = this.state.backgroundRun ? 'Read-only background run. Watch or Stop; continue after confirmed shutdown.' : '';
     this.changed();

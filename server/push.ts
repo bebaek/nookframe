@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from '
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ThreadChoice } from '../shared/protocol.js';
+import { notificationSummary } from '../shared/notification-summary.js';
 
 // Never accept arbitrary outbound destinations from subscription JSON (SSRF).
 export function validateSubscription(value: unknown): PushSubscription {
@@ -14,7 +15,7 @@ export function validateSubscription(value: unknown): PushSubscription {
   return { endpoint: url.href, keys: { p256dh: s.keys.p256dh, auth: s.keys.auth } };
 }
 
-type Saved = { keys: { publicKey: string; privateKey: string }; subscriptions: Record<string, PushSubscription> };
+type Saved = { keys: { publicKey: string; privateKey: string }; subscriptions: Record<string, PushSubscription>; summaries?: Record<string, boolean> };
 export class PushNotifications {
   private saved: Saved;
   private file: string;
@@ -30,20 +31,29 @@ export class PushNotifications {
   }
   get publicKey() { return this.saved.keys.publicKey; }
   has(session: string) { return !!this.saved.subscriptions[session]; }
-  subscribe(session: string, value: unknown) {
+  subscribe(session: string, value: unknown, includeSummary = false) {
     const subscription = validateSubscription(value);
     for (const [id, s] of Object.entries(this.saved.subscriptions)) {
-      if (!this.valid(id) || s.endpoint === subscription.endpoint) delete this.saved.subscriptions[id];
+      if (!this.valid(id) || s.endpoint === subscription.endpoint) {
+        delete this.saved.subscriptions[id];
+        if (this.saved.summaries) delete this.saved.summaries[id];
+      }
     }
-    this.saved.subscriptions[session] = subscription; this.save();
+    this.saved.subscriptions[session] = subscription;
+    (this.saved.summaries ??= {})[session] = includeSummary;
+    this.save();
   }
-  remove(session: string) { delete this.saved.subscriptions[session]; this.save(); }
+  remove(session: string) {
+    delete this.saved.subscriptions[session];
+    if (this.saved.summaries) delete this.saved.summaries[session];
+    this.save();
+  }
   update(threads: ThreadChoice[]) {
     const finished = threads.filter(t => this.busy.has(t.id) && t.busy === false).map(t => t.id);
     this.busy = new Set(threads.filter(t => t.busy).map(t => t.id));
-    if (finished.length) void this.notify(undefined, finished);
+    if (finished.length) void this.notify(undefined, finished, new Map(threads.map(t => [t.id, t.notificationSummary ?? ''])));
   }
-  async notify(only?: string, finished?: string[]) {
+  async notify(only?: string, finished?: string[], summaries = new Map<string, string>()) {
     // Freeze the completion-time decision across devices; focus changing during
     // delivery must not cause only some devices to receive a suppressed event.
     const destinations = finished?.filter(threadId => !this.focused(threadId));
@@ -53,11 +63,12 @@ export class PushNotifications {
       if ((only && only !== id) || this.pending.has(id)) continue;
       this.pending.add(id);
       try {
-        // Each completion needs its own encrypted destination. Never include
-        // conversation text/title or put the identifier in provider headers.
+        // Summaries are opt-in per subscription and stay inside the encrypted
+        // payload. Never put conversation content or identifiers in headers.
         for (const threadId of destinations ?? [undefined]) {
           if (!this.valid(id) || this.saved.subscriptions[id] !== subscription) break;
-          await this.send(subscription, JSON.stringify({ type: 'attention', ...(threadId ? { threadId } : {}) }), {
+          const summary = this.saved.summaries?.[id] && threadId ? notificationSummary(summaries.get(threadId) ?? '') : '';
+          await this.send(subscription, JSON.stringify({ type: 'attention', ...(threadId ? { threadId } : {}), ...(summary ? { summary } : {}) }), {
             vapidDetails: { subject: this.subject, ...this.saved.keys }, TTL: 3600, timeout: 10000,
           });
         }

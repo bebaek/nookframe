@@ -49,7 +49,7 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.context().route('**/auth/session', route => route.fulfill({ json: { authenticated: true } }));
     // This fixture exercises local fallback, not a push-capable HTTPS server.
     await page.context().route('**/api/push', route => route.fulfill({ status: 503 }));
-    const threads = [{ id: 'a', title: 'Private A', updatedAt: '2026-01-01', busy: false }, { id: 'b', title: 'Private B', updatedAt: '2026-01-01', busy: false }];
+    const threads = [{ id: 'a', title: 'Private A', updatedAt: '2026-01-01', busy: false }, { id: 'b', title: 'Private B', updatedAt: '2026-01-01', busy: false, notificationSummary: 'Private result: tests pass.' }];
     const state: Snapshot = { threadId: 'a', threads, busy: false, available: true, messages: [], tools: {}, liveText: '', model: 'fixture', models: [], modelSource: 'pi', modelChanging: false, threadChanging: false, notice: '' };
     const focusReports: { threadId: string; focused: boolean }[] = [];
     let socket: WebSocketRoute;
@@ -89,7 +89,14 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.evaluate(() => (window as any).notifications[0].onclick());
     await page.waitForFunction(() => location.hash === '#thread=b');
     await page.evaluate(() => { (window as any).fixtureFocus = false; window.dispatchEvent(new Event('blur')); });
+    const summaryToggle = page.getByRole('checkbox', { name: 'Include response summaries in notifications' });
+    assert.equal(await summaryToggle.isChecked(), false);
+    await summaryToggle.click();
+    await page.waitForFunction(() => localStorage.getItem('nookframe.notificationSummaries') === 'true');
     await run('b'); assert.equal(await count(), 2, 'unfocused active conversation notifies');
+    assert.equal(await page.evaluate(() => (window as any).notifications.at(-1).options.body), 'Private result: tests pass.');
+    await summaryToggle.click();
+    await page.waitForFunction(() => localStorage.getItem('nookframe.notificationSummaries') === 'false');
 
     const other = await page.context().newPage();
     await other.routeWebSocket('**/ws', ws => {
@@ -105,6 +112,7 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await run('a'); assert.equal(await count(), 3, 'focused tab on a different chat does not suppress');
     await other.evaluate(() => { (window as any).fixtureFocus = false; });
     await run('b'); assert.equal(await count(), 4, 'unfocused matching tab does not suppress');
+    assert.match(await page.evaluate(() => (window as any).notifications.at(-1).options.body), /An agent run has ended/);
     await other.close();
     await run('b'); assert.equal(await count(), 5, 'closed matching tab does not leave stale focus');
     assert.equal(focusReports.at(-1)?.focused, false, 'blur immediately clears foreground suppression');
