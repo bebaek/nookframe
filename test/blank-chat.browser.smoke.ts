@@ -88,7 +88,7 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
     assert.equal(agents, 2);
     assert.equal(await composer.inputValue(), 'Keep this draft');
     await page.locator('#model').selectOption('test/alternate');
-    await page.getByText('Saved for this thread and restarts', { exact: true }).waitFor();
+    await page.getByText('Saved for this thread · choosing a model also sets the new-chat default', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement).value === '');

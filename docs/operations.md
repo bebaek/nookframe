@@ -42,6 +42,10 @@ The target must already be loaded, available, non-background and owned by this i
 
 The selected model is atomically stored in `STATE_DIR/new-thread-model.json`, under a cross-process write lock and revision check. Only explicitly creating a new thread consumes it; an existing unpinned thread still uses the legacy fallback. A new thread snapshots its explicit default into its existing per-thread model preference before startup, so later default changes do not affect it when reopened or moved to another slot. Environment overrides win and block mutations. This default is scoped to the instance's state directory, not a global fleet setting. The initial bootstrap thread is treated as existing; use New thread to consume the new default.
 
+### Interactive model picker
+
+Choosing a model in the browser activates, verifies, and saves it for the selected chat, then remembers it as the default for future new chats on this instance. Other existing chats (including unpinned legacy chats) are unchanged. The remembered default survives restarts and uses the same cross-process write lock as new-thread plans; changing it invalidates outstanding default plans. Environment locks, unavailable/background targets, invalid models, and busy chats remain blocked. Failed or unconfirmed activation does not update the default. If activation succeeds but saving the default fails, the browser reports that partial outcome rather than claiming both succeeded. Explicit `thread` plans remain thread-only; use `new-threads` plans to change only the default.
+
 ### Outcomes and recovery
 
 States are `proposed`, `pending`, `applying`, `applied`, `rejected`, and `uncertain`. Retry the same apply ID only to retrieve its status, never to dispatch twice. A timeout is not proof of failure; inspect the plan and current model. Only `applied` confirms success. A pending change requested from its own conversation cannot settle until that conversation's run ends; the agent must report it as pending rather than poll forever.
@@ -50,4 +54,4 @@ Plans expire after 30 minutes; at most 200 are retained per server process. Priv
 
 ## Deferred
 
-Job controls, redacted diagnostics, build identity, per-user authorization, independent human-approval UI, audit-history browsing/retention, and deployment adapters remain future increments. Existing UI model controls are unchanged except that successful changes advance the operation revision.
+Job controls, redacted diagnostics, build identity, per-user authorization, independent human-approval UI, audit-history browsing/retention, and deployment adapters remain future increments. Interactive model choices also remember the new-chat default as described above.

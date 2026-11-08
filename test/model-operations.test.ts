@@ -11,6 +11,7 @@ import { setImmediate } from 'node:timers/promises';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { ModelOperations, newThreadModel, selectThreadModel } from '../server/model-operations.js';
 import { resolveModelSelection, saveModelSelection } from '../server/models.js';
+import lockfile from 'proper-lockfile';
 
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'model-operations-'));
@@ -75,6 +76,71 @@ test('new-thread defaults do not mutate legacy selection or any existing agent',
     assert.equal(selectThreadModel(f.dir, oldDir, f.dir, {}).model?.id, 'first');
     assert.equal(resolveModelSelection(f.dir, f.dir, {}).model?.id, 'first');
     assert.equal(newThreadModel(f.dir, f.dir, { AGENT_PROVIDER: 'test', AGENT_MODEL: 'first' }).source, 'environment');
+  } finally { await f.clean(); }
+});
+
+test('picker remembers confirmed choices across restart without changing other existing threads', async () => {
+  const f = await fixture();
+  try {
+    saveModelSelection(f.dir, { provider: 'test', id: 'first' });
+    const pinnedDir = join(f.dir, 'pinned');
+    selectThreadModel(f.dir, pinnedDir, f.dir, {}, true);
+    const stale = f.propose('new-threads');
+    await f.ops.selectFromPicker(f.target, 'test', 'second');
+    assert.equal(f.target.state.model, 'test/second');
+    assert.equal(resolveModelSelection(join(f.dir, 'thread'), f.dir, {}).model?.id, 'second');
+    assert.equal((await f.ops.apply(stale.id)).status, 'rejected');
+    const restarted = new ModelOperations(f.dir, f.dir, {}, f.lookup);
+    try { assert.equal(restarted.defaults().selection?.id, 'second'); }
+    finally { restarted.close(); }
+    assert.equal(selectThreadModel(f.dir, join(f.dir, 'next'), f.dir, {}, true).model?.id, 'second');
+    assert.equal(selectThreadModel(f.dir, pinnedDir, f.dir, {}).model?.id, 'first');
+    assert.equal(selectThreadModel(f.dir, join(f.dir, 'old-unpinned'), f.dir, {}).model?.id, 'first');
+    // Explicit thread-only changes must not overwrite the remembered picker default.
+    const threadOnly = f.ops.propose({ scope: 'thread', threadId: 'thread', model: { provider: 'test', id: 'first' } }, 'token');
+    assert.equal((await f.ops.apply(threadOnly.id)).status, 'applied');
+    assert.equal(f.target.state.model, 'test/first');
+    assert.equal(newThreadModel(f.dir, f.dir, {}).model?.id, 'second');
+    await f.ops.selectFromPicker(f.target, 'test', 'first');
+    assert.equal(newThreadModel(f.dir, f.dir, {}).model?.id, 'first');
+  } finally { await f.clean(); }
+});
+
+test('picker rejects invalid, busy, locked and failed switches without changing the default', async () => {
+  const f = await fixture();
+  try {
+    saveModelSelection(f.dir, { provider: 'test', id: 'first' });
+    await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'missing'), /catalog/);
+    await f.target.prompt('busy');
+    await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'second'), /current operation/);
+    await f.target.abort();
+    f.env.AGENT_PROVIDER = 'test'; f.env.AGENT_MODEL = 'first';
+    await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'second'), /locked/);
+    delete f.env.AGENT_PROVIDER; delete f.env.AGENT_MODEL;
+    const release = lockfile.lockSync(join(f.dir, 'model-operations'));
+    try { await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'second'), /Lock file is already being held/); }
+    finally { release(); }
+    assert.equal(f.switches(), 0);
+    f.agent.setModel = async () => { throw new Error('RPC failure'); };
+    await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'second'), /confirm and save/);
+    assert.equal(newThreadModel(f.dir, f.dir, {}).model?.id, 'first');
+  } finally { await f.clean(); }
+});
+
+test('picker reports default persistence failure separately from an activated thread model', async () => {
+  const f = await fixture();
+  try {
+    // Force the default write to fail only after the thread switch is confirmed.
+    const setModel = f.agent.setModel.bind(f.agent);
+    f.agent.setModel = async (provider, id) => {
+      const result = await setModel(provider, id);
+      mkdirSync(join(f.dir, 'new-thread-model.json'));
+      return result;
+    };
+    await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'second'), /Model saved for this chat, but/);
+    assert.equal(f.target.state.available, true);
+    assert.equal(f.target.state.model, 'test/second');
+    assert.equal(resolveModelSelection(join(f.dir, 'thread'), f.dir, {}).model?.id, 'second');
   } finally { await f.clean(); }
 });
 

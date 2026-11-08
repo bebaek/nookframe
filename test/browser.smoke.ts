@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { createApp } from '../server/http.js';
+import { ModelOperations, newThreadModel } from '../server/model-operations.js';
 import { TerminalSession } from '../server/terminal.js';
 
 test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', { timeout: 30000 }, async () => {
@@ -44,7 +45,8 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
   const port = address.port;
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${port}`;
-  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web'),
+  const modelOperations = new ModelOperations(dir, dir, {}, () => workspace);
+  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web'), modelOperations,
     terminal: new TerminalSession(dir, { PATH: `${resolve('node_modules/.bin')}:${process.env.PATH}`, HOME: dir,
       PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_OFFLINE: '1', PI_TELEMETRY: '0' }),
   });
@@ -74,8 +76,9 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     assert.ok(readingHeight > 650, `Phone reading area should exceed 650px, got ${readingHeight}`);
     await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await page.getByLabel('Model', { exact: true }).selectOption('test/second');
-    await page.getByText('Saved for this thread and restarts', { exact: true }).waitFor();
+    await page.getByText('Saved for this thread · choosing a model also sets the new-chat default', { exact: true }).waitFor();
     assert.equal(model.id, 'second');
+    assert.equal(newThreadModel(dir, dir, {}).model?.id, 'second');
     await page.screenshot({ path: '.local/controls-mobile-smoke.png', fullPage: false });
     await page.keyboard.press('Escape');
     assert.equal(await page.getByLabel('Model', { exact: true }).isVisible(), false);
