@@ -124,9 +124,24 @@ test('mobile browser: chat, independent terminal, reconnect, and real pi TUI', {
     await page.getByText('No matches', { exact: true }).waitFor();
     await page.getByLabel('Search terminal', { exact: true }).press('Escape');
     assert.equal(await page.getByLabel('Search terminal', { exact: true }).count(), 0);
-    await page.keyboard.press('Control+Shift+f');
-    await page.getByLabel('Search terminal', { exact: true }).waitFor();
-    await page.getByLabel('Search terminal', { exact: true }).press('Escape');
+    for (const modifier of ['Control', 'Meta']) {
+      await page.locator('.xterm-helper-textarea').focus();
+      await page.keyboard.press(`${modifier}+f`);
+      await page.getByLabel('Search terminal', { exact: true }).waitFor();
+      assert.equal(await page.getByLabel('Search terminal', { exact: true }).evaluate(el => el === document.activeElement), true);
+      await page.getByLabel('Search terminal', { exact: true }).press('Escape');
+    }
+    // Verify native Find is cancelled only at the terminal, not at other controls.
+    for (const [selector, shouldCancel] of [['.xterm-helper-textarea', true], ['.terminal-toolbar button', false]] as const) {
+      const cancelled = await page.locator(selector).first().evaluate(el => {
+        const event = new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', ctrlKey: true, bubbles: true, cancelable: true });
+        el.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+      assert.equal(cancelled, shouldCancel);
+      if (shouldCancel) await page.getByLabel('Search terminal', { exact: true }).press('Escape');
+    }
+    assert.equal(await page.getByLabel('Search terminal', { exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Restore', exact: true }).click();
     await page.getByLabel('Terminal font size', { exact: true }).selectOption('14');
     await page.getByLabel('High contrast', { exact: true }).uncheck();
