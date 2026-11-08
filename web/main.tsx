@@ -330,11 +330,17 @@ function App() {
     {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
       <section id="workspace-controls" popover="auto" aria-label="Workspace controls" className="workspace-controls">
       <div className="controls-heading"><h2>Workspace controls</h2><button type="button" className="secondary" aria-label="Close controls" popoverTarget="workspace-controls" popoverTargetAction="hide">×</button></div>
-      <section aria-label="Agent notifications">
-        <label><input type="checkbox" checked={attention.summaries} onChange={() => void attention.toggleSummaries()} /> Include response summaries in notifications</label>
-        <p><small>Off by default. Summaries may expose conversation content on your lock screen.</small></p>
-        <button type="button" className="secondary" disabled={!attention.available} aria-pressed={attention.enabled} onClick={() => void attention.toggle()}>{attention.enabled ? 'Disable notifications' : 'Enable notifications'}</button>
-        <p><small>{attention.available ? 'Background push notifies this browser when a run ends, even with the page closed. Delivery requires internet and browser background access. If push is unavailable, keep this page open and connected.' : 'Browser notifications are unavailable here.'}</small></p>
+      <section aria-label="Agent notifications" className="notification-settings">
+        <div className="notification-setting-row">
+          <span>Notifications</span>
+          <button type="button" className="notification-toggle" disabled={!attention.available} aria-label={attention.enabled ? 'Disable notifications' : 'Enable notifications'} aria-pressed={attention.enabled} onClick={() => void attention.toggle()}>{attention.enabled ? 'On' : 'Off'}</button>
+        </div>
+        <div className="notification-setting-row">
+          <span id="notification-summary-label">Show response summary</span>
+          <button type="button" className="notification-toggle" aria-labelledby="notification-summary-label" aria-describedby="notification-summary-privacy" aria-pressed={attention.summaries} onClick={() => void attention.toggleSummaries()}>{attention.summaries ? 'On' : 'Off'}</button>
+        </div>
+        <p id="notification-summary-privacy" className="notification-help">May reveal conversation content on your lock screen.</p>
+        {attention.available ? <details className="notification-help"><summary>About delivery</summary><p>Background push works even with the page closed. Delivery requires internet and browser background access. If push is unavailable, keep this page open and connected.</p></details> : <p className="notification-help">Browser notifications are unavailable here.</p>}
         {attention.status && <p role="status">{attention.status}</p>}
       </section>
       {state && <section className="thread-picker">

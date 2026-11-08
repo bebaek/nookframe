@@ -76,6 +76,16 @@ header:has(.tabs) > .badge { margin-left: 0; }
 .controls-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .controls-heading h2 { margin: 0; font-size: 17px; }
 .controls-heading button { font-size: 22px; padding: 4px 14px; }
+.notification-settings { display: grid; gap: 8px; padding-top: 16px; }
+.notification-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.notification-setting-row > span { min-width: 0; overflow-wrap: anywhere; }
+.notification-toggle { flex: 0 0 64px; min-height: 44px; padding: 8px 12px; border: 1px solid #46576a; background: #29333f; color: #dce7f3; }
+.notification-toggle[aria-pressed="true"] { background: #174765; border-color: #5cbcf2; color: #e5f5ff; }
+.notification-toggle:focus-visible { outline: 2px solid #8ed5ff; outline-offset: 3px; }
+.notification-settings .notification-help { margin: 0; color: #9aabbe; font-size: 12px; line-height: 1.5; }
+.notification-help summary { cursor: pointer; padding-block: 4px; }
+.notification-help p { margin: 4px 0 0; }
+.notification-settings > [role="status"] { margin: 0; font-size: 12px; color: #9aabbe; }
 .client-context-settings { display: flex; flex-direction: column; gap: 10px; padding-block: 16px; border-top: 1px solid #29333f; }
 .client-context-settings h3 { margin: 0; font-size: 15px; }
 .client-context-settings input[type="checkbox"] { width: auto; margin-right: 6px; }
