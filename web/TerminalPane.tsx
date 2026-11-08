@@ -62,7 +62,9 @@ export function TerminalPane({ visible }: { visible: boolean }) {
     search.current = searching;
     term.loadAddon(searching);
     term.attachCustomKeyEventHandler(event => {
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.code === 'KeyF') {
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.code === 'KeyF') {
+        // Returning false only stops xterm input; also suppress the browser's Find action.
+        event.preventDefault();
         if (event.type === 'keydown') { setSearchOpen(true); searchInput.current?.focus(); }
         return false;
       }
@@ -151,7 +153,7 @@ export function TerminalPane({ visible }: { visible: boolean }) {
       <button type="button" className="secondary" onClick={closeSearch}>Close search</button>
       <small role="status">{searchStatus}</small>
     </form>}
-    <details className="terminal-note"><summary>Private terminal · session help</summary><p>Not sent to chat or recorded by this app. Same workspace and permissions as the agent. Run <code>pi</code> for its TUI; avoid the chat session. Container restarts and maintenance shutdowns end this shell. Search with Ctrl/⌘+Shift+F; Enter finds next, Shift+Enter previous. Appearance is saved on this browser; terminal output is not.</p></details>
+    <details className="terminal-note"><summary>Private terminal · session help</summary><p>Not sent to chat or recorded by this app. Same workspace and permissions as the agent. Run <code>pi</code> for its TUI; avoid the chat session. Container restarts and maintenance shutdowns end this shell. Search with Ctrl+F / ⌘+F while the terminal is focused; browser Find is unchanged elsewhere. Enter finds next, Shift+Enter previous. Appearance is saved on this browser; terminal output is not.</p></details>
     <div ref={container} className="terminal-screen" aria-label="Workspace terminal" />
     <div className="terminal-controls"><small role="status">{status}</small>
       {exited && <button type="button" disabled={!online} onClick={() => socket.current?.send(JSON.stringify({ type: 'terminal_start' }))}>New shell</button>}
