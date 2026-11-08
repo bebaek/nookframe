@@ -18,18 +18,19 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
   const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
   const file = store.create(); persistSession(file, dir, 'Existing conversation');
   const existing = store.id(file);
-  let agents = 0, prompts = 0, lastPrompt = '';
+  let agents = 0, prompts = 0, lastPrompt = '', promptModel = '';
   const pool = new Workspaces(store, existing, (file, stateDir) => {
     agents++;
     let emit: (event: unknown) => void = () => {};
-    const model = { provider: 'test', id: 'fixture', input: ['text', 'image'] };
+    let model = { provider: 'test', id: 'fixture', input: ['text', 'image'] };
     const agent = {
       onEvent(fn: typeof emit) { emit = fn; return () => {}; },
       async getState() { return { sessionFile: file, model }; },
-      async getAvailableModels() { return [model]; },
+      async getAvailableModels() { return [model, { ...model, id: 'alternate' }]; },
+      async setModel(provider: string, id: string) { model = { ...model, provider, id }; },
       async getEntries() { return { entries: [], leafId: null }; },
       async prompt(text: string) {
-        prompts++; lastPrompt = text;
+        prompts++; lastPrompt = text; promptModel = model.id;
         persistSession(file, dir, text || 'Photo message');
         emit({ type: 'message_end', message: { role: 'user', content: text } });
         emit({ type: 'agent_settled' });
@@ -79,18 +80,31 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
     await page.waitForFunction(() => !(Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Send') as HTMLButtonElement)?.disabled);
     assert.equal(agents, 1, 'photo upload must not allocate a thread');
     assert.equal(new URL(page.url()).hash, '');
+    await composer.fill('Keep this draft');
+    await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await page.getByRole('button', { name: 'Choose model…', exact: true }).click();
+    await page.waitForFunction(() => location.hash.startsWith('#thread=') && document.querySelector('#model') instanceof HTMLSelectElement);
+    assert.equal(prompts, 1, 'choosing a model must not submit a prompt');
+    assert.equal(agents, 2);
+    assert.equal(await composer.inputValue(), 'Keep this draft');
+    await page.locator('#model').selectOption('test/alternate');
+    await page.getByText('Saved for this thread and restarts', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await page.waitForFunction(() => location.hash.startsWith('#thread='));
+    await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement).value === '');
     await page.getByText('Ready', { exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('.draft-photo'));
     assert.equal(prompts, 2); assert.equal(agents, 2);
+    assert.equal(promptModel, 'alternate');
+    assert.match(lastPrompt, /^Keep this draft/);
     assert.match(lastPrompt, /Attached file: notes.txt/);
     const attachment = page.getByRole('link', { name: /Attached file: notes.txt/ }).first();
     const download = await page.request.get(new URL((await attachment.getAttribute('href'))!, origin).href);
     assert.equal(await download.text(), 'Draft attachment');
     assert.notEqual(page.url(), firstUrl);
+    // Force a full navigation so an in-flight snapshot cannot overwrite the link's hash.
+    await page.goto('about:blank');
     await page.goto(`${origin}/#thread=${encodeURIComponent(existing)}`);
-    await page.reload(); // Load the explicit link, rather than a same-document hash change.
     await page.getByText('Ready', { exact: true }).waitFor();
     assert.equal(await page.locator('#thread').inputValue(), existing);
     assert.equal(prompts, 2);
