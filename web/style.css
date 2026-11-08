@@ -47,6 +47,8 @@ body { margin: 0; }
 @media (max-width: 600px) {
   .mobile-reading > header, .mobile-reading .chat-pane > footer { display: none; }
   .mobile-reading { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  /* Leave room to scroll the final line above the floating reveal button. */
+  .mobile-reading .transcript { padding-bottom: calc(56px + max(12px, env(safe-area-inset-bottom))); }
   .reading-controls { display: block; position: fixed; z-index: 5; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); min-height: 44px; font-size: 12px; box-shadow: 0 2px 8px #0008; }
 }
 header { flex-shrink: 0; padding: max(6px, env(safe-area-inset-top)) 16px 6px; border-bottom: 1px solid #29333f; display: flex; align-items: center; gap: 8px; }
