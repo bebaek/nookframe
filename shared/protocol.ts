@@ -23,7 +23,7 @@ export interface ChatMessage {
   error?: string;
   photos?: { id: string; url: string }[];
 }
-export interface ThreadChoice { id: string; title: string; updatedAt: string; busy?: boolean }
+export interface ThreadChoice { id: string; title: string; updatedAt: string; busy?: boolean; notificationSummary?: string }
 export interface ModelChoice { provider: string; id: string; images?: boolean }
 export type ModelSource = 'environment' | 'saved' | 'pi';
 export interface Snapshot {

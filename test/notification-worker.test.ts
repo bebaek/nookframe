@@ -71,6 +71,18 @@ test('worker binds notifications to exact sender, focuses before navigating, and
   assert.equal(notification.closed, true);
 });
 
+test('worker displays bounded summaries with generic fallback and unchanged takeover text', async () => {
+  const f = await fixture();
+  await f.emit('push', { data: { json: () => ({ type: 'attention', threadId: 'a', summary: 'Done.' }) } });
+  assert.equal(f.notifications.at(-1).body, 'Done.');
+  await f.emit('push', { data: { json: () => ({ type: 'attention', summary: 123 }) } });
+  assert.match(f.notifications.at(-1).body, /An agent run has ended/);
+  await f.emit('message', { source: f.client, data: { type: 'show-attention', threadId: 'a', summary: 'x'.repeat(200) } });
+  assert.equal(f.notifications.at(-1).body.length, 160);
+  await f.emit('message', { source: f.client, data: { type: 'show-attention', threadId: 'a', takeover: true, summary: 'Ignored' } });
+  assert.match(f.notifications.at(-1).body, /Another slot/);
+});
+
 test('legacy push opens home rather than focusing an arbitrary Firefox tab', async () => {
   const f = await fixture();
   await f.emit('push', {});

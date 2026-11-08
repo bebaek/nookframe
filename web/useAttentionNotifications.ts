@@ -3,12 +3,16 @@ import type { ThreadChoice } from '../shared/protocol';
 import { AttentionTracker, chatNeedsAttention } from './attention';
 
 const preference = 'nookframe.attentionNotifications';
+const summaryPreference = 'nookframe.notificationSummaries';
 const supported = () => typeof Notification !== 'undefined' && window.isSecureContext;
 
 export function useAttentionNotifications(selected: string | undefined, chat: boolean, open: (id: string) => void, signedIn = true) {
   const [enabled, setEnabled] = useState(() => {
     try { return supported() && Notification.permission === 'granted' && localStorage.getItem(preference) === 'true'; }
     catch { return false; }
+  });
+  const [summaries, setSummaries] = useState(() => {
+    try { return localStorage.getItem(summaryPreference) === 'true'; } catch { return false; }
   });
   const [status, setStatus] = useState('');
   const tracker = useRef(new AttentionTracker());
@@ -58,7 +62,7 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   const pushSetup = useRef<Promise<void>>(Promise.resolve());
   const toggling = useRef(false);
 
-  async function enablePush() {
+  async function enablePush(includeSummary = current.current.summaries) {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) throw new Error();
     const active = await prepareWorker();
     if (!active) throw new Error();
@@ -68,7 +72,7 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     const { publicKey } = await response.json();
     const key = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     const subscription = await registration.pushManager.getSubscription() ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-    const saved = await fetch('/api/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
+    const saved = await fetch('/api/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...subscription.toJSON(), notificationSummaries: includeSummary }) });
     if (!saved.ok) throw new Error();
     pushEnabled.current = true;
     setStatus('Background push notifications enabled for this browser.');
@@ -88,8 +92,8 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
       finally { clearTimeout(timer); }
     })();
   }
-  const current = useRef({ selected, chat, open, enabled, signedIn });
-  current.current = { selected, chat, open, enabled, signedIn };
+  const current = useRef({ selected, chat, open, enabled, signedIn, summaries });
+  current.current = { selected, chat, open, enabled, signedIn, summaries };
 
   function clear() {
     tracker.current.reset();
@@ -116,7 +120,7 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
   }, []);
   useEffect(() => {
     pushEnabled.current = false;
-    if (enabled && signedIn) pushSetup.current = pushSetup.current.then(enablePush).catch(() => setStatus('Background push is unavailable. Notifications require this page to stay connected.'));
+    if (enabled && signedIn) pushSetup.current = pushSetup.current.then(() => enablePush()).catch(() => setStatus('Background push is unavailable. Notifications require this page to stay connected.'));
   }, [enabled, signedIn]);
 
   async function toggle() {
@@ -151,7 +155,42 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
     } catch { setStatus('This browser could not enable notifications.'); }
   }
 
-  async function notify(id: string, takeover = false) {
+  useEffect(() => {
+    const receive = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && event.key === summaryPreference) {
+        current.current.summaries = event.newValue === 'true';
+        setSummaries(event.newValue === 'true');
+      }
+    };
+    window.addEventListener('storage', receive);
+    return () => window.removeEventListener('storage', receive);
+  }, []);
+
+  async function toggleSummaries() {
+    if (toggling.current) return;
+    toggling.current = true;
+    const next = !summaries;
+    try {
+      await pushSetup.current;
+      let subscribed = pushEnabled.current;
+      if (!subscribed && enabled && signedIn) {
+        // A failed setup does not prove an earlier subscription is gone.
+        const response = await fetch('/api/push');
+        if (response.status !== 503) {
+          if (!response.ok) throw new Error();
+          subscribed = (await response.json()).subscribed === true;
+        }
+      }
+      if (subscribed) await enablePush(next);
+      setSummaries(next);
+      current.current.summaries = next;
+      try { localStorage.setItem(summaryPreference, String(next)); } catch { /* Session-only preference. */ }
+      setStatus(next ? 'Response summaries may appear on your lock screen.' : 'Notification summaries hidden. Already delivered notifications may still show summaries.');
+    } catch { setStatus('Could not change notification summaries. Reconnect and try again.'); }
+    finally { toggling.current = false; }
+  }
+
+  async function notify(id: string, takeover = false, summary?: string) {
     if (!takeover && pushEnabled.current) return;
     const version = generation.current;
     const active = await prepareWorker();
@@ -161,12 +200,12 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
       (takeover ? document.visibilityState === 'visible' && document.hasFocus() : !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus()))) return;
     try {
       if (active) {
-        active.postMessage({ type: 'show-attention', threadId: id, takeover });
+        active.postMessage({ type: 'show-attention', threadId: id, takeover, summary: view.summaries ? summary : undefined });
         return;
       }
       setStatus('Using basic notifications; this browser may not bring the chat window forward.');
       const notification = new Notification('Nookframe needs your attention', {
-        body: takeover ? 'Another slot requests this thread. Open Nookframe to allow takeover or keep it here.' : 'An agent run has ended. Open the conversation to review the result.', tag: `nookframe:${id}`,
+        body: takeover ? 'Another slot requests this thread. Open Nookframe to allow takeover or keep it here.' : (view.summaries && summary) || 'An agent run has ended. Open the conversation to review the result.', tag: `nookframe:${id}`,
       });
       notifications.current.add(notification);
       notification.onclose = () => notifications.current.delete(notification);
@@ -182,12 +221,12 @@ export function useAttentionNotifications(selected: string | undefined, chat: bo
       const view = current.current;
       if (!view.enabled || !supported() || Notification.permission !== 'granted' ||
         !chatNeedsAttention(id, view.selected, view.chat, document.visibilityState === 'visible', document.hasFocus())) continue;
-      void notify(id);
+      void notify(id, false, threads.find(thread => thread.id === id)?.notificationSummary);
     }
   }
 
   function notifyTakeover(id: string) {
     if (current.current.enabled && supported() && Notification.permission === 'granted') void notify(id, true);
   }
-  return { enabled, status, available: supported(), toggle, update, clear, notifyTakeover };
+  return { enabled, summaries, status, available: supported(), toggle, toggleSummaries, update, clear, notifyTakeover };
 }

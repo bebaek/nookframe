@@ -171,7 +171,8 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
           let body = '';
           for await (const chunk of req) { body += chunk.toString(); if (Buffer.byteLength(body) > 8192) throw new Error(); }
           if (!sessions.valid(id)) { res.writeHead(401).end(); return; }
-          push.subscribe(id, JSON.parse(body));
+          const subscription = JSON.parse(body);
+          push.subscribe(id, subscription, subscription.notificationSummaries === true);
         } else { res.writeHead(405).end(); return; }
         res.end(JSON.stringify({ ok: true }));
       } catch { res.writeHead(400).end(JSON.stringify({ error: 'Push subscription could not be saved' })); }
