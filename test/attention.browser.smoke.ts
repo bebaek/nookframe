@@ -89,8 +89,22 @@ test('attention notifications: opt-in, focused suppression, deduplication, click
     await page.evaluate(() => (window as any).notifications[0].onclick());
     await page.waitForFunction(() => location.hash === '#thread=b');
     await page.evaluate(() => { (window as any).fixtureFocus = false; window.dispatchEvent(new Event('blur')); });
-    const summaryToggle = page.getByRole('checkbox', { name: 'Include response summaries in notifications' });
-    assert.equal(await summaryToggle.isChecked(), false);
+    const summaryToggle = page.getByRole('button', { name: 'Show response summary', exact: true });
+    assert.equal(await summaryToggle.getAttribute('aria-pressed'), 'false');
+    for (const width of [360, 960]) {
+      await page.setViewportSize({ width, height: 800 });
+      const layout = await page.locator('.notification-setting-row').evaluateAll(rows => rows.map(row => {
+        const label = row.querySelector('span')!.getBoundingClientRect();
+        const button = row.querySelector('button')!.getBoundingClientRect();
+        return { labelRight: label.right, buttonLeft: button.left, labelCenter: (label.top + label.bottom) / 2, buttonCenter: (button.top + button.bottom) / 2, height: button.height };
+      }));
+      for (const row of layout) {
+        assert.ok(row.labelRight < row.buttonLeft, 'label and toggle do not overlap');
+        assert.ok(Math.abs(row.labelCenter - row.buttonCenter) < 1, 'label and toggle share a row');
+        assert.ok(row.height >= 44, 'toggle has a touch-sized target');
+      }
+      assert.equal(await page.locator('.notification-help[open]').count(), 0, 'delivery detail starts collapsed');
+    }
     await summaryToggle.click();
     await page.waitForFunction(() => localStorage.getItem('nookframe.notificationSummaries') === 'true');
     await run('b'); assert.equal(await count(), 2, 'unfocused active conversation notifies');

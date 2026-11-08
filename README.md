@@ -251,7 +251,7 @@ Send alongside it; Stop appears while working. Tool output starts collapsed,
 including running tools, and reading earlier messages prevents auto-scroll.
 The layout uses the browser's native Popover API (current Chrome/Safari/Firefox).
 
-Use **⋯ → Enable notifications** to opt in. On HTTPS with persistent server state,
+Use **⋯ → Notifications → On** to opt in. On HTTPS with persistent server state,
 Nookframe subscribes this browser to encrypted Web Push. Server-observed run
 completions (including failures and stops) notify even when the page is suspended
 or closed. Push is suppressed on all devices when the completed conversation
@@ -263,8 +263,8 @@ is reported on visibility/focus changes and renewed every 15 seconds; stale repo
 expire after 45 seconds so a suspended page cannot silence notifications indefinitely.
 The suppression happens before sending push, not by silently discarding incoming
 push events (which can trigger browser fallback notifications). Push notifications
-display generic text by default, never conversation titles. Opt in to **Include
-response summaries in notifications** in workspace controls to show the final
+display generic text by default, never conversation titles. Enable **Show response
+summary** in workspace controls to show the final
 assistant response's first paragraph, with common Markdown stripped and capped at
 160 characters. No additional model call is made. Progress/tool output, failed or
 aborted responses, and empty previews fall back to generic text. Summaries can
@@ -303,7 +303,7 @@ If background push cannot be enabled, local notifications still work while the
 page stays connected. These notify only outside the focused conversation and
 open the originating conversation. Reconnection does not replay missed local
 notifications. Unsupported workers fall back to basic desktop notifications.
-**Disable notifications** removes this login's push subscription and turns off local
+Turning **Notifications** off removes this login's push subscription and turns off local
 notifications in this tab; other open tabs may retain their own local preference.
 The worker does not intercept requests or cache pages. Permission is requested
 only after clicking Enable. OS focus policies may prevent raising a window.
