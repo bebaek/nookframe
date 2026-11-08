@@ -127,6 +127,10 @@ test('mobile reading chrome follows gestures, preserves the reading anchor, and 
       await wheel(80);
       await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; });
       await page.waitForTimeout(100);
+      const hiddenLastLine = await page.locator('#last-line').boundingBox();
+      const revealButton = await controls.boundingBox();
+      assert.ok(hiddenLastLine && revealButton && hiddenLastLine.y + hiddenLastLine.height <= revealButton.y,
+        'the final line must scroll above the floating Show controls button');
       await reveal();
       await page.waitForTimeout(100);
       await visible();
