@@ -40,6 +40,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.getByLabel('Access token').fill(token);
       await page.getByRole('button', { name: 'Connect', exact: true }).click();
       await page.getByText('Ready', { exact: true }).waitFor();
+      assert.equal(await page.getByLabel('Message', { exact: true }).evaluate(el => el === document.activeElement), !mobile, 'only desktop chat autofocuses');
       // Simulate delayed media/tool layout without a new server snapshot.
       const transcript = page.locator('.transcript');
       await transcript.evaluate(el => {
@@ -103,6 +104,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       else await page.getByLabel('Message', { exact: true }).press('Enter');
       await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
       assert.deepEqual(prompts, ['resume following']);
+      if (!mobile) await page.waitForFunction(() => document.activeElement === document.querySelector('textarea'));
       await atBottom();
       await page.locator('#scroll-fixture').evaluate(el => { el.style.height = '6500px'; });
       await atBottom();
@@ -151,6 +153,7 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       await page.keyboard.press('Control+Enter');
       assert.equal(await input.evaluate(el => el === document.activeElement), false);
       await chatTab.click();
+      assert.equal(await input.evaluate(el => el === document.activeElement), !mobile, 'returning to chat focuses only on desktop');
       await input.fill('hello');
       if (mobile) {
         await input.press('Enter');
@@ -222,9 +225,10 @@ test('composer: desktop Enter, multiline, IME, repeat, busy, and mobile', { time
       assert.doesNotMatch(await page.evaluate(() => localStorage.getItem('nookframe.client-context')!), /latitude|longitude/);
       await page.getByRole('button', { name: 'Close controls', exact: true }).click();
       await input.fill('hello\nworld');
-      await input.press('Enter');
+      await send.click();
       await page.waitForFunction(() => document.querySelector('textarea')!.value === '');
       assert.deepEqual(prompts, ['hello\nworld']);
+      await page.waitForFunction(() => document.activeElement === document.querySelector('textarea'));
       assert.deepEqual(contexts, [{ timezone: 'Asia/Seoul', timezoneSource: 'browser', city: 'Seoul', location: { latitude: 37.57, longitude: 126.98, source: 'browser' } }]);
       await input.fill('keep while busy');
       await input.press('Enter');
