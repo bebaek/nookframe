@@ -262,6 +262,20 @@ function App() {
   const canSend = !clientContext.invalidTimezone && connected && composerAvailable && state && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
+  // Focus only at chat readiness transitions, never on streaming updates or
+  // arbitrary blur: selections and other controls must remain usable.
+  const composerReady = signedIn && !checkingAuth && tab === 'chat' && composerAvailable && !state?.threadChanging && !pending;
+  useEffect(() => {
+    if (!composerReady || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    const input = composer.current;
+    const active = document.activeElement;
+    if (!input || input.disabled || document.querySelector('dialog[open], [aria-modal="true"], :popover-open') ||
+      !window.getSelection()?.isCollapsed) return;
+    if (active === document.body || (active?.getAttribute('role') === 'tab' && active.getAttribute('aria-selected') === 'true')) {
+      input.focus({ preventScroll: true });
+    }
+  }, [composerReady, state?.threadId]);
+
   function command(type: 'prompt' | 'prepare_thread' | 'stop' | 'set_model' | 'draft_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
     if (type === 'prompt') inputHistory.reset();
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
