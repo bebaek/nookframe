@@ -608,7 +608,10 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
             } else await single!.switchThread(command.type === 'new_thread' ? undefined : command.targetId);
           }
           else if (!current) throw new Error('Select a thread first');
-          else if (command.type === 'set_model') await current.setModel(command.provider, command.modelId);
+          else if (command.type === 'set_model') {
+            if (config.modelOperations) await config.modelOperations.selectFromPicker(current, command.provider, command.modelId);
+            else await current.setModel(command.provider, command.modelId);
+          }
           else await current.abort();
           send(ws, { type: 'snapshot', state: snapshot(ws), selected: true });
           send(ws, { type: 'ack', id: command.id });

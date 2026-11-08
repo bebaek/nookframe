@@ -364,7 +364,7 @@ function App() {
       }}>
         {!state.models.some(m => `${m.provider}/${m.id}` === state.model) && <option value={state.model}>{state.model}</option>}
         {state.models.map(m => <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.provider}/{m.id}</option>)}
-      </select>}<small>{draftView && !state.available ? 'Initialize this thread to choose a model before sending · draft and attachments are kept' : state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for this thread and restarts' : 'Pi default · select a model to save your preference'}</small></section>}
+      </select>}<small>{draftView && !state.available ? 'Initialize this thread to choose a model before sending · draft and attachments are kept' : state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for this thread · choosing a model also sets the new-chat default' : 'Pi default · choosing a model saves it for this chat and future new chats'}</small></section>}
       {clientContext.settings}
       <p className="controls-note">One workspace · last 200 messages in this thread</p>
       <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>

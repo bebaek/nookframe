@@ -66,6 +66,24 @@ export class ModelOperations {
       environmentLocked: selection.source === 'environment',
       revision: createHash('sha256').update(JSON.stringify(selection)).update(stored).digest('hex') };
   }
+  private saveDefault(model: ModelChoice) {
+    atomic(join(this.stateDir, 'new-thread-model.json'), { model, revision: randomUUID() });
+    const actual = this.defaults().selection;
+    if (actual?.provider !== model.provider || actual.id !== model.id) throw new Error('Default verification failed');
+  }
+  /** The interactive picker remembers its choice; scoped thread plans remain thread-only. */
+  async selectFromPicker(target: Workspace, provider: string, id: string) {
+    if (this.closed) throw new Error('Operations are shutting down');
+    const model = choice({ provider, id });
+    this.validate(target, model);
+    if (this.defaults().environmentLocked) throw new Error('Model is environment-locked');
+    const release = lockfile.lockSync(this.directory, { retries: 0 });
+    try {
+      await target.setModel(provider, id);
+      try { this.saveDefault(model); }
+      catch { throw new Error('Model saved for this chat, but the new-chat default could not be saved. Check the default before trying again.'); }
+    } finally { release(); }
+  }
   catalog(id: string) {
     const target = this.workspace(id);
     return { threadId: id, revision: target.modelRevision, current: target.state.model,
@@ -160,11 +178,7 @@ export class ModelOperations {
       live.plan.status = 'applying'; this.persist(live.plan);
       dispatched = true;
       if (live.plan.scope === 'thread') await live.target.setModel(live.plan.after.provider, live.plan.after.id);
-      else {
-        atomic(join(this.stateDir, 'new-thread-model.json'), { model: live.plan.after, revision: randomUUID() });
-        const actual = this.defaults().selection;
-        if (actual?.provider !== live.plan.after.provider || actual.id !== live.plan.after.id) throw new Error('Default verification failed');
-      }
+      else this.saveDefault(live.plan.after);
       this.finish(live, 'applied', live.plan.scope === 'thread' ? 'Thread model activated, verified and saved' : 'Default saved for newly created threads only; existing threads unchanged');
     } catch { this.finish(live, dispatched ? 'uncertain' : 'rejected', dispatched ? 'Change outcome uncertain; inspect state, do not retry blindly' : 'Plan expired, stale, locked, busy, or unavailable; inspect and propose again'); }
     finally { release?.(); }
