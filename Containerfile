@@ -18,7 +18,7 @@ FROM docker.io/library/node:24-trixie-slim
 # Trusted personal development/admin workstation; no container daemon or sudo.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash git curl ca-certificates ripgrep python3 python-is-python3 python3-yaml python3-bs4 make g++ pkg-config \
-    gh openssh-client age jq rsync less procps unzip chromium poppler-utils \
+    gh openssh-client age jq rsync less nano procps unzip chromium poppler-utils \
     fonts-noto-cjk fonts-noto-color-emoji \
     tini isync notmuch libsasl2-modules-kdexoauth2 \
     && pdftotext -v && pdfinfo -v && pdftoppm -v \
@@ -31,7 +31,7 @@ RUN test "$(dpkg --print-architecture)" = amd64 \
     && curl -fsSL https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64 -o /usr/local/bin/sops \
     && echo 'e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  /usr/local/bin/sops' | sha256sum -c - \
     && chmod 0755 /usr/local/bin/kubectl /usr/local/bin/sops
-ENV BROWSER_EXECUTABLE_PATH=/usr/bin/chromium PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV EDITOR=nano BROWSER_EXECUTABLE_PATH=/usr/bin/chromium PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

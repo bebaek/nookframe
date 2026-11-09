@@ -40,8 +40,9 @@ test('isolated container: read-only non-root PTY and real offline pi TUI', { tim
       'const fs = require("node:fs"); for (const guide of ["mail", "google", "calendar"]) {' +
       'if (!fs.readFileSync(`/app/docs/${guide}.md`, "utf8").trim()) throw new Error(`Empty guide: ${guide}`); }');
     container('exec', name, 'sh', '-ec',
-      'for tool in git gh node npm python python3 make g++ kubectl sops ssh age jq rsync chromium imagectl nookframe; do command -v "$tool"; done; ' +
+      'for tool in git gh node npm python python3 make g++ kubectl sops ssh age jq rsync nano chromium imagectl nookframe; do command -v "$tool"; done; ' +
       'python3 -c "import yaml"; kubectl version --client; sops --version; gh --version; ' +
+      'test "$EDITOR" = nano; nano --version; ' +
       'test "$BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium; ' +
       'printf "int main() { return 0; }\\n" > /tmp/compiler-smoke.cpp; g++ /tmp/compiler-smoke.cpp -o /workspace/compiler-smoke; /workspace/compiler-smoke');
     const pythonProbe = 'import json, os, sys; print(json.dumps({"executable": os.path.realpath(sys.executable), "major": sys.version_info.major, "sum": sum(json.loads("[1, 2, 3]"))}))';
