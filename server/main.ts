@@ -14,12 +14,10 @@ import { resolveModelSelection } from './models.js';
 import { ModelOperations, selectThreadModel } from './model-operations.js';
 import { TerminalSession } from './terminal.js';
 import { ThreadStore } from './threads.js';
-import { MailStore } from '../mail/store.js';
-import { MailOAuth } from '../mail/oauth.js';
+import { mailRuntime } from '../mail/runtime.js';
 import { ZohoMail } from '../mail/zoho.js';
 import { MailScheduler } from '../mail/scheduler.js';
 import { calendarRuntime } from '../calendar/runtime.js';
-import { googleStore } from '../google/runtime.js';
 import { allowedBrowserOrigins } from './origins.js';
 import { piExtensionArgs } from './pi-extensions.js';
 import { parsePromptExamples } from './prompt-examples.js';
@@ -38,8 +36,9 @@ const stateDir = resolve(process.env.STATE_DIR ?? join(root, '.local/state'));
 const port = Number(process.env.PORT ?? 3000);
 const publicOrigin = process.env.PUBLIC_ORIGIN ?? `http://localhost:${port}`;
 const allowedOrigins = [...allowedBrowserOrigins(publicOrigin, process.env.ALLOWED_ORIGINS?.split(','))];
-const mailStore = new MailStore(resolve(process.env.MAIL_DIR ?? join(stateDir, '..', 'mail')), googleStore());
-const mailOAuth = new MailOAuth(mailStore, publicOrigin);
+// Use the same registry-aware composition as mailctl: scheduler workers must
+// receive stable account IDs, not legacy storage references invalid after rename.
+const { store: mailStore, oauth: mailOAuth } = mailRuntime();
 const calendar = calendarRuntime();
 const localAccess = process.env.NOOKFRAME_LOCAL_ACCESS === '1';
 const host = process.env.HOST ?? '127.0.0.1';

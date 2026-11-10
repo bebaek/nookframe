@@ -9,7 +9,7 @@ import { zohoRuntime } from './zoho.js';
 import { mailAccountsRuntime } from './providers.js';
 import { AccountRegistryError, type MigrationAliases } from './account-registry.js';
 import type { MailStore } from './store.js';
-import { mailLog } from './logging.js';
+import { mailLog, mailAttemptId, safeMailError } from './logging.js';
 import type { Draft } from './drafts.js';
 
 function inputAccount(store: MailStore, name: string): string {
@@ -266,6 +266,14 @@ try {
   console.log(JSON.stringify(result));
   if (result && 'results' in result && Array.isArray(result.results) && result.results.some(r => 'status' in r && r.status === 'failed')) process.exitCode = 1;
 } catch (error) {
+  const [work, accountId] = process.argv.slice(2);
+  if ((work === 'sync' || work === 'index') && process.argv.slice(2).includes('--scheduled')) {
+    // Resolution/configuration failures can occur before a job starts. stdout is
+    // private in scheduled workers, so report a sanitized CLI-level failure too.
+    // This is distinct from job.failed, which may already describe execution.
+    mailLog('mail.worker.failed', { work, accountId, attemptId: mailAttemptId(), scheduled: true,
+      errorCode: safeMailError(error) }, 'error');
+  }
   // No raw exception/stack, OAuth response, command output, or credential dump.
   console.log(JSON.stringify({ error: error instanceof MailError || error instanceof AccountRegistryError ? error.code : 'MAIL_OPERATION_FAILED' }));
   process.exitCode = 1;
