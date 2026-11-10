@@ -569,6 +569,59 @@ can delay it. Server shutdown terminates all its worker groups; jobs resume
 eligibility checks after restart.
 This is a persistent retry policy, not a durable execution queue with job IDs.
 
+### Operational logging
+
+Pino writes structured JSON lines to **stderr** (UTC `time`, textual `level`,
+`service=nookframe`, `component=mail`, and `slot`). CLI stdout remains its existing
+JSON result contract. Scheduled workers inherit stderr into the server container
+log stream; their result stdout and all raw mbsync/notmuch output remain private.
+No new log files or log shipping service are needed: Kubernetes/Alloy/Loki can
+collect these events through the existing pod-log pipeline.
+
+Events:
+
+- `mail.scheduler.started`, `.stopping`, `.stopped`: scheduler lifecycle and capacity.
+- `mail.scheduler.error`: a sanitized error code instead of silently losing a tick.
+- `mail.job.dispatched`: scheduler launch, work type, and lateness from eligibility.
+- `mail.job.started`, `.phase_changed`, `.succeeded`, `.failed`: actual execution,
+  preparing/download/index phases, duration, safe error code, failure count, and
+  next retry time. Sync terminal records also include `downloadCompleted`,
+  `indexDeferred`, and the independent `indexNextRetryAt` deadline.
+- `mail.job.skipped`: a worker's under-lock eligibility recheck found pause,
+  cooldown, or a busy account. Routine scheduler cooldown checks emit nothing.
+- `mail.worker.exited`: worker exit code/signal and duration, including shutdown,
+  unexpected termination, or spawn failure. Exit is **not** proof of successful
+  mail work; use the job terminal event. A killed worker may have no terminal event.
+- `mail.polling.changed`: a persisted enable/pause change (no event for a no-op).
+- `mail.scheduler.health`: every five minutes on successful ticks, including
+  enabled accounts, active workers, blocked overdue accounts, oldest overdue
+  duration, and lock/capacity counts. Accounts actively handled by this scheduler
+  are not counted overdue. Overdue age of 15 minutes raises the event to WARN.
+- `mail.job.blocked` / `.unblocked`: identify persistent lock/capacity blocking;
+  warnings begin after five minutes and repeat no more than once per five minutes.
+
+Scheduler dispatch, worker lifecycle, and worker exit share a random `attemptId`.
+Manual per-account work gets its own attempt ID. Registry `accountId` is stable
+across renames; pre-registry aliases are replaced by a deterministic `legacy-`
+hash. Neither ID should be promoted to Loki labels. Fields are explicitly
+projected; credentials, email addresses, message contents, paths, raw exception
+messages/stacks and subprocess output are never included in these records.
+Existing interactive `--progress` output is separate from operational events.
+
+Example LogQL queries (these do not install dashboards or alerts):
+
+```logql
+{namespace="nookframe"} | json | component="mail" | event="mail.job.failed"
+{namespace="nookframe"} | json | component="mail" | event="mail.scheduler.health"
+```
+
+Filter by `slot` when checking health: both slots can run schedulers against the
+shared account state. Alert on missing health events per running slot, or sustained
+`oldestOverdueMs` above an agreed threshold. A cooldown is not overdue before its
+retry deadline; disabled/auth-blocked accounts do not produce overdue work.
+Logs are best-effort operational evidence, not a transactional audit log or durable
+queue. Retention and alert configuration belong to the existing logging platform.
+
 After each mbsync attempt has exited, the worker attempts local indexing, **even
 after quota errors or timeouts**, unless a scheduled run must honor index backoff. Download failures/cooldowns remain recorded separately
 from successful indexing. If indexing also fails, inspect its separate diagnostic.

@@ -9,6 +9,7 @@ import { zohoRuntime } from './zoho.js';
 import { mailAccountsRuntime } from './providers.js';
 import { AccountRegistryError, type MigrationAliases } from './account-registry.js';
 import type { MailStore } from './store.js';
+import { mailLog } from './logging.js';
 import type { Draft } from './drafts.js';
 
 function inputAccount(store: MailStore, name: string): string {
@@ -192,7 +193,9 @@ async function main(args: string[]) {
     if (args.length === 3 && (action === 'enable' || action === 'pause')) {
       return store.withAccountCredentialLock(name, async () => {
         const account = store.account(name);
+        const changed = account.polling !== (action === 'enable');
         account.polling = action === 'enable'; store.saveAccount(account);
+        if (changed) mailLog('mail.polling.changed', { accountId: account.alias, enabled: account.polling });
         return { account: store.accountLabel(name), accountId: account.alias, enabled: account.polling, ...(account.polling ? retryPlan(store.status(name)) : { nextRetryAt: null, reason: 'paused' }), note: 'Pause prevents future attempts; an active attempt is not cancelled. Enabling retains existing cooldowns.' };
       });
     }
@@ -217,7 +220,9 @@ async function main(args: string[]) {
       if (action === 'enable' || action === 'disable') return store.withAccountCredentialLock(name, async () => {
         const account = store.account(name);
         if (action === 'enable' && store.status(name)?.status !== 'ok') throw new MailError('COMPLETE_MANUAL_SYNC_FIRST');
+        const changed = account.polling !== (action === 'enable');
         account.polling = action === 'enable'; store.saveAccount(account);
+        if (changed) mailLog('mail.polling.changed', { accountId: account.alias, enabled: account.polling });
         return { account: store.accountLabel(name), accountId: account.alias, polling: account.polling };
       });
     }
