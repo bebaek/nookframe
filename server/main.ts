@@ -11,7 +11,7 @@ import { Workspace } from './workspace.js';
 import { Workspaces } from './workspaces.js';
 import { createApp } from './http.js';
 import { resolveModelSelection } from './models.js';
-import { ModelOperations, selectThreadModel } from './model-operations.js';
+import { ModelOperations, newThreadModel, selectThreadModel } from './model-operations.js';
 import { TerminalSession } from './terminal.js';
 import { ThreadStore } from './threads.js';
 import { mailRuntime } from '../mail/runtime.js';
@@ -85,7 +85,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
   } };
 }, 4, 5 * 60_000, async id => {
   if ((await jobStore.runs()).some(run => run.threadId === id && activeRun(run))) throw new Error('Background run is owned by its runner or termination is uncertain. Open it on the owning slot; do not start another writer.');
-});
+}, () => existingPi ? { source: 'pi' } : newThreadModel(stateDir, agentDir, process.env));
 await workspace.initialize();
 const jobRunner = process.env.NOOKFRAME_JOBS_SLOT && process.env.NOOKFRAME_JOBS_SLOT === process.env.NOOKFRAME_SLOT ? new JobRunner(jobStore, workspace) : undefined;
 await jobRunner?.start();
