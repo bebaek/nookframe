@@ -589,6 +589,10 @@ Events:
   `indexDeferred`, and the independent `indexNextRetryAt` deadline.
 - `mail.job.skipped`: a worker's under-lock eligibility recheck found pause,
   cooldown, or a busy account. Routine scheduler cooldown checks emit nothing.
+- `mail.worker.failed`: sanitized scheduled CLI exceptions, including account
+  resolution/configuration failures before `mail.job.started`. This CLI-level
+  event is distinct from `mail.job.failed` and can accompany it for execution
+  exceptions; correlate by `attemptId` rather than counting both as attempts.
 - `mail.worker.exited`: worker exit code/signal and duration, including shutdown,
   unexpected termination, or spawn failure. Exit is **not** proof of successful
   mail work; use the job terminal event. A killed worker may have no terminal event.
@@ -601,6 +605,9 @@ Events:
   warnings begin after five minutes and repeat no more than once per five minutes.
 
 Scheduler dispatch, worker lifecycle, and worker exit share a random `attemptId`.
+The server and CLI both initialize mail through the registry-aware `mailRuntime()`;
+workers receive stable IDs even after account renames, while pre-migration
+installations retain legacy-name scheduling without forcing a migration.
 Manual per-account work gets its own attempt ID. Registry `accountId` is stable
 across renames; pre-registry aliases are replaced by a deterministic `legacy-`
 hash. Neither ID should be promoted to Loki labels. Fields are explicitly

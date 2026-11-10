@@ -5,7 +5,7 @@ import { diagnosticErrorCodes } from './diagnostics.js';
 
 export type MailEvent = 'mail.scheduler.started' | 'mail.scheduler.stopping' | 'mail.scheduler.stopped' | 'mail.scheduler.error'
   | 'mail.scheduler.health' | 'mail.job.dispatched' | 'mail.job.started' | 'mail.job.phase_changed'
-  | 'mail.job.succeeded' | 'mail.job.failed' | 'mail.job.skipped' | 'mail.worker.exited'
+  | 'mail.job.succeeded' | 'mail.job.failed' | 'mail.job.skipped' | 'mail.worker.exited' | 'mail.worker.failed'
   | 'mail.polling.changed' | 'mail.job.blocked' | 'mail.job.unblocked';
 export interface MailLogFields {
   accountId?: string; attemptId?: string; work?: 'sync' | 'index'; scheduled?: boolean;
@@ -17,7 +17,9 @@ export interface MailLogFields {
   latenessMs?: number;
 }
 export type MailLog = (event: MailEvent, fields?: MailLogFields, level?: 'info' | 'warn' | 'error') => void;
-const errors = new Set([...diagnosticErrorCodes, 'MAIL_BUSY', 'SYNC_FAILED', 'INDEX_FAILED', 'MAIL_COMMAND_FAILED', 'MAIL_OPERATION_FAILED', 'SCHEDULER_FAILED', 'WORKER_SPAWN_FAILED']);
+const errors = new Set([...diagnosticErrorCodes, 'MAIL_BUSY', 'SYNC_FAILED', 'INDEX_FAILED', 'MAIL_COMMAND_FAILED', 'MAIL_OPERATION_FAILED', 'SCHEDULER_FAILED', 'WORKER_SPAWN_FAILED',
+  'ACCOUNT_NOT_CONNECTED', 'ACCOUNT_NOT_REGISTERED', 'ACCOUNT_PROVIDER_MISMATCH',
+  'INVALID_ACCOUNT_REGISTRY', 'ACCOUNT_REGISTRY_MIGRATION_REQUIRED']);
 export function safeMailError(error: unknown, fallback = 'MAIL_OPERATION_FAILED') {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
   return typeof code === 'string' && errors.has(code) ? code : fallback;
