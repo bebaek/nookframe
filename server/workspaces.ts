@@ -6,6 +6,7 @@ import type { Snapshot, ThreadChoice } from '../shared/protocol.js';
 import { Workspace } from './workspace.js';
 import { Takeovers } from './takeovers.js';
 import type { ThreadStore } from './threads.js';
+import type { ModelSelection } from './models.js';
 
 export class ThreadOwnedError extends Error {
   constructor(readonly threadId: string) { super('This thread is owned by another server. Request takeover to open it here.'); }
@@ -28,7 +29,8 @@ export class Workspaces {
   private timer: ReturnType<typeof setInterval>;
   constructor(readonly threads: ThreadStore, public defaultId: string,
     private factory: (file: string, stateDir: string, background?: boolean, newlyCreated?: boolean) => { workspace: Workspace; start(): Promise<void> },
-    private maxAgents = 4, private idleMs = 5 * 60_000, private guardThread?: (id: string) => Promise<void>) {
+    private maxAgents = 4, private idleMs = 5 * 60_000, private guardThread?: (id: string) => Promise<void>,
+    private draftModel: () => ModelSelection = () => ({ source: 'pi' })) {
     this.takeovers = new Takeovers(threads.directory, process.env.NOOKFRAME_SLOT ?? 'unknown');
     this.timer = setInterval(() => { void this.serial(async () => {
       for (const [id, entry] of this.entries) if (this.idle(entry) && Date.now() - entry.used >= this.idleMs) await this.remove(id, entry);
@@ -67,10 +69,11 @@ export class Workspaces {
       const live = state?.threads.find(t => t.id === thread.id);
       return { ...thread, ...live, busy: !!state?.backgroundRun || (state?.busy ?? false) };
     });
+    const selection = workspace ? undefined : this.draftModel();
     return workspace ? { ...workspace.state, threads, sessionSharingWarning: this.threads.sessionSharingWarning } : {
       sessionSharingWarning: this.threads.sessionSharingWarning,
       messages: [], liveText: '', tools: {}, busy: false, available: false,
-      model: '', models: [], modelSource: 'pi', modelChanging: false,
+      model: selection?.model ? `${selection.model.provider}/${selection.model.id}` : '', models: [], modelSource: selection?.source ?? 'pi', modelChanging: false,
       notice: 'Choose a thread or create a new one. Threads share files, not running agents.',
       threadId: '', threads, threadChanging: false,
     };

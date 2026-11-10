@@ -38,7 +38,7 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
       async stop() {},
     } as unknown as Agent;
     return { workspace: new Workspace(agent, stateDir, undefined, store, true), async start() {} };
-  });
+  }, 4, 5 * 60_000, undefined, () => ({ model: { provider: 'test', id: 'fixture' }, source: 'saved' }));
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const address = reservation.address(); assert.ok(address && typeof address !== 'string');
   await new Promise<void>(resolve => reservation.close(() => resolve()));
@@ -55,6 +55,10 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByText('Ready', { exact: true }).waitFor();
     const composer = page.getByLabel('Message', { exact: true });
+    await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
+    await page.getByText('Default: test/fixture', { exact: false }).waitFor();
+    assert.equal(agents, 0, 'showing the default must not initialize an agent');
+    await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await composer.fill('My first message');
     assert.equal(new URL(page.url()).hash, '');
     assert.equal(agents, 0);
