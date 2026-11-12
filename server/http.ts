@@ -154,6 +154,20 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       } catch { res.writeHead(503).end(JSON.stringify({ error: 'Authentication service unavailable' })); }
       return;
     }
+    if (req.url?.split('?', 1)[0] === '/api/threads/search') {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.headers.origin !== undefined && !acceptsOrigin(req.headers.origin)) { res.writeHead(403).end(); return; }
+      if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+      if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+      const query = new URL(req.url, origin).searchParams.get('q')?.trim() ?? '';
+      if (!query || query.length > 256) { res.writeHead(400).end(); return; }
+      try {
+        const matches = await (pool ? pool.threads.list(query) : single!.searchThreads(query));
+        if (!sessions.identify(req.headers.cookie, cookieName)) { res.writeHead(401).end(); return; }
+        res.end(JSON.stringify({ threads: matches.slice(0, 50), truncated: matches.length > 50 }));
+      } catch { res.writeHead(503).end(JSON.stringify({ error: 'Thread search unavailable' })); }
+      return;
+    }
     if (req.url === '/api/push') {
       res.setHeader('Content-Type', 'application/json');
       const id = sessions.identify(req.headers.cookie, cookieName);

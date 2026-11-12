@@ -20,7 +20,7 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
   function seed(id: string, text: string) {
     const manager = SessionManager.create(dir, store.directory, { id });
     manager.appendMessage({ role: 'user', content: text, timestamp: Date.now() });
-    manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: `Reply to ${text}` }],
+    manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: `Reply to ${text}${id === 'second' ? ' · searchable rollback details' : ''}` }],
       api: 'openai-completions', provider: 'test', model: 'fixture', stopReason: 'stop', timestamp: Date.now(),
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
     return basename(manager.getSessionFile()!);
@@ -65,11 +65,16 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     await a.getByText('Reply to First conversation', { exact: true }).waitFor();
     await a.getByLabel('Message', { exact: true }).fill('Draft for first');
     await b.getByRole('button', { name: 'Workspace controls', exact: true }).click();
-    await b.getByLabel('Thread', { exact: true }).selectOption(second);
+    await b.getByLabel('Search threads', { exact: true }).fill('rollback');
+    const results = b.getByRole('list', { name: 'Thread search results' });
+    await results.getByText(/searchable rollback details/).waitFor();
+    assert.equal(await results.getByRole('button').count(), 1);
+    await results.getByRole('button').click();
     await selected(b, second);
+    assert.equal(await b.getByLabel('Search threads', { exact: true }).inputValue(), '');
     await selected(a, first);
     await b.getByRole('button', { name: 'Close controls', exact: true }).click();
-    await b.getByText('Reply to Second conversation', { exact: true }).waitFor();
+    await b.getByText('Reply to Second conversation · searchable rollback details', { exact: true }).waitFor();
     assert.equal(await a.getByLabel('Message', { exact: true }).inputValue(), 'Draft for first');
     await b.getByLabel('Message', { exact: true }).fill('Draft for second');
     await a.getByRole('button', { name: 'Workspace controls', exact: true }).click();
@@ -109,7 +114,7 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     await a.getByLabel('Thread', { exact: true }).selectOption(second);
     await a.getByRole('button', { name: 'Close controls', exact: true }).click();
     await selected(a, second);
-    await a.getByText('Reply to Second conversation', { exact: true }).waitFor();
+    await a.getByText('Reply to Second conversation · searchable rollback details', { exact: true }).waitFor();
     assert.equal(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await mkdir('.local', { recursive: true });
     await a.screenshot({ path: '.local/threads-mobile-smoke.png', fullPage: false });

@@ -50,6 +50,44 @@ test('local access bootstraps cookie auth and rejects foreign HTTP and WebSocket
   } finally { await app.close(); await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('thread search requires browser auth, rejects foreign origins and bounds requests/results', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nookframe-search-http-'));
+  const workspace = new Workspace({ onEvent() { return () => {}; }, async stop() {} } as unknown as Agent, dir);
+  const queries: string[] = [];
+  workspace.searchThreads = async query => {
+    queries.push(query);
+    return Array.from({ length: 51 }, (_, i) => ({ id: `${i}.jsonl`, title: 'Result', updatedAt: '', excerpt: 'Matched message' }));
+  };
+  const origin = 'http://localhost:3000', token = 's'.repeat(64);
+  const app = createApp(workspace, { token, origin, webDir: resolve('dist/web') });
+  app.server.listen(0, '127.0.0.1');
+  await once(app.server, 'listening');
+  const address = app.server.address(); assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const url = `${base}/api/threads/search?q=rollback`;
+    assert.equal((await fetch(url)).status, 401);
+    const login = await fetch(`${base}/auth/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const headers = { Cookie: cookie, Origin: origin };
+    assert.equal((await fetch(url, { headers: { ...headers, Origin: 'https://evil.example' } })).status, 403);
+    assert.equal((await fetch(url, { headers, method: 'POST' })).status, 405);
+    for (const q of ['', ' '.repeat(5), 'x'.repeat(257)]) {
+      assert.equal((await fetch(`${base}/api/threads/search?q=${encodeURIComponent(q)}`, { headers })).status, 400);
+    }
+    assert.deepEqual(queries, []);
+    const response = await fetch(url, { headers });
+    assert.match(response.headers.get('cache-control')!, /no-store/);
+    const result = await response.json();
+    assert.equal(result.threads.length, 50);
+    assert.equal(result.truncated, true);
+    assert.equal(result.threads[0].excerpt, 'Matched message');
+    assert.deepEqual(queries, ['rollback']);
+    await fetch(`${base}/auth/logout`, { method: 'POST', headers });
+    assert.equal((await fetch(url, { headers })).status, 401);
+  } finally { await app.close(); await workspace.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 function inbox(ws: WebSocket) {
   const queue: ServerMessage[] = [];
   let pending: ((value: ServerMessage) => void) | undefined;

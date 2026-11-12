@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TakeoverPanel } from './TakeoverPanel';
+import { ThreadSearch } from './ThreadSearch';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } from '../shared/protocol';
 import './style.css';
 import { ToolCard } from './ToolCard';
@@ -358,6 +359,7 @@ function App() {
         {attention.status && <p role="status">{attention.status}</p>}
       </section>
       {state && <section className="thread-picker">
+        <ThreadSearch threads={state.threads} disabled={!connected || pending || uploading || state.threadChanging} select={id => command('switch_thread', undefined, id)} />
         <label htmlFor="thread">Thread</label>
         <select id="thread" value={state.threadId} disabled={!connected || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
           {!state.threadId && <option value="" disabled>New chat</option>}

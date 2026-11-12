@@ -31,6 +31,33 @@ function fixture() {
   return { dir, store, original, agent, workspace, async close() { await workspace.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+test('thread search matches names and message text with bounded excerpts, preserving normal listing', async () => {
+  const f = fixture();
+  try {
+    const pi = SessionManager.open(f.original, f.store.directory, f.dir);
+    pi.appendSessionInfo('Deployment notes');
+    const plain = await f.store.list();
+    assert.equal(plain[0].title, 'Deployment notes');
+    assert.equal('excerpt' in plain[0], false);
+    const bytes = readFileSync(f.original, 'utf8');
+    const matches = await f.store.list('deployment "ORIGINAL answer"');
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].id, basename(f.original));
+    assert.match(matches[0].excerpt!, /Original answer/);
+    assert.ok(matches[0].excerpt!.length <= 222);
+    assert.equal((await f.store.list('deployment absent')).length, 0);
+    assert.equal((await f.store.list('   ')).length, 1);
+    assert.equal(readFileSync(f.original, 'utf8'), bytes, 'search never changes the session');
+    const foreign = join(f.dir, 'foreign');
+    mkdirSync(foreign);
+    const other = SessionManager.create(foreign, f.store.directory);
+    other.appendMessage({ role: 'user', content: 'Deployment private', timestamp: Date.now() });
+    assert.equal((await f.store.list('deployment')).length, 1, 'foreign-workspace sessions stay excluded');
+    f.store.delete(basename(f.original));
+    assert.equal((await f.store.list('original')).length, 0, 'deleted conversations are not cached');
+  } finally { await f.close(); }
+});
+
 test('startup and repeated allocation leave no session files; Pi owns the first write', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-drafts-'));
   try {
