@@ -310,6 +310,12 @@ only after clicking Enable. OS focus policies may prevent raising a window.
 There is no separate approval-needed or stalled-run detection yet.
 
 Inside **⋯**, use **Thread** to resume a conversation or **New thread** for a blank one.
+**Search threads**, above the selector, immediately filters titles and searches saved
+user/assistant message text after a short typing pause. Searches are case-insensitive;
+all words must match, and double quotes group an exact phrase. Up to 50 matching
+threads appear with excerpts; click a result to open it. Search uses Pi's session
+loader over the same accessible threads, without an index or changes to session files.
+Tool output and attachments are not searched.
 Fresh visits without a thread link also open this blank composer, not the server's
 existing default thread. In multi-thread mode, blank chats allocate no agent or
 thread until **Send**; the URL stays at the base address while composing or attaching

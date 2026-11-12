@@ -130,6 +130,7 @@ export class Workspace {
 
   get idle() { return !this.state.backgroundRun && !this.state.busy && !this.stopping && !this.state.modelChanging && !this.state.threadChanging; }
 
+  searchThreads(query: string) { return this.threads?.list(query) ?? Promise.resolve([]); }
   assertThread(id: unknown) {
     if (this.threads && id !== this.state.threadId) throw new Error('The active thread changed. Review the selected thread before retrying.');
   }
