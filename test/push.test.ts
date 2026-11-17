@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createECDH, randomBytes } from 'node:crypto';
+import * as webpush from 'web-push';
 import { PushNotifications, validateSubscription } from '../server/push.js';
 import type { ThreadChoice } from '../shared/protocol.js';
 
@@ -23,6 +25,37 @@ test('summaries are opt-in per subscription, persisted, and removable', async ()
     calls.length = 0;
     await push.notify(undefined, ['thread'], new Map([['thread', 'Private']]));
     assert.ok(calls.every(call => !('summary' in call.payload)));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('real web-push creates encrypted VAPID requests with persisted application keys', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nookframe-push-vapid-'));
+  const client = createECDH('prime256v1');
+  client.generateKeys();
+  const destination = {
+    endpoint: subscription.endpoint,
+    keys: { p256dh: client.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') },
+  };
+  const requests: webpush.RequestDetails[] = [];
+  try {
+    const send: typeof webpush.sendNotification = async (s, payload, options) => {
+      requests.push(webpush.generateRequestDetails(s, payload ?? undefined, options));
+      return { statusCode: 201, body: '', headers: {} };
+    };
+    const first = new PushNotifications(dir, 'https://example.test', () => true, send);
+    first.subscribe('phone', destination);
+    const restored = new PushNotifications(dir, 'https://example.test', () => true, send);
+    await restored.notify('phone');
+    assert.equal(requests.length, 1, 'request generation errors must not be swallowed as delivery failures');
+    const request = requests[0];
+    assert.equal(request.method, 'POST');
+    assert.equal(request.endpoint, destination.endpoint);
+    assert.equal(request.headers.TTL, 3600);
+    assert.equal(request.headers['Content-Encoding'], 'aes128gcm');
+    assert.match(String(request.headers.Authorization), /^vapid t=.+, k=/);
+    assert.ok(String(request.headers.Authorization).endsWith(`k=${first.publicKey}`));
+    assert.ok(Buffer.isBuffer(request.body));
+    assert.equal(request.body.includes(Buffer.from('attention')), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

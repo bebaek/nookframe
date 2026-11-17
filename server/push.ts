@@ -1,4 +1,5 @@
-import webpush, { type PushSubscription } from 'web-push';
+import * as webpush from 'web-push';
+import type { PushSubscription } from 'web-push';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
