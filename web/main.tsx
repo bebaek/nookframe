@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 're
 import { createRoot } from 'react-dom/client';
 import { TakeoverPanel } from './TakeoverPanel';
 import { ThreadSearch } from './ThreadSearch';
+import { ThreadSelect } from './ThreadSelect';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } from '../shared/protocol';
 import './style.css';
 import { ToolCard } from './ToolCard';
@@ -360,12 +361,8 @@ function App() {
       </section>
       {state && <section className="thread-picker">
         <ThreadSearch threads={state.threads} disabled={!connected || pending || uploading || state.threadChanging} select={id => command('switch_thread', undefined, id)} />
-        <label htmlFor="thread">Thread</label>
-        <select id="thread" value={state.threadId} disabled={!connected || pending || uploading} onChange={e => command('switch_thread', undefined, e.target.value)}>
-          {!state.threadId && <option value="" disabled>New chat</option>}
-          {!!state.threadId && !state.threads.some(thread => thread.id === state.threadId) && <option value={state.threadId}>New thread (unsaved)</option>}
-          {state.threads.map(thread => <option key={thread.id} value={thread.id}>{thread.busy ? 'Working · ' : ''}{unread.has(thread.id) ? 'New · ' : ''}{thread.title} · {new Date(thread.updatedAt).toLocaleString()}</option>)}
-        </select>
+        <ThreadSelect threads={state.threads} selected={state.threadId} unread={unread}
+          disabled={!connected || pending || uploading || state.threadChanging} select={id => command('switch_thread', undefined, id)} />
         <button type="button" disabled={!connected || pending || uploading} onClick={() => command('draft_thread')}>New thread</button>
         <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => {
           const title = state.threads.find(thread => thread.id === state.threadId)?.title || 'this thread';
