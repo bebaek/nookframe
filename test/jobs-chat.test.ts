@@ -23,7 +23,7 @@ test('chat CLI: capabilities, JSON data input, revision conflicts and exact run 
     return { code, stdout, stderr };
   }
   const capabilities = JSON.parse((await call(['status'])).stdout);
-  assert.deepEqual(capabilities, { schedulingAvailable: false, notificationsAvailable: false, manualExecutionConfigured: true, configuredRunnerSlot: 'b', currentSlot: 'a', runnerLiveness: 'unknown', toolProfile: 'filesystem-read-only', tools: ['read', 'grep', 'find', 'ls'] });
+  assert.deepEqual(capabilities, { schedulingAvailable: false, notificationsAvailable: true, manualExecutionConfigured: true, configuredRunnerSlot: 'b', currentSlot: 'a', runnerLiveness: 'unknown', toolProfile: 'filesystem-read-only', tools: ['read', 'grep', 'find', 'ls'] });
   assert.equal(JSON.parse((await call(['status'], '', false)).stdout).manualExecutionConfigured, false);
   const created = await call(['create', '--file', '-'], JSON.stringify(input));
   assert.equal(created.code, 0, created.stderr);

@@ -3,10 +3,8 @@
 Jobs are chat-first with a CLI fallback, not a dedicated Jobs UI. Definitions,
 manual background execution, durable run history, cancellation, and same-thread
 continuation are implemented. Interactive agents load the jobs-management skill.
-**Automatic scheduling, service-specific read profiles, and attention-only delivery
-are not yet implemented.**
-Definitions remain paused; schedule previews do not dispatch work. The `notify`
-field is stored for future delivery, not currently acted on.
+**Automatic scheduling and service-specific read profiles are not yet implemented.**
+Definitions remain paused; schedule previews do not dispatch work. Manual jobs use existing HTTPS Web Push subscriptions on the runner slot. `always` requests an alert when the runner finishes a thread. `attention` requests one only on successful completion with a valid new finding key. Keys are compared across runs of the same job; stable keys are needed for deduplication. Delivery is best effort, not retried, and suppressed for focused threads. Job push contains no report text, even with summaries enabled; tapping opens the run thread.
 
 ## Chat workflow
 
@@ -20,8 +18,7 @@ is handled immediately. Ambiguous names and missing timezones are clarified.
 Confirmations are conversational skill instructions, not a new CLI authorization
 mechanism. The existing trusted-user security model is unchanged.
 
-The agent must explain that schedules remain paused and notification preferences
-are not delivered yet. Manual run submissions are reported as queued until the
+The agent must explain that schedules remain paused and job alerts require browser opt-in. Manual run submissions are reported as queued until the
 ledger says otherwise; a configured slot does not prove a runner is alive.
 Run IDs survive retries, revision conflicts require renewed review, and an
 uncertain outcome must never be bypassed by editing state or removing locks.
@@ -156,5 +153,5 @@ not distributed fencing. Main/fallback still do not share live chat state.
 
 - Reviewed, least-privilege service-specific read profiles.
 - Schedule dispatch, deterministic occurrence IDs and missed-run policy.
-- Attention-only result delivery through existing chat, with visible failures.
+- Delivery receipts and diagnostics for job alerts.
 - Operator recovery workflow and run-history retention policy.

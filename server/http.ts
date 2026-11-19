@@ -636,6 +636,7 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
     });
   });
   return {
+    notifyJob: async (threadId: string) => { await push?.notify(undefined, [threadId]); },
     server,
     async close() {
       unsubscribe();

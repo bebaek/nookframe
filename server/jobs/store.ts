@@ -7,7 +7,7 @@ export type Schedule = { kind: 'once'; at: string } | { kind: 'weekly'; time: st
 export interface JobInput { name: string; prompt: string; schedule: Schedule; notify: 'always' | 'attention'; timeoutSeconds: number }
 export interface Job extends JobInput { id: string; revision: number; enabled: boolean; createdAt: string; updatedAt: string }
 export type RunStatus = 'queued' | 'running' | 'stopping' | 'completed' | 'cancelled' | 'timed_out' | 'failed' | 'uncertain';
-export interface JobRun { id: string; job: Job; status: RunStatus; createdAt: string; startedAt?: string; endedAt?: string; threadId?: string; cancelRequested?: boolean; summary?: string }
+export interface JobRun { id: string; job: Job; status: RunStatus; createdAt: string; startedAt?: string; endedAt?: string; threadId?: string; cancelRequested?: boolean; summary?: string; findingKey?: string }
 interface Database { version: 1; jobs: Job[]; runs?: JobRun[] }
 export const activeRun = (run: JobRun) => ['queued', 'running', 'stopping', 'uncertain'].includes(run.status);
 const keys = ['name', 'prompt', 'schedule', 'notify', 'timeoutSeconds'];
@@ -127,6 +127,15 @@ export class JobStore {
       if (run.status === 'queued') { run.status = 'cancelled'; run.endedAt = new Date().toISOString(); }
       else if (['running', 'stopping'].includes(run.status)) run.cancelRequested = true;
       return run;
+    }, true);
+  }
+  finish(id: string, status: RunStatus, summary: string, key?: string) {
+    return this.transaction(db => {
+      const run = db.runs?.find(r => r.id === id);
+      if (!run || run.status !== 'stopping') throw new Error('Run state changed');
+      const fresh = !!key && !db.runs!.some(r => r.job.id === run.job.id && r.findingKey === key);
+      Object.assign(run, { status, summary, endedAt: new Date().toISOString(), findingKey: key });
+      return run.job.notify === 'always' || fresh;
     }, true);
   }
   transition(id: string, from: RunStatus[], patch: Partial<Pick<JobRun, 'status' | 'threadId' | 'startedAt' | 'endedAt' | 'summary'>>) {

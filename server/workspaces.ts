@@ -67,7 +67,7 @@ export class Workspaces {
     const threads = this.catalog.map(thread => {
       const state = this.entries.get(thread.id)?.workspace.state;
       const live = state?.threads.find(t => t.id === thread.id);
-      return { ...thread, ...live, busy: !!state?.backgroundRun || (state?.busy ?? false) };
+      return { ...thread, ...live, ...(state?.backgroundRun ? { backgroundBusy: true } : {}), busy: !!state?.backgroundRun || (state?.busy ?? false) };
     });
     const selection = workspace ? undefined : this.draftModel();
     return workspace ? { ...workspace.state, threads, sessionSharingWarning: this.threads.sessionSharingWarning } : {

@@ -13,6 +13,7 @@ import { ThreadStore } from '../server/threads.js';
 import { createApp } from '../server/http.js';
 import { JobStore } from '../server/jobs/store.js';
 import { persistSession } from './session-fixture.js';
+import { attentionInstructions } from '../server/jobs/attention.js';
 import { JobRunner } from '../server/jobs/runner.js';
 
 test('background thread: two viewers, Stop, confirmed shutdown and same-thread continuation', { timeout: 30000 }, async () => {
@@ -91,7 +92,7 @@ test('background thread: two viewers, Stop, confirmed shutdown and same-thread c
     await a.close();
     await b.getByRole('button', { name: 'Send', exact: true }).click();
     await b.waitForFunction(() => document.querySelector('textarea')?.value === '');
-    assert.deepEqual(prompts, ['Background review', 'Follow up']);
+    assert.deepEqual(prompts, ['Background review' + attentionInstructions, 'Follow up']);
     assert.equal((await store.runs())[0].status, 'cancelled');
     await b.getByRole('button', { name: 'Stop', exact: true }).click();
     await b.getByText('Ready', { exact: true }).waitFor();

@@ -51,7 +51,7 @@ export class PushNotifications {
   }
   update(threads: ThreadChoice[]) {
     const finished = threads.filter(t => this.busy.has(t.id) && t.busy === false).map(t => t.id);
-    this.busy = new Set(threads.filter(t => t.busy).map(t => t.id));
+    this.busy = new Set(threads.filter(t => t.busy && !t.backgroundBusy).map(t => t.id));
     if (finished.length) void this.notify(undefined, finished, new Map(threads.map(t => [t.id, t.notificationSummary ?? ''])));
   }
   async notify(only?: string, finished?: string[], summaries = new Map<string, string>()) {

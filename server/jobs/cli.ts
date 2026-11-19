@@ -23,7 +23,7 @@ async function main() {
   const store = new JobStore(resolve(process.env.NOOKFRAME_JOBS_DIR ?? join(process.env.STATE_DIR ?? '.local/state', 'jobs')));
   let result: unknown;
   if (command === 'status' && !args.length) result = {
-    schedulingAvailable: false, notificationsAvailable: false,
+    schedulingAvailable: false, notificationsAvailable: true,
     manualExecutionConfigured: !!process.env.NOOKFRAME_JOBS_SLOT,
     configuredRunnerSlot: process.env.NOOKFRAME_JOBS_SLOT || null,
     currentSlot: process.env.NOOKFRAME_SLOT || null,
