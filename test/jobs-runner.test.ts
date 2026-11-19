@@ -34,10 +34,11 @@ async function fixture(max = 4) {
     if ((await store.runs()).some(r => r.threadId === id && activeRun(r))) throw new Error('Background ownership uncertain');
   });
   await pool.initialize();
-  const runner = new JobRunner(store, pool);
+  const notifications: string[] = [];
+  const runner = new JobRunner(store, pool, async id => { notifications.push(id); });
   const job = await store.create(input);
   const request = () => store.requestRun(job.id, job.revision, randomUUID());
-  return { dir, store, threads, records, pool, runner, job, request, async close() { await runner.close(); await pool.close(); await rm(dir, { recursive: true, force: true }); } };
+  return { dir, store, threads, records, pool, runner, job, request, notifications, async close() { await runner.close(); await pool.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 
 test('durable requests deduplicate, snapshot revisions, cancel queues and guard deletion', async () => {
@@ -113,6 +114,19 @@ test('completion is recorded separately from interactive follow-up', async () =>
   } finally { await f.close(); }
 });
 
+test('attention alerts only for new explicit findings, targeting the run thread', async () => {
+  const f = await fixture();
+  try {
+    for (const [decision, notify] of [['missing', false], ['{"key":null}', false], ['{"key":"item-42"}', true], ['{"key":"item-42"}', false]] as const) {
+      const run = await f.request(); await f.runner.tick();
+      const record = f.records.at(-1)!;
+      record.emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: `Private report\nNOOKFRAME_ATTENTION ${decision}` }] } });
+      record.emit({ type: 'agent_settled', aborted: false }); await f.runner.tick();
+      assert.deepEqual(f.notifications.splice(0), notify ? [(await f.store.getRun(run.id)).threadId] : []);
+    }
+  } finally { await f.close(); }
+});
+
 test('full interactive capacity leaves request queued without dispatch', async () => {
   const f = await fixture(1);
   try {
@@ -163,11 +177,7 @@ test('final persistence failure blocks interactive handoff after confirmed stop'
   const f = await fixture();
   try {
     const run = await f.request(); await f.runner.tick();
-    const transition = f.store.transition.bind(f.store);
-    t.mock.method(f.store, 'transition', async (...args: Parameters<JobStore['transition']>) => {
-      if (args[2].status === 'cancelled') throw new Error('disk failure');
-      return transition(...args);
-    });
+    t.mock.method(f.store, 'finish', async () => { throw new Error('disk failure'); });
     await f.store.cancelRun(run.id);
     await assert.rejects(f.runner.tick(), /disk failure/);
     assert.equal(f.records[0].stops, 1);

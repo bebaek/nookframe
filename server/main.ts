@@ -87,8 +87,7 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
   if ((await jobStore.runs()).some(run => run.threadId === id && activeRun(run))) throw new Error('Background run is owned by its runner or termination is uncertain. Open it on the owning slot; do not start another writer.');
 }, () => existingPi ? { source: 'pi' } : newThreadModel(stateDir, agentDir, process.env));
 await workspace.initialize();
-const jobRunner = process.env.NOOKFRAME_JOBS_SLOT && process.env.NOOKFRAME_JOBS_SLOT === process.env.NOOKFRAME_SLOT ? new JobRunner(jobStore, workspace) : undefined;
-await jobRunner?.start();
+const jobRunner = process.env.NOOKFRAME_JOBS_SLOT && process.env.NOOKFRAME_JOBS_SLOT === process.env.NOOKFRAME_SLOT ? new JobRunner(jobStore, workspace, threadId => app.notifyJob(threadId)) : undefined;
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
 const modelOperations = new ModelOperations(stateDir, agentDir, process.env, id => workspace.operationWorkspace(id));
 const app = createApp(workspace, {
@@ -108,6 +107,7 @@ const app = createApp(workspace, {
     PATH: `${join(root, 'node_modules/.bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`,
   }),
 });
+await jobRunner?.start();
 app.server.listen(port, host, () => {
   if (localAccess) console.warn('Local tokenless access enabled: local users and forwarded connections have shell-equivalent access. Do not proxy or tunnel this listener.');
   console.log(`Pi workspace listening on port ${port}; workspace: ${workspaceDir}`);

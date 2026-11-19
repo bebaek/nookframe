@@ -1,3 +1,4 @@
+import { attentionInstructions, findingKey } from './attention.js';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import lockfile from 'proper-lockfile';
@@ -11,7 +12,7 @@ export class JobRunner {
   private closing = false;
   private compromised = false;
   private active?: { run: JobRun; lease: WorkspaceLease; deadline: number };
-  constructor(private store: JobStore, private pool: Workspaces) {}
+  constructor(private store: JobStore, private pool: Workspaces, private notify: (threadId: string) => Promise<void> = async () => {}) {}
   async start() {
     const directory = join(this.store.directory, 'runner');
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -80,7 +81,7 @@ export class JobRunner {
       this.active.deadline = Date.parse(claimed.startedAt!) + run.job.timeoutSeconds * 1000;
       if (claimed.cancelRequested) { await this.finish('cancelled'); return; }
       if (Date.now() >= this.active.deadline) { await this.finish('timed_out'); return; }
-      await lease.workspace.startBackground(run.job.prompt);
+      await lease.workspace.startBackground(run.job.prompt + (run.job.notify === 'attention' ? attentionInstructions : ''));
     } catch (error) {
       if (lease) { if (this.closing) throw error; await this.finish('failed'); return; }
       const current = (await this.store.runs()).find(r => r.id === run.id);
@@ -96,15 +97,18 @@ export class JobRunner {
     if (!active) return;
     const workspace = active.lease.workspace;
     const threadId = workspace.state.threadId;
-    const summary = workspace.state.messages.filter(m => m.role === 'assistant').at(-1)?.text.slice(0, 24000) ?? '';
+    const text = workspace.state.messages.filter(m => m.role === 'assistant').at(-1)?.text ?? '';
+    const key = status === 'completed' && active.run.job.notify === 'attention' ? findingKey(text) : undefined;
+    let notify = false;
     try {
       workspace.stoppingBackground();
       await this.store.transition(active.run.id, ['running', 'stopping'], { status: 'stopping' });
       await this.pool.finishBackground(threadId, async () => {
         if (this.compromised) throw new Error('Runner ownership lost');
-        await this.store.transition(active.run.id, ['stopping'], { status, endedAt: new Date().toISOString(), summary });
+        notify = await this.store.finish(active.run.id, status, text.slice(0, 24000), key);
       });
       active.lease.release(); this.active = undefined;
+      if (notify) void this.notify(threadId).catch(() => { /* Best effort; never replay a job for a push failure. */ });
     } catch (error) {
       this.closing = true;
       // A failed ledger write must not leave the agent executing indefinitely.

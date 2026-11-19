@@ -23,7 +23,7 @@ Current limits must be stated when relevant:
 - **Automatic scheduling is unavailable.** Saving a schedule creates only a
   paused definition. Offer to save that definition or run it manually; never say
   "scheduled", "enabled", or "I'll check tomorrow" as if dispatch will occur.
-- `notify` is saved for future use; attention-only notifications are not delivered.
+- Manual runs can send generic Web Push to opted-in browsers. `attention` requests an alert only for a new actionable finding; `always` requests one when the runner finishes a thread. Delivery is best effort.
 - Manual runs use only `read`, `grep`, `find`, and `ls`. No shell, writes, MCP,
   Home Assistant, mail, calendar, or schedule-management access. Explain when a
   requested task cannot work; do not silently substitute invented live data.
@@ -49,7 +49,7 @@ occurrence. One-shot times need an explicit UTC offset or Z.
 Show a plain-text preview with:
 - Create or update, exact name, and existing ID/revision for updates.
 - Complete resulting task, inputs, schedule/timezone, timeout, and notification
-  preference (stored only, not delivered).
+  preference (requires browser Web Push opt-in).
 - Read-only tool restrictions and **paused; will not run automatically**.
 
 Ask for confirmation of this exact preview before saving. A general request is

@@ -6,7 +6,7 @@ export class AttentionTracker {
   reset() { this.busy.clear(); }
   update(threads: ThreadChoice[]): string[] {
     const finished = threads.filter(thread => this.busy.has(thread.id) && thread.busy === false).map(thread => thread.id);
-    this.busy = new Set(threads.filter(thread => thread.busy).map(thread => thread.id));
+    this.busy = new Set(threads.filter(thread => thread.busy && !thread.backgroundBusy).map(thread => thread.id));
     return finished;
   }
 }
