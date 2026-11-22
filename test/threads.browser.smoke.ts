@@ -72,6 +72,8 @@ test('mobile threads: real RPC histories, tab-local selection, URL reload, per-t
     assert.equal(await results.getByRole('button').count(), 1);
     await results.getByRole('button').click();
     await selected(b, second);
+    await b.waitForFunction(() => document.title === 'Second conversation · Nookframe');
+    assert.equal(await a.title(), 'First conversation · Nookframe');
     assert.equal(await b.getByLabel('Search threads', { exact: true }).inputValue(), '');
     await selected(a, first);
     await b.getByRole('button', { name: 'Close controls', exact: true }).click();
