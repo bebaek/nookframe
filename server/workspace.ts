@@ -11,7 +11,7 @@ import { ResponseImages } from './response-images.js';
 import { notificationSummary } from '../shared/notification-summary.js';
 import { parseClientContext, type ClientContext } from '../shared/client-context.js';
 
-export type Agent = Pick<RpcClient, 'onEvent' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
+export type Agent = Pick<RpcClient, 'onEvent' | 'getSessionStats' | 'getState' | 'getEntries' | 'prompt' | 'clearQueue' | 'abort' | 'stop' | 'getAvailableModels' | 'setModel' | 'switchSession'>;
 const clip = (text: string) => text.length > 24000 ? text.slice(0, 24000) + '\n[display truncated]' : text;
 function contentText(content: unknown): string {
   if (typeof content === 'string') return clip(content);
@@ -95,10 +95,20 @@ export class Workspace {
       this.state.threads = await this.threads.list();
     }
     await this.loadHistory();
+    await this.refreshContext();
     this.heartbeat = setInterval(() => {
       void this.agent.getState().catch(() => this.fail());
     }, 5000);
     this.heartbeat.unref();
+  }
+
+  private contextRevision = 0;
+  private async refreshContext() {
+    const revision = ++this.contextRevision;
+    // Older external Pi versions may not report context usage.
+    let usage;
+    try { usage = (await this.agent.getSessionStats()).contextUsage; } catch { /* unavailable */ }
+    if (revision === this.contextRevision) this.state.contextUsage = usage;
   }
 
   private async loadHistory() {
@@ -146,6 +156,8 @@ export class Workspace {
     try { target = targetId === undefined ? undefined : this.threads.path(targetId); }
     catch { throw new Error('Thread is unavailable'); }
     if (targetId === this.state.threadId) return;
+    this.contextRevision++;
+    delete this.state.contextUsage;
     this.state.threadChanging = true;
     this.changed();
     try {
@@ -169,6 +181,7 @@ export class Workspace {
       const catalog = await this.threads.list();
       this.threads.remember(target);
       this.state.threadId = this.threads.id(target);
+      await this.refreshContext();
       if (previous && !existsSync(previous)) this.threads.forget(previous);
       this.finalSummary = '';
       this.state.threads = catalog;
@@ -322,7 +335,12 @@ export class Workspace {
         delete this.state.tools[event.toolCallId];
         break;
       }
+      case 'compaction_end':
+      case 'turn_end':
+        void this.refreshContext().then(() => this.changed());
+        break;
       case 'agent_settled':
+        void this.refreshContext().then(() => this.changed());
         if (event.aborted) this.finalSummary = '';
         this.state.busy = false;
         this.state.liveText = '';
@@ -359,6 +377,7 @@ export class Workspace {
       if (state.model?.provider !== provider || state.model?.id !== modelId) throw new Error('Model switch was not confirmed');
       saveModelSelection(this.stateDir, { provider, id: modelId });
       this.state.model = `${provider}/${modelId}`;
+      await this.refreshContext();
       this.state.modelSource = 'saved';
       this.selection = { source: 'saved', model: { provider, id: modelId } };
       this.modelRevision = randomUUID();
