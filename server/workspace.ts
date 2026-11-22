@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { RpcClient, JsonAgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import { recordUsage } from '../shared/token-usage.js';
 import type { ChatMessage, Snapshot, ToolOperation } from '../shared/protocol.js';
 import { saveModelSelection, type ModelSelection } from './models.js';
 import type { ThreadStore } from './threads.js';
@@ -116,6 +117,7 @@ export class Workspace {
       cursor = entry.parentId;
     }
     this.state.messages = [];
+    delete this.state.usage;
     this.photos.clear();
     this.responseImages.clear();
     this.state.liveText = '';
@@ -173,6 +175,7 @@ export class Workspace {
       this.state.model = state.model ? `${state.model.provider}/${state.model.id}` : 'No model configured';
     } catch {
       this.fail();
+      delete this.state.usage;
       this.state.messages = [];
       this.state.liveText = '';
       this.state.tools = {};
@@ -222,7 +225,8 @@ export class Workspace {
     this.state.tools = {};
   }
   private append(message: unknown) {
-    const raw = message as { role?: string; toolCallId?: string; toolName?: string; isError?: boolean; content?: unknown };
+    const raw = message as { usage?: unknown; role?: string; toolCallId?: string; toolName?: string; isError?: boolean; content?: unknown };
+    if (raw?.role === 'assistant') this.state.usage = recordUsage(this.state.usage, raw.usage);
     if (raw?.role === 'toolResult' && raw.toolCallId) {
       const tool = this.operation(raw.toolCallId, raw.toolName ?? 'Tool');
       tool.output = contentText(raw.content);
