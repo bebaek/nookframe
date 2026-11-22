@@ -34,6 +34,14 @@ function App() {
   const [authPending, setAuthPending] = useState(false);
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<Snapshot>();
+  const threadTitle = state?.threads.find(thread => thread.id === state.threadId)?.title;
+  const runStatus = state?.backgroundRun?.stopping ? 'Stopping…' : state?.busy || state?.backgroundRun ? 'Working' : '';
+  const tabThreadTitle = signedIn && state?.threadId ? threadTitle || 'New thread' : '';
+  useEffect(() => {
+    const chars = Array.from(tabThreadTitle.trim());
+    const preview = chars.length > 40 ? chars.slice(0, 39).join('') + '…' : chars.join('');
+    document.title = [signedIn && connected && runStatus, preview, 'Nookframe'].filter(Boolean).join(' · ');
+  }, [signedIn, connected, runStatus, tabThreadTitle]);
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const catalog = useRef<ThreadChoice[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -342,7 +350,7 @@ function App() {
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>Chat</button>
         <button type="button" role="tab" aria-selected={tab === 'terminal'} onClick={() => { setTerminalOpened(true); setTab('terminal'); }}>Terminal</button>
       </nav>}
-      <span role="status" className={connected ? 'badge online' : 'badge'}>{connected ? state?.backgroundRun?.stopping ? 'Stopping…' : state?.busy || state?.backgroundRun ? 'Working' : 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>
+      <span role="status" className={connected ? 'badge online' : 'badge'}>{connected ? runStatus || 'Ready' : signedIn ? 'Connecting…' : 'Locked'}</span>
       {signedIn && <button type="button" className="secondary controls-toggle" aria-label="Workspace controls" popoverTarget="workspace-controls">⋯</button>}
     </header>
     {checkingAuth ? <main className="login"><p>Checking sign-in…</p>{error && <p role="status">{error}</p>}</main> : !signedIn ? <main className="login"><h2>Open your workspace</h2><p>This grants access to a shell and all files inside your container.</p><form onSubmit={event => { event.preventDefault(); void authenticate('login'); }}><label htmlFor="token">Access token</label><input id="token" type="password" autoComplete="current-password" value={token} onChange={e => setToken(e.target.value)} required /><button disabled={authPending}>Connect</button></form><small>Stay signed in on this browser for 30 days, including after redeployments. Use only trusted devices; cookies are required. The access token is not saved in browser storage.</small>{error && <p role="alert">{error}</p>}</main> : <>
@@ -394,7 +402,7 @@ function App() {
         open={r => takeoverCommand('takeover_open', r.threadId, r.id)}
         inspect={id => { setTab('chat'); setAttentionTarget(id); }} notify={attention.notifyTakeover} />
       <section className="chat-pane" hidden={tab !== 'chat'}>
-      <div className="conversation-context" title={state?.model}><span className="conversation-title">{state?.threads.find(thread => thread.id === state.threadId)?.title || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage</button>}</div>
+      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage</button>}</div>
       {state?.threadId && usageThread === state.threadId && <section className="token-usage" aria-label="Conversation token usage">{state.usage ? <table><caption>Token usage · {state.usage.calls} model {state.usage.calls === 1 ? 'call' : 'calls'}</caption><thead><tr><th>Metric</th><th>Conversation</th><th>Last call</th></tr></thead><tbody>
         <tr><th>Input tokens cached</th><td>{cachedShare(state.usage.total)}</td><td>{cachedShare(state.usage.last)}</td></tr>
         {([['input', 'Fresh input'], ['cacheRead', 'Cache reads'], ['cacheWrite', 'Cache writes'], ['output', 'Output']] as const).map(([key, label]) => {
