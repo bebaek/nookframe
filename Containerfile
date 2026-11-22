@@ -33,6 +33,12 @@ RUN test "$(dpkg --print-architecture)" = amd64 \
     && chmod 0755 /usr/local/bin/kubectl /usr/local/bin/sops
 ENV EDITOR=nano BROWSER_EXECUTABLE_PATH=/usr/bin/chromium PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 WORKDIR /app
+# The runtime toolchain above targets linux/amd64.
+RUN curl -fsSL https://github.com/grafana/gcx/releases/download/v1.8.0/gcx_1.8.0_linux_amd64.tar.gz -o /tmp/gcx.tar.gz \
+    && echo '85e21eeecae4ed2f21a40934bb127f0ec3bc2461f024404a709bf6e448b0e975  /tmp/gcx.tar.gz' | sha256sum -c - \
+    && tar -xzf /tmp/gcx.tar.gz --no-same-owner -C /usr/local/bin gcx \
+    && gcx --version && rm /tmp/gcx.tar.gz
+
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --chmod=0644 package.json LICENSE ./
