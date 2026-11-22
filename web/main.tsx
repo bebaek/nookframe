@@ -5,6 +5,7 @@ import { ThreadSearch } from './ThreadSearch';
 import { ThreadSelect } from './ThreadSelect';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } from '../shared/protocol';
 import './style.css';
+import { cachedShare, type TokenCounts } from '../shared/token-usage';
 import { ToolCard } from './ToolCard';
 import { useTranscriptScroll } from './useTranscriptScroll';
 import { useInputHistory } from './useInputHistory';
@@ -26,6 +27,7 @@ function initialThread() {
 
 function App() {
   const clientContext = useClientContext();
+  const [usageThread, setUsageThread] = useState<string>();
   const [token, setToken] = useState('');
   const [signedIn, setSignedIn] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -400,7 +402,13 @@ function App() {
         open={r => takeoverCommand('takeover_open', r.threadId, r.id)}
         inspect={id => { setTab('chat'); setAttentionTarget(id); }} notify={attention.notifyTakeover} />
       <section className="chat-pane" hidden={tab !== 'chat'}>
-      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span></div>
+      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage</button>}</div>
+      {state?.threadId && usageThread === state.threadId && <section className="token-usage" aria-label="Conversation token usage">{state.usage ? <table><caption>Token usage · {state.usage.calls} model {state.usage.calls === 1 ? 'call' : 'calls'}</caption><thead><tr><th>Metric</th><th>Conversation</th><th>Last call</th></tr></thead><tbody>
+        <tr><th>Input tokens cached</th><td>{cachedShare(state.usage.total)}</td><td>{cachedShare(state.usage.last)}</td></tr>
+        {([['input', 'Fresh input'], ['cacheRead', 'Cache reads'], ['cacheWrite', 'Cache writes'], ['output', 'Output']] as const).map(([key, label]) => {
+          const format = (counts: TokenCounts) => counts[key]?.toLocaleString() ?? 'Not reported';
+          return <tr key={key}><th>{label}</th><td>{format(state.usage!.total)}</td><td>{format(state.usage!.last)}</td></tr>;
+        })}</tbody></table> : 'No model calls recorded yet.'}</section>}
       <AgentPresence threadId={state?.threadId} />
       {reading.hidden && <button type="button" className="reading-controls" onClick={reading.reveal} aria-label="Show chat controls">Show controls</button>}
       <main className="transcript" ref={scroll.transcript} onScroll={scroll.onScroll} {...reading.gestures}>

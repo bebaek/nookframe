@@ -92,6 +92,12 @@ header:has(.tabs) > .badge { margin-left: 0; }
 .controls-note { color: #9aabbe; font-size: 12px; }
 .workspace-controls .thread-picker, .workspace-controls .model-picker { padding: 16px 0; }
 .conversation-context { display: flex; gap: 12px; flex-shrink: 0; padding: 6px 16px; color: #9aabbe; font-size: 12px; white-space: nowrap; overflow: hidden; }
+.conversation-context { align-items: center; }
+.conversation-context button { font-size: inherit; padding: 2px 8px; }
+.token-usage { padding: 4px 16px; max-height: 30vh; overflow: auto; font-size: 13px; }
+.token-usage caption, .token-usage th { text-align: left; }
+.token-usage th, .token-usage td { padding-right: 12px; }
+.token-usage td { text-align: right; font-variant-numeric: tabular-nums; }
 .conversation-context > span { margin-left: auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 .conversation-context .conversation-title { margin-left: 0; max-width: none; min-width: 0; flex: 1; }
 .sign-out { font-size: 12px; padding: 8px 10px; white-space: nowrap; }
