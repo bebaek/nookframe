@@ -60,11 +60,12 @@ const presenceDir = process.env.NOOKFRAME_AGENT_PRESENCE === '0' ? '' : join(exi
 const presence = presenceDir ? new PresenceStore(presenceDir) : undefined;
 const initialThread = await threads.initial();
 const jobStore = new JobStore(resolve(process.env.NOOKFRAME_JOBS_DIR ?? join(stateDir, 'jobs')));
+const draftModel = () => newThreadModel(stateDir, agentDir, process.env, !!existingPi);
 const workspace = new Workspaces(threads, threads.id(initialThread), (file, threadStateDir, background, newlyCreated) => {
   if (existingPi && background) throw new Error('Background jobs are not supported in existing-Pi PoC mode');
   // Native Pi restores each session's model and project defaults itself. Do not
   // replace them with Nookframe's global profile fallback on every resume.
-  const selection = existingPi ? { source: 'pi' as const } : selectThreadModel(stateDir, threadStateDir, agentDir, process.env, newlyCreated);
+  const selection = existingPi ? (newlyCreated ? draftModel() : { source: 'pi' as const }) : selectThreadModel(stateDir, threadStateDir, agentDir, process.env, newlyCreated);
   const client = new ConfirmedRpcClient({
     cliPath: background ? fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './jobs/pi-worker.ts' : './jobs/pi-worker.js', import.meta.url)) : cliPath, cwd: threads.workingDirectory(file),
     env: { ...(existingPi ? { NOOKFRAME_PI_EXECUTABLE: existingPi.executable } : {}), NOOKFRAME_PRESENCE_DIR: background ? '' : presenceDir, NOOKFRAME_PRESENCE_THREAD_ID: threads.id(file), NOOKFRAME_JOBS_DIR: jobStore.directory, NOOKFRAME_IMAGE_STATE_DIR: stateDir, NOOKFRAME_IMAGE_THREAD_ID: threads.id(file), PI_CODING_AGENT_DIR: agentDir, PI_TELEMETRY: '0', MAIL_DIR: mailStore.root, CALENDAR_DIR: calendar.store.root, GOOGLE_DIR: calendar.store.google?.root ?? '', PUBLIC_ORIGIN: publicOrigin },
@@ -85,11 +86,11 @@ const workspace = new Workspaces(threads, threads.id(initialThread), (file, thre
   } };
 }, 4, 5 * 60_000, async id => {
   if ((await jobStore.runs()).some(run => run.threadId === id && activeRun(run))) throw new Error('Background run is owned by its runner or termination is uncertain. Open it on the owning slot; do not start another writer.');
-}, () => existingPi ? { source: 'pi' } : newThreadModel(stateDir, agentDir, process.env));
+}, draftModel);
 await workspace.initialize();
 const jobRunner = process.env.NOOKFRAME_JOBS_SLOT && process.env.NOOKFRAME_JOBS_SLOT === process.env.NOOKFRAME_SLOT ? new JobRunner(jobStore, workspace, threadId => app.notifyJob(threadId)) : undefined;
 const mailScheduler = new MailScheduler(mailStore, join(root, 'dist/mail/cli.js'), publicOrigin);
-const modelOperations = new ModelOperations(stateDir, agentDir, process.env, id => workspace.operationWorkspace(id));
+const modelOperations = new ModelOperations(stateDir, agentDir, process.env, id => workspace.operationWorkspace(id), !!existingPi);
 const app = createApp(workspace, {
   modelOperations,
   token, localAccess, origin: publicOrigin, allowedOrigins, promptExamples, presence,

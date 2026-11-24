@@ -57,6 +57,16 @@ test('thread plans preview exact scope, verify activation, persist and deduplica
   } finally { await f.clean(); }
 });
 
+test('native new chats defer to Pi until the picker remembers a model', async () => {
+  const f = await fixture();
+  try {
+    saveModelSelection(f.dir, { provider: 'test', id: 'first' });
+    assert.deepEqual(newThreadModel(f.dir, f.dir, {}, true), { source: 'pi' });
+    await f.ops.selectFromPicker(f.target, 'test', 'second');
+    assert.deepEqual(newThreadModel(f.dir, f.dir, {}, true), { source: 'saved', model: { provider: 'test', id: 'second' } });
+  } finally { await f.clean(); }
+});
+
 test('new-thread defaults do not mutate legacy selection or any existing agent', async () => {
   const f = await fixture();
   try {
