@@ -27,7 +27,7 @@ import type { ModelOperations } from './model-operations.js';
 
 import { acceptsLocalRequest, validateLocalAccess } from './local-access.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; localAccess?: boolean; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { restartProbe?: () => { pid: number; idle: boolean } | undefined; modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; localAccess?: boolean; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   pool?.takeovers.configureOrigin(config.origin);
@@ -342,6 +342,10 @@ export function createApp(workspace: Workspace | Workspaces, config: { modelOper
       return;
     }
     if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+    if (req.url === '/healthz/restart') {
+      const probe = config.restartProbe?.();
+      res.writeHead(probe ? 200 : 404, { 'Cache-Control': 'no-store' }).end(probe ? `${probe.pid}:${probe.idle ? 'idle' : 'busy'}` : ''); return;
+    }
     if (req.url === '/healthz') { const available = pool ? true : single!.state.available; res.writeHead(available ? 200 : 503).end(available ? 'ok' : 'unavailable'); return; }
     const path = req.url === '/' ? '/index.html' : req.url ?? '';
     // Serve only build artifacts, never the workspace, config, or arbitrary paths.

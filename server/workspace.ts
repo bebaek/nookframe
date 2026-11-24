@@ -62,7 +62,7 @@ export class Workspace {
   }
   private heartbeat?: ReturnType<typeof setInterval>;
 
-  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore, private managed = false, private setClientContext?: (context: ClientContext | undefined) => Promise<void>) {
+  constructor(private agent: Agent, private stateDir: string, private selection: ModelSelection = { source: 'pi' }, private threads?: ThreadStore, private managed = false, private setClientContext?: (context: ClientContext | undefined) => Promise<void>, private draining = () => false) {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     this.marker = join(stateDir, 'run-active');
     if (existsSync(this.marker)) this.state.notice = 'The previous run was interrupted. Inspect files before retrying; nothing was automatically resubmitted.';
@@ -398,6 +398,7 @@ export class Workspace {
     return this.submit(text, images, clientContext);
   }
   private async submit(text: string, images: PhotoContent[] = [], clientContext?: ClientContext) {
+    if (this.draining()) throw new Error('Server restart queued; retry after reconnecting');
     const context = parseClientContext(clientContext);
     if (!this.state.available) throw new Error('Pi is unavailable');
     if (this.state.busy || this.stopping || this.state.modelChanging || this.state.threadChanging) throw new Error('A run, model change, or thread change is already active');
