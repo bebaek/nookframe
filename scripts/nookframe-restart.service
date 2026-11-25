@@ -1,0 +1,10 @@
+[Unit]
+Description=Build, drain and restart the native Nookframe user service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/nookframe
+ExecStart=/bin/bash scripts/restart-native.sh
+RuntimeDirectory=nookframe-restart
+RuntimeDirectoryMode=0700
+TimeoutStartSec=20min

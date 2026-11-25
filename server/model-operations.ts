@@ -19,10 +19,11 @@ function choice(value: unknown): ModelChoice {
 }
 
 /** Only explicitly NEW threads consume this override; old unpinned sessions keep legacy selection. */
-export function newThreadModel(stateDir: string, agentDir: string, env: NodeJS.ProcessEnv): ModelSelection {
+export function newThreadModel(stateDir: string, agentDir: string, env: NodeJS.ProcessEnv, nativePi = false): ModelSelection {
   const legacy = resolveModelSelection(stateDir, agentDir, env);
   const path = join(stateDir, 'new-thread-model.json');
-  if (legacy.source === 'environment' || !existsSync(path)) return legacy;
+  if (legacy.source === 'environment') return legacy;
+  if (!existsSync(path)) return nativePi ? { source: 'pi' } : legacy;
   return { source: 'saved', model: choice(JSON.parse(readFileSync(path, 'utf8')).model) };
 }
 
@@ -53,13 +54,13 @@ export class ModelOperations {
   private closed = false;
   private directory: string;
   constructor(private stateDir: string, private agentDir: string, private env: NodeJS.ProcessEnv,
-    private workspace: (id: string) => Workspace) {
+    private workspace: (id: string) => Workspace, private nativePi = false) {
     this.directory = join(stateDir, 'model-operations');
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
   }
   private persist(plan: ModelPlan) { atomic(join(this.directory, `${plan.id}.json`), plan); }
   defaults() {
-    const selection = newThreadModel(this.stateDir, this.agentDir, this.env);
+    const selection = newThreadModel(this.stateDir, this.agentDir, this.env, this.nativePi);
     const path = join(this.stateDir, 'new-thread-model.json');
     const stored = existsSync(path) ? readFileSync(path, 'utf8') : '';
     return { scope: 'new-threads', selection: selection.model ?? null, source: selection.source,
