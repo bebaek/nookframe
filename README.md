@@ -784,14 +784,15 @@ under this deliberately single-user trust model.
 ## CI and container publishing
 
 `.github/workflows/ci.yml` runs on pull requests, pushes to `main`, and manual
-workflow dispatch. Node 24 type checks, tests, and the application build gate a
-single `linux/amd64` production image build from `Containerfile`. Both offline
-container smoke tests run against that image before publication. Actions are
+workflow dispatch. By default only the Node 24 type checks, application build,
+and tests run. To build the optional `linux/amd64` container image, select
+**Run workflow** and enable `build_image`. After the quality checks pass, CI
+builds from `Containerfile` and runs both offline container smoke tests. Actions are
 commit-pinned, all checkouts disable persisted credentials, and PR builds have
 read-only repository permissions with no package access. PR runs never log in
 to GHCR or publish images.
 
-Successful non-PR runs on `main` publish the tested image, without rebuilding, to
+Only manual image builds on `main` publish the tested image, without rebuilding, to
 `ghcr.io/bebaek/nookframe:<full-commit-sha>`. A separate clean runner pulls its
 registry digest and repeats both smoke tests with read-only package access.
 A separate promotion job checks the current remote `main` SHA immediately before
