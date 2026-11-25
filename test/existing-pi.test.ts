@@ -28,7 +28,9 @@ test('native catalog resumes original files across projects, preserves cwd and b
     const original = readFileSync(a, 'utf8');
     const store = new ThreadStore(join(root, 'ui'), cwd, join(root, 'state'), { root: sessions, flat: false });
     const catalog = await store.list();
-    assert.equal(catalog.length, 2);
+    assert.deepEqual(catalog.map(thread => thread.title), ['Native conversation', 'Native conversation']);
+    assert.deepEqual((await store.list('project-one')).map(({ id, title }) => ({ id, title })),
+      [{ id: store.id(a), title: 'Native conversation' }]);
     assert.equal(store.path(store.id(a)), a);
     assert.equal(store.workingDirectory(b), other);
     assert.equal(store.sessionDirectory(b), dirname(b));

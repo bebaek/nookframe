@@ -132,16 +132,15 @@ export class ThreadStore {
       try {
         const id = this.id(session.path);
         const title = (session.name || (session.firstMessage === '(no messages)' ? 'New thread' : session.firstMessage)).replace(/\s+/g, ' ').slice(0, 100);
-        const displayTitle = this.native ? `${session.cwd} — ${title}` : title;
-        if (!terms.length) return [{ id, title: displayTitle, updatedAt: session.modified.toISOString() }];
+        if (!terms.length) return [{ id, title, updatedAt: session.modified.toISOString() }];
         const text = session.allMessagesText.replace(/\s+/g, ' ');
         const lower = text.toLowerCase();
-        const heading = displayTitle.toLowerCase();
+        const heading = (this.native ? `${session.cwd} — ${title}` : title).toLowerCase();
         if (!terms.every(term => heading.includes(term) || lower.includes(term))) return [];
         const match = terms.map(term => lower.indexOf(term)).filter(index => index >= 0).sort((a, b) => a - b)[0];
         const start = Math.max(0, (match ?? 0) - 60);
         const excerpt = `${start ? '…' : ''}${text.slice(start, start + 220)}${text.length > start + 220 ? '…' : ''}`;
-        return [{ id, title: displayTitle, updatedAt: session.modified.toISOString(), excerpt }];
+        return [{ id, title, updatedAt: session.modified.toISOString(), excerpt }];
       } catch { return []; } // Never expose foreign-workspace files or symlinks.
     });
   }
