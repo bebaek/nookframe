@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      build_image:
+        description: Build and smoke-test the container image (publish on main)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,6 +41,7 @@ jobs:
   production-image:
     name: Build and smoke-test image (read-only)
     needs: quality
+    if: github.event_name == 'workflow_dispatch' && inputs.build_image
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
