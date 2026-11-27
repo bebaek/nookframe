@@ -318,21 +318,12 @@ all words must match, and double quotes group an exact phrase. Up to 50 matching
 threads appear with excerpts; click a result to open it. Search uses Pi's session
 loader over the same accessible threads, without an index or changes to session files.
 Tool output and attachments are not searched.
-Fresh visits without a thread link also open this blank composer, not the server's
-existing default thread. In multi-thread mode, blank chats allocate no agent or
-thread until **Send**; the URL stays at the base address while composing or attaching
-photos. First Send creates and selects the thread, adds `#thread=…` to the URL,
-and submits the message. Reloads and explicit thread links restore that selection.
-**New thread** clears the selection without stopping work in the previous thread.
-Pi writes the session file at the first conversation message. Existing saved
-threads and older empty session files are unchanged.
-
-First-send reconnects recover the selection without replaying the message. Recovery
-receipts are session-scoped and bounded in server memory; after a server restart an
-unconfirmed first send reports an unknown outcome. Check saved threads before
-retrying. A created but still-unsaved thread cannot survive server restart or idle
-eviction. Legacy single-workspace integrations retain their immediate allocation
-behavior.
+Fresh visits without a thread link and **New thread** both open a new Pi agent
+without sending a prompt. The model picker shows that agent’s active model and
+available choices, just as it does for an existing thread. The URL immediately
+includes `#thread=…` so reloading reopens the selection. Opening a new thread
+does not stop work in the previous one. Pi writes the session file at the first
+conversation message; until saved, a thread may not survive restart or idle eviction.
 Each thread has its own pi JSONL history; all threads share workspace files,
 and credentials, but use separate agent processes. Thread titles come from the first user message
 (or an existing pi session name). Switching itself makes no model request.

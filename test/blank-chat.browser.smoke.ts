@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -11,11 +11,13 @@ import { ThreadStore } from '../server/threads.js';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { Workspaces } from '../server/workspaces.js';
 import { createApp } from '../server/http.js';
-import { ModelOperations } from '../server/model-operations.js';
+import { ModelOperations, newThreadModel } from '../server/model-operations.js';
 import { persistSession } from './session-fixture.js';
 
-for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'} chat: lazy first send, model picker, photos and deep links`, { timeout: 30000 }, async () => {
+for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'} chat: eager initialization, model picker, photos and deep links`, { timeout: 30000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-blank-browser-'));
+  const settings = join(dir, 'settings.json');
+  if (native) await writeFile(settings, JSON.stringify({ defaultProvider: 'test', defaultModel: 'fixture' }));
   const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
   const file = store.create(); persistSession(file, dir, 'Existing conversation');
   const existing = store.id(file);
@@ -39,7 +41,7 @@ for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'}
       async stop() {},
     } as unknown as Agent;
     return { workspace: new Workspace(agent, stateDir, undefined, store, true), async start() {} };
-  }, 4, 5 * 60_000, undefined, () => native ? { source: 'pi' } : { model: { provider: 'test', id: 'fixture' }, source: 'saved' }, native);
+  }, 4, 5 * 60_000, undefined, () => native ? newThreadModel(dir, dir, {}, true) : { model: { provider: 'test', id: 'fixture' }, source: 'saved' }, native);
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const address = reservation.address(); assert.ok(address && typeof address !== 'string');
   await new Promise<void>(resolve => reservation.close(() => resolve()));
@@ -58,13 +60,14 @@ for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'}
     await page.getByText('Ready', { exact: true }).waitFor();
     const composer = page.getByLabel('Message', { exact: true });
     await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
-    if (native) await page.locator('.conversation-context').getByText('Pi chooses at startup').waitFor();
-    else await page.getByText('Default: test/fixture', { exact: false }).waitFor();
-    assert.equal(agents, 0, 'showing the default must not initialize an agent');
+    if (native) await page.locator('.conversation-context').getByText('fixture', { exact: true }).waitFor();
+    const picker = page.getByRole('combobox', { name: 'Model', exact: true });
+    assert.equal(await picker.inputValue(), 'test/fixture');
+    assert.equal(agents, 1); assert.equal(prompts, 0);
     await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await composer.fill('My first message');
-    assert.equal(new URL(page.url()).hash, '');
-    assert.equal(agents, 0);
+    assert.match(new URL(page.url()).hash, /^#thread=/);
+    assert.equal(agents, 1);
     assert.equal((await store.list()).length, 1);
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForFunction(() => location.hash.startsWith('#thread=') && (document.querySelector('textarea') as HTMLTextAreaElement).value === '');
@@ -74,23 +77,22 @@ for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'}
     assert.equal(page.url(), firstUrl); assert.equal(agents, 1);
     await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await page.getByRole('button', { name: 'New thread', exact: true }).click();
-    await page.waitForFunction(() => !location.hash);
+    await page.waitForFunction(first => location.hash.startsWith('#thread=') && location.href !== first, firstUrl);
+    const secondUrl = page.url();
     await page.getByRole('button', { name: 'Close controls', exact: true }).click();
-    assert.equal(agents, 1);
+    assert.equal(agents, 2);
     await page.reload(); await page.getByText('Ready', { exact: true }).waitFor();
-    assert.equal(new URL(page.url()).hash, ''); assert.equal(agents, 1);
+    assert.equal(page.url(), secondUrl); assert.equal(agents, 2);
     const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: 'red' } }).png().toBuffer();
     await page.locator('input[type=file]').first().setInputFiles([
       { name: 'test.png', mimeType: 'image/png', buffer: png },
       { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Draft attachment') },
     ]);
     await page.waitForFunction(() => !(Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Send') as HTMLButtonElement)?.disabled);
-    assert.equal(agents, 1, 'photo upload must not allocate a thread');
-    assert.equal(new URL(page.url()).hash, '');
+    assert.equal(agents, 2, 'photo upload must not allocate another agent');
+    assert.equal(page.url(), secondUrl);
     await composer.fill('Keep this draft');
     await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
-    await page.getByRole('button', { name: 'Choose model…', exact: true }).click();
-    await page.waitForFunction(() => location.hash.startsWith('#thread=') && document.querySelector('#model') instanceof HTMLSelectElement);
     assert.equal(prompts, 1, 'choosing a model must not submit a prompt');
     assert.equal(agents, 2);
     assert.equal(await composer.inputValue(), 'Keep this draft');
@@ -102,8 +104,7 @@ for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'}
       await page.locator('.conversation-context').getByText('fixture', { exact: true }).waitFor();
       await apply.click();
       await page.locator('.conversation-context').getByText('alternate', { exact: true }).waitFor();
-      const settings = join(dir, 'settings.json');
-      await assert.rejects(readFile(settings), { code: 'ENOENT' });
+      assert.equal(JSON.parse(await readFile(settings, 'utf8')).defaultModel, 'fixture');
       await checkbox.check();
       await apply.click(); // Promote the already-active model.
       await page.waitForFunction(() => !(document.querySelector('.pi-default-controls input') as HTMLInputElement).disabled);

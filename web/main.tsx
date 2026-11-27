@@ -179,7 +179,7 @@ function App() {
       attention.clear();
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
       socket.current = ws;
-      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth', threadId: activeThread.current, startRequestId: startRequest.current })); };
+      ws.onopen = () => { if (!disposed) ws.send(JSON.stringify({ type: 'auth', threadId: activeThread.current, openNewChat: !activeThread.current, startRequestId: startRequest.current })); };
       ws.onmessage = event => {
         if (disposed) return;
         const message = JSON.parse(event.data) as ServerMessage;
@@ -217,8 +217,8 @@ function App() {
           if (message.lockedThreadId) setLockedThreadId(message.lockedThreadId);
           if (message.id === sent.current?.id && (sent.current?.type.startsWith('takeover_') || sent.current?.type === 'switch_thread' && takeoverTarget.current)) setTakeoverError(message.message);
           if (sent.current && message.id === sent.current.id) {
-            if (sent.current.type === 'release_thread' || sent.current.type === 'draft_thread') rememberSelection(sent.current.threadId);
-            if (sent.current.type === 'prompt' || sent.current.type === 'prepare_thread') rememberStart();
+            if (sent.current.type === 'release_thread') rememberSelection(sent.current.threadId);
+            if (sent.current.type === 'prompt') rememberStart();
             sent.current = null; setPending(false);
           }
         }
@@ -270,9 +270,7 @@ function App() {
     } finally { upload.current = null; setUploading(false); }
   }
   function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file, kind: /^image\/(jpeg|png|webp|heic|heif)$/.test(file.type) || /\.(heic|heif)$/i.test(file.name) ? 'photo' : 'file' }))); }
-  const draftView = !!state && !state.threadId;
-  const startupModelLabel = 'Pi chooses at startup';
-  const composerAvailable = !!state && (state.available || draftView);
+  const composerAvailable = !!state?.available;
   const canSend = !clientContext.invalidTimezone && connected && composerAvailable && state && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
 
@@ -290,7 +288,7 @@ function App() {
     }
   }, [composerReady, state?.threadId]);
 
-  function command(type: 'prompt' | 'prepare_thread' | 'stop' | 'set_model' | 'draft_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string, makePiDefault = false) {
+  function command(type: 'prompt' | 'stop' | 'set_model' | 'new_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string, makePiDefault = false) {
     if (type === 'prompt') inputHistory.reset();
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
     reading.show();
@@ -298,14 +296,13 @@ function App() {
     const threadId = state?.threadId ?? '';
     sent.current = { id, type, threadId, text: type === 'prompt' ? draft : undefined, photos: type === 'prompt' ? photos.map(p => p.key) : undefined };
     // Persist intent before dispatch so a lost acknowledgement cannot reopen the thread.
-    if (type === 'release_thread' || type === 'draft_thread') {
+    if (type === 'release_thread') {
       rememberSelection('');
       rememberStart();
     }
     if (type === 'switch_thread') rememberStart();
-    if ((type === 'prompt' || type === 'prepare_thread') && !threadId) rememberStart(id);
     setPending(true); setError('');
-    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...((type === 'prompt' || type === 'prepare_thread') ? { text: draft, photos: photos.filter(p => p.kind !== 'file').map(p => p.id), files: photos.filter(p => p.kind === 'file').map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id, ...(makePiDefault ? { makePiDefault } : {}) } : {}) }));
+    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...(type === 'prompt' ? { text: draft, photos: photos.filter(p => p.kind !== 'file').map(p => p.id), files: photos.filter(p => p.kind === 'file').map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id, ...(makePiDefault ? { makePiDefault } : {}) } : {}) }));
     // A new prompt resumes following; ordinary renders and incoming updates do not.
     if (type === 'prompt') scroll.resume();
   }
@@ -375,7 +372,7 @@ function App() {
         <ThreadSearch threads={state.threads} disabled={!connected || pending || uploading || state.threadChanging} select={id => command('switch_thread', undefined, id)} />
         <ThreadSelect threads={state.threads} selected={state.threadId} unread={unread}
           disabled={!connected || pending || uploading || state.threadChanging} select={id => command('switch_thread', undefined, id)} />
-        <button type="button" disabled={!connected || pending || uploading} onClick={() => command('draft_thread')}>New thread</button>
+        <button type="button" disabled={!connected || pending || uploading} onClick={() => command('new_thread')}>New thread</button>
         <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => {
           const title = state.threads.find(thread => thread.id === state.threadId)?.title || 'this thread';
           if (window.confirm(`Permanently delete “${title}”? This removes its saved conversation, not shared workspace files. This cannot be undone.`)) command('delete_thread', undefined, state.threadId);
@@ -383,7 +380,7 @@ function App() {
         <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => command('release_thread')} title="Stops this idle agent so another slot can open the conversation. Saved messages are kept.">{pending && sent.current?.type === 'release_thread' ? 'Releasing…' : 'Release thread'}</button>
         <small>{state.threadChanging ? 'Switching…' : 'Selected in this tab only · other threads keep running · same files'}</small>
       </section>}
-      {state && <section className="model-picker"><label htmlFor="model">Model</label>{draftView && !state.available ? <button id="model" aria-label="Choose model…" type="button" disabled={!connected || pending || uploading || photos.some(p => !p.id)} onClick={() => command('prepare_thread')}>{pending && sent.current?.type === 'prepare_thread' ? 'Loading models…' : 'Choose model…'}</button> : <ModelPicker key={`${state.threadId}:${state.model}`} model={state.model} models={state.models} native={!!state.piOwnsDefault} disabled={!connected || !state.available || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} apply={(model, makeDefault) => command('set_model', model, undefined, makeDefault)} />}<small>{draftView && !state.available ? `${state.model ? `Default: ${state.model}${state.modelSource === 'environment' ? ' · locked by environment override' : ''}` : startupModelLabel} · initialize to choose a model · draft and attachments are kept` : state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.piOwnsDefault ? 'Apply changes only this chat unless you also set the Pi default' : state.modelSource === 'saved' ? 'Saved for this thread · choosing a model also sets the new-chat default' : 'Pi default · choosing a model saves it for this chat and future new chats'}</small></section>}
+      {state && <section className="model-picker"><label htmlFor="model">Model</label><ModelPicker key={`${state.threadId}:${state.model}`} model={state.model} models={state.models} native={!!state.piOwnsDefault} disabled={!connected || !composerAvailable || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} apply={(model, makeDefault) => command('set_model', model, undefined, makeDefault)} /><small>{state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.piOwnsDefault ? 'Apply changes only this chat unless you also set the Pi default' : state.modelSource === 'saved' ? 'Saved for this thread · choosing a model also sets the new-chat default' : 'Pi default · choosing a model saves it for this chat and future new chats'}</small></section>}
       {clientContext.settings}
       <p className="controls-note">One workspace · last 200 messages in this thread</p>
       <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>
@@ -398,7 +395,7 @@ function App() {
         open={r => takeoverCommand('takeover_open', r.threadId, r.id)}
         inspect={id => { setTab('chat'); setAttentionTarget(id); }} notify={attention.notifyTakeover} />
       <section className="chat-pane" hidden={tab !== 'chat'}>
-      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1) || (draftView ? startupModelLabel : '')}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage{state.contextUsage && ` · ${state.contextUsage.percent?.toFixed(1) ?? '?'}% context`}</button>}</div>
+      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage{state.contextUsage && ` · ${state.contextUsage.percent?.toFixed(1) ?? '?'}% context`}</button>}</div>
       {state?.threadId && usageThread === state.threadId && <section className="token-usage" aria-label="Conversation token usage"><div>Context window: {state.contextUsage ? `${state.contextUsage.tokens?.toLocaleString() ?? 'Unknown'} / ${state.contextUsage.contextWindow.toLocaleString()} tokens` : 'Not reported'}</div>{state.usage ? <table><caption>Token usage · {state.usage.calls} model {state.usage.calls === 1 ? 'call' : 'calls'}</caption><thead><tr><th>Metric</th><th>Conversation</th><th>Last call</th></tr></thead><tbody>
         <tr><th>Input tokens cached</th><td>{cachedShare(state.usage.total)}</td><td>{cachedShare(state.usage.last)}</td></tr>
         {([['input', 'Fresh input'], ['cacheRead', 'Cache reads'], ['cacheWrite', 'Cache writes'], ['output', 'Output']] as const).map(([key, label]) => {

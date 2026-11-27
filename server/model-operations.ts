@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import lockfile from 'proper-lockfile';
+import { SettingsManager } from '@earendil-works/pi-coding-agent';
 import type { ModelChoice } from '../shared/protocol.js';
 import { resolveModelSelection, saveModelSelection, type ModelSelection } from './models.js';
 import type { Workspace } from './workspace.js';
@@ -20,7 +21,14 @@ function choice(value: unknown): ModelChoice {
 
 /** Only explicitly NEW threads consume this override; old unpinned sessions keep legacy selection. */
 export function newThreadModel(stateDir: string, agentDir: string, env: NodeJS.ProcessEnv, nativePi = false): ModelSelection {
-  if (nativePi) return { source: 'pi' };
+  if (nativePi) {
+    const settings = SettingsManager.create(process.cwd(), agentDir, { projectTrusted: false });
+    const { defaultProvider: provider, defaultModel: id } = settings.getGlobalSettings();
+    if (typeof provider === 'string' && provider.trim() && typeof id === 'string' && id.trim()) {
+      return { source: 'pi', model: { provider, id } };
+    }
+    return { source: 'pi' };
+  }
   const legacy = resolveModelSelection(stateDir, agentDir, env);
   const path = join(stateDir, 'new-thread-model.json');
   if (legacy.source === 'environment') return legacy;
@@ -83,7 +91,6 @@ export class ModelOperations {
       await target.setModel(provider, id);
       if (makePiDefault) {
         try {
-          const { SettingsManager } = await import('@earendil-works/pi-coding-agent');
           const settings = SettingsManager.create(process.cwd(), this.agentDir, { projectTrusted: false });
           settings.setDefaultModelAndProvider(provider, id);
           await settings.flush();
