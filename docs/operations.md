@@ -40,11 +40,15 @@ The target must already be loaded, available, non-background and owned by this i
 
 ### New-thread scope
 
-The selected model is atomically stored in `STATE_DIR/new-thread-model.json`, under a cross-process write lock and revision check. Only explicitly creating a new thread consumes it; an existing unpinned thread still uses the legacy fallback. A new thread snapshots its explicit default into its existing per-thread model preference before startup, so later default changes do not affect it when reopened or moved to another slot. Environment overrides win and block mutations. This default is scoped to the instance's state directory, not a global fleet setting. The initial bootstrap thread is treated as existing; use New thread to consume the new default.
+In native existing-Pi mode, Pi selects the model at startup and restores it on resume. Configure new-chat defaults in Pi; Nookframe rejects `new-threads` plans in this mode.
+
+In managed mode, the selected model is atomically stored in `STATE_DIR/new-thread-model.json`, under a cross-process write lock and revision check. Only explicitly creating a new thread consumes it; an existing unpinned thread still uses the legacy fallback. A new thread snapshots its explicit default into its existing per-thread model preference before startup, so later default changes do not affect it when reopened or moved to another slot. Environment overrides win and block mutations. This default is scoped to the instance's state directory, not a global fleet setting. The initial bootstrap thread is treated as existing; use New thread to consume the new default.
 
 ### Interactive model picker
 
-Choosing a model in the browser activates, verifies, and saves it for the selected chat, then remembers it as the default for future new chats on this instance. Other existing chats (including unpinned legacy chats) are unchanged. The remembered default survives restarts and uses the same cross-process write lock as new-thread plans; changing it invalidates outstanding default plans. Environment locks, unavailable/background targets, invalid models, and busy chats remain blocked. Failed or unconfirmed activation does not update the default. If activation succeeds but saving the default fails, the browser reports that partial outcome rather than claiming both succeeded. Explicit `thread` plans remain thread-only; use `new-threads` plans to change only the default.
+In native existing-Pi mode, choose a model and click **Apply** to change only the selected chat. Check **Also set as Pi default for new chats** before applying to save the provider and model in Pi’s global settings as well. This works with the already-active model. Project settings can override the global default.
+
+In managed mode, choosing a model in the browser activates, verifies, and saves it for the selected chat, then remembers it as the default for future new chats on this instance. Other existing chats (including unpinned legacy chats) are unchanged. The remembered default survives restarts and uses the same cross-process write lock as new-thread plans; changing it invalidates outstanding default plans. Environment locks, unavailable/background targets, invalid models, and busy chats remain blocked. Failed or unconfirmed activation does not update the default. If activation succeeds but saving the default fails, the browser reports that partial outcome rather than claiming both succeeded. Explicit `thread` plans remain thread-only; use `new-threads` plans to change only the default.
 
 ### Outcomes and recovery
 
@@ -54,4 +58,4 @@ Plans expire after 30 minutes; at most 200 are retained per server process. Priv
 
 ## Deferred
 
-Job controls, redacted diagnostics, build identity, per-user authorization, independent human-approval UI, audit-history browsing/retention, and deployment adapters remain future increments. Interactive model choices also remember the new-chat default as described above.
+Job controls, redacted diagnostics, build identity, per-user authorization, independent human-approval UI, audit-history browsing/retention, and deployment adapters remain future increments.

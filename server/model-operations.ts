@@ -20,10 +20,11 @@ function choice(value: unknown): ModelChoice {
 
 /** Only explicitly NEW threads consume this override; old unpinned sessions keep legacy selection. */
 export function newThreadModel(stateDir: string, agentDir: string, env: NodeJS.ProcessEnv, nativePi = false): ModelSelection {
+  if (nativePi) return { source: 'pi' };
   const legacy = resolveModelSelection(stateDir, agentDir, env);
   const path = join(stateDir, 'new-thread-model.json');
   if (legacy.source === 'environment') return legacy;
-  if (!existsSync(path)) return nativePi ? { source: 'pi' } : legacy;
+  if (!existsSync(path)) return legacy;
   return { source: 'saved', model: choice(JSON.parse(readFileSync(path, 'utf8')).model) };
 }
 
@@ -62,7 +63,7 @@ export class ModelOperations {
   defaults() {
     const selection = newThreadModel(this.stateDir, this.agentDir, this.env, this.nativePi);
     const path = join(this.stateDir, 'new-thread-model.json');
-    const stored = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    const stored = !this.nativePi && existsSync(path) ? readFileSync(path, 'utf8') : '';
     return { scope: 'new-threads', selection: selection.model ?? null, source: selection.source,
       environmentLocked: selection.source === 'environment',
       revision: createHash('sha256').update(JSON.stringify(selection)).update(stored).digest('hex') };
@@ -73,10 +74,26 @@ export class ModelOperations {
     if (actual?.provider !== model.provider || actual.id !== model.id) throw new Error('Default verification failed');
   }
   /** The interactive picker remembers its choice; scoped thread plans remain thread-only. */
-  async selectFromPicker(target: Workspace, provider: string, id: string) {
+  async selectFromPicker(target: Workspace, provider: string, id: string, makePiDefault = false) {
     if (this.closed) throw new Error('Operations are shutting down');
     const model = choice({ provider, id });
     this.validate(target, model);
+    if (makePiDefault && !this.nativePi) throw new Error('Pi defaults require native mode');
+    if (this.nativePi) {
+      await target.setModel(provider, id);
+      if (makePiDefault) {
+        try {
+          const { SettingsManager } = await import('@earendil-works/pi-coding-agent');
+          const settings = SettingsManager.create(process.cwd(), this.agentDir, { projectTrusted: false });
+          settings.setDefaultModelAndProvider(provider, id);
+          await settings.flush();
+          await settings.reload();
+          const saved = settings.getGlobalSettings();
+          if (settings.drainErrors().some(e => e.scope === 'global') || saved.defaultModel !== id || saved.defaultProvider !== provider) throw new Error('Unverified default');
+        } catch { throw new Error('Model saved for this chat, but the Pi default could not be confirmed. Check Pi settings before retrying.'); }
+      }
+      return;
+    }
     if (this.defaults().environmentLocked) throw new Error('Model is environment-locked');
     const release = lockfile.lockSync(this.directory, { retries: 0 });
     try {
@@ -97,6 +114,7 @@ export class ModelOperations {
     const input = value as Record<string, unknown>;
     if (Object.keys(input).some(key => !['scope', 'threadId', 'model', 'deferUntilSettled'].includes(key))) throw new Error('Unknown proposal field');
     if (input.scope !== 'thread' && input.scope !== 'new-threads') throw new Error('Explicit scope required');
+    if (this.nativePi && input.scope === 'new-threads') throw new Error('Configure the default in Pi for native chats');
     if (typeof input.threadId !== 'string') throw new Error('Loaded threadId required for model discovery');
     if (input.deferUntilSettled !== undefined && typeof input.deferUntilSettled !== 'boolean') throw new Error('Invalid deferred flag');
     const target = this.workspace(input.threadId);

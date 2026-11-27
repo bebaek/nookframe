@@ -30,7 +30,7 @@ export class Workspaces {
   constructor(readonly threads: ThreadStore, public defaultId: string,
     private factory: (file: string, stateDir: string, background?: boolean, newlyCreated?: boolean) => { workspace: Workspace; start(): Promise<void> },
     private maxAgents = 4, private idleMs = 5 * 60_000, private guardThread?: (id: string) => Promise<void>,
-    private draftModel: () => ModelSelection = () => ({ source: 'pi' })) {
+    private draftModel: () => ModelSelection = () => ({ source: 'pi' }), private piOwnsDefault = false) {
     this.takeovers = new Takeovers(threads.directory, process.env.NOOKFRAME_SLOT ?? 'unknown');
     this.timer = setInterval(() => { void this.serial(async () => {
       for (const [id, entry] of this.entries) if (this.idle(entry) && Date.now() - entry.used >= this.idleMs) await this.remove(id, entry);
@@ -70,9 +70,9 @@ export class Workspaces {
       return { ...thread, ...live, ...(state?.backgroundRun ? { backgroundBusy: true } : {}), busy: !!state?.backgroundRun || (state?.busy ?? false) };
     });
     const selection = workspace ? undefined : this.draftModel();
-    return workspace ? { ...workspace.state, threads, sessionSharingWarning: this.threads.sessionSharingWarning } : {
+    return workspace ? { ...workspace.state, piOwnsDefault: this.piOwnsDefault, threads, sessionSharingWarning: this.threads.sessionSharingWarning } : {
       sessionSharingWarning: this.threads.sessionSharingWarning,
-      messages: [], liveText: '', tools: {}, busy: false, available: false,
+      piOwnsDefault: this.piOwnsDefault, messages: [], liveText: '', tools: {}, busy: false, available: false,
       model: selection?.model ? `${selection.model.provider}/${selection.model.id}` : '', models: [], modelSource: selection?.source ?? 'pi', modelChanging: false,
       notice: 'Choose a thread or create a new one. Threads share files, not running agents.',
       threadId: '', threads, threadChanging: false,

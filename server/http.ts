@@ -627,7 +627,9 @@ export function createApp(workspace: Workspace | Workspaces, config: { restartPr
           }
           else if (!current) throw new Error('Select a thread first');
           else if (command.type === 'set_model') {
-            if (config.modelOperations) await config.modelOperations.selectFromPicker(current, command.provider, command.modelId);
+            if (command.makePiDefault !== undefined && typeof command.makePiDefault !== 'boolean') throw new Error('Invalid Pi default flag');
+            if (command.makePiDefault && !config.modelOperations) throw new Error('Pi defaults unavailable');
+            if (config.modelOperations) await config.modelOperations.selectFromPicker(current, command.provider, command.modelId, command.makePiDefault);
             else await current.setModel(command.provider, command.modelId);
           }
           else await current.abort();
