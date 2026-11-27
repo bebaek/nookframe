@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -11,9 +11,10 @@ import { ThreadStore } from '../server/threads.js';
 import { Workspace, type Agent } from '../server/workspace.js';
 import { Workspaces } from '../server/workspaces.js';
 import { createApp } from '../server/http.js';
+import { ModelOperations } from '../server/model-operations.js';
 import { persistSession } from './session-fixture.js';
 
-test('blank chat: lazy first send, photos, reload, deep links and New thread', { timeout: 30000 }, async () => {
+for (const native of [false, true]) test(`blank ${native ? 'native' : 'managed'} chat: lazy first send, model picker, photos and deep links`, { timeout: 30000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'nookframe-blank-browser-'));
   const store = new ThreadStore(join(dir, 'sessions'), dir, join(dir, 'state'));
   const file = store.create(); persistSession(file, dir, 'Existing conversation');
@@ -38,12 +39,13 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
       async stop() {},
     } as unknown as Agent;
     return { workspace: new Workspace(agent, stateDir, undefined, store, true), async start() {} };
-  }, 4, 5 * 60_000, undefined, () => ({ model: { provider: 'test', id: 'fixture' }, source: 'saved' }));
+  }, 4, 5 * 60_000, undefined, () => native ? { source: 'pi' } : { model: { provider: 'test', id: 'fixture' }, source: 'saved' }, native);
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const address = reservation.address(); assert.ok(address && typeof address !== 'string');
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const origin = `http://127.0.0.1:${address.port}`, token = 'blank-fixture-'.repeat(4);
-  const app = createApp(pool, { origin, token, stateDir: join(dir, 'state'), webDir: resolve('dist/web') });
+  const modelOperations = new ModelOperations(dir, dir, {}, id => pool.operationWorkspace(id), native);
+  const app = createApp(pool, { modelOperations, origin, token, stateDir: join(dir, 'state'), webDir: resolve('dist/web') });
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined, headless: true });
   try {
     await pool.initialize();
@@ -56,7 +58,8 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
     await page.getByText('Ready', { exact: true }).waitFor();
     const composer = page.getByLabel('Message', { exact: true });
     await page.getByRole('button', { name: 'Workspace controls', exact: true }).click();
-    await page.getByText('Default: test/fixture', { exact: false }).waitFor();
+    if (native) await page.locator('.conversation-context').getByText('Pi chooses at startup').waitFor();
+    else await page.getByText('Default: test/fixture', { exact: false }).waitFor();
     assert.equal(agents, 0, 'showing the default must not initialize an agent');
     await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await composer.fill('My first message');
@@ -92,7 +95,21 @@ test('blank chat: lazy first send, photos, reload, deep links and New thread', {
     assert.equal(agents, 2);
     assert.equal(await composer.inputValue(), 'Keep this draft');
     await page.locator('#model').selectOption('test/alternate');
-    await page.getByText('Saved for this thread · choosing a model also sets the new-chat default', { exact: true }).waitFor();
+    if (native) {
+      const checkbox = page.getByRole('checkbox', { name: 'Also set as Pi default for new chats' });
+      const apply = page.getByRole('button', { name: 'Apply', exact: true });
+      assert.equal(await checkbox.isChecked(), false);
+      await page.locator('.conversation-context').getByText('fixture', { exact: true }).waitFor();
+      await apply.click();
+      await page.locator('.conversation-context').getByText('alternate', { exact: true }).waitFor();
+      const settings = join(dir, 'settings.json');
+      await assert.rejects(readFile(settings), { code: 'ENOENT' });
+      await checkbox.check();
+      await apply.click(); // Promote the already-active model.
+      await page.waitForFunction(() => !(document.querySelector('.pi-default-controls input') as HTMLInputElement).disabled);
+      assert.equal(await checkbox.isChecked(), false);
+      assert.equal(JSON.parse(await readFile(settings, 'utf8')).defaultModel, 'alternate');
+    } else await page.getByText('Saved for this thread · choosing a model also sets the new-chat default', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Close controls', exact: true }).click();
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForFunction(() => (document.querySelector('textarea') as HTMLTextAreaElement).value === '');

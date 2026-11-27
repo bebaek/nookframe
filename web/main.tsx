@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { TakeoverPanel } from './TakeoverPanel';
 import { ThreadSearch } from './ThreadSearch';
 import { ThreadSelect } from './ThreadSelect';
+import { ModelPicker } from './ModelPicker';
 import type { Snapshot, ServerMessage, ModelChoice, ThreadChoice, Takeover } from '../shared/protocol';
 import './style.css';
 import { cachedShare, type TokenCounts } from '../shared/token-usage';
@@ -270,6 +271,7 @@ function App() {
   }
   function addPhotos(files: File[]) { void uploadPhotos(files.map(file => ({ key: crypto.randomUUID(), file, kind: /^image\/(jpeg|png|webp|heic|heif)$/.test(file.type) || /\.(heic|heif)$/i.test(file.name) ? 'photo' : 'file' }))); }
   const draftView = !!state && !state.threadId;
+  const startupModelLabel = 'Pi chooses at startup';
   const composerAvailable = !!state && (state.available || draftView);
   const canSend = !clientContext.invalidTimezone && connected && composerAvailable && state && !state.busy && !state.backgroundRun &&
     !state.modelChanging && !state.threadChanging && !pending && !uploading && photos.every(p => p.id) && (!!draft.trim() || photos.length > 0);
@@ -288,7 +290,7 @@ function App() {
     }
   }, [composerReady, state?.threadId]);
 
-  function command(type: 'prompt' | 'prepare_thread' | 'stop' | 'set_model' | 'draft_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string) {
+  function command(type: 'prompt' | 'prepare_thread' | 'stop' | 'set_model' | 'draft_thread' | 'switch_thread' | 'delete_thread' | 'release_thread', model?: ModelChoice, targetId?: string, makePiDefault = false) {
     if (type === 'prompt') inputHistory.reset();
     if (!connected || pending || sent.current || !socket.current || (uploading && type !== 'stop')) return;
     reading.show();
@@ -303,7 +305,7 @@ function App() {
     if (type === 'switch_thread') rememberStart();
     if ((type === 'prompt' || type === 'prepare_thread') && !threadId) rememberStart(id);
     setPending(true); setError('');
-    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...((type === 'prompt' || type === 'prepare_thread') ? { text: draft, photos: photos.filter(p => p.kind !== 'file').map(p => p.id), files: photos.filter(p => p.kind === 'file').map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id } : {}) }));
+    socket.current.send(JSON.stringify({ type, id, threadId, targetId, ...((type === 'prompt' || type === 'prepare_thread') ? { text: draft, photos: photos.filter(p => p.kind !== 'file').map(p => p.id), files: photos.filter(p => p.kind === 'file').map(p => p.id), clientContext: clientContext.context() } : {}), ...(model ? { provider: model.provider, modelId: model.id, ...(makePiDefault ? { makePiDefault } : {}) } : {}) }));
     // A new prompt resumes following; ordinary renders and incoming updates do not.
     if (type === 'prompt') scroll.resume();
   }
@@ -381,13 +383,7 @@ function App() {
         <button type="button" disabled={!connected || pending || uploading || !state.available || !state.threadId || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging} onClick={() => command('release_thread')} title="Stops this idle agent so another slot can open the conversation. Saved messages are kept.">{pending && sent.current?.type === 'release_thread' ? 'Releasing…' : 'Release thread'}</button>
         <small>{state.threadChanging ? 'Switching…' : 'Selected in this tab only · other threads keep running · same files'}</small>
       </section>}
-      {state && <section className="model-picker"><label htmlFor="model">Model</label>{draftView && !state.available ? <button id="model" aria-label="Choose model…" type="button" disabled={!connected || pending || uploading || photos.some(p => !p.id)} onClick={() => command('prepare_thread')}>{pending && sent.current?.type === 'prepare_thread' ? 'Loading models…' : 'Choose model…'}</button> : <select id="model" value={state.model} disabled={!connected || !state.available || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} onChange={e => {
-        const choice = state.models.find(m => `${m.provider}/${m.id}` === e.target.value);
-        if (choice) command('set_model', choice);
-      }}>
-        {!state.models.some(m => `${m.provider}/${m.id}` === state.model) && <option value={state.model}>{state.model}</option>}
-        {state.models.map(m => <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.provider}/{m.id}</option>)}
-      </select>}<small>{draftView && !state.available ? `${state.model ? `Default: ${state.model}${state.modelSource === 'environment' ? ' · locked by environment override' : ''}` : 'Default: chosen by Pi when this thread initializes'} · initialize to choose a model · draft and attachments are kept` : state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.modelSource === 'saved' ? 'Saved for this thread · choosing a model also sets the new-chat default' : 'Pi default · choosing a model saves it for this chat and future new chats'}</small></section>}
+      {state && <section className="model-picker"><label htmlFor="model">Model</label>{draftView && !state.available ? <button id="model" aria-label="Choose model…" type="button" disabled={!connected || pending || uploading || photos.some(p => !p.id)} onClick={() => command('prepare_thread')}>{pending && sent.current?.type === 'prepare_thread' ? 'Loading models…' : 'Choose model…'}</button> : <ModelPicker key={`${state.threadId}:${state.model}`} model={state.model} models={state.models} native={!!state.piOwnsDefault} disabled={!connected || !state.available || state.busy || !!state.backgroundRun || state.modelChanging || state.threadChanging || pending || uploading || state.modelSource === 'environment'} apply={(model, makeDefault) => command('set_model', model, undefined, makeDefault)} />}<small>{draftView && !state.available ? `${state.model ? `Default: ${state.model}${state.modelSource === 'environment' ? ' · locked by environment override' : ''}` : startupModelLabel} · initialize to choose a model · draft and attachments are kept` : state.modelChanging ? 'Switching…' : state.modelSource === 'environment' ? 'Locked by environment override' : state.piOwnsDefault ? 'Apply changes only this chat unless you also set the Pi default' : state.modelSource === 'saved' ? 'Saved for this thread · choosing a model also sets the new-chat default' : 'Pi default · choosing a model saves it for this chat and future new chats'}</small></section>}
       {clientContext.settings}
       <p className="controls-note">One workspace · last 200 messages in this thread</p>
       <button type="button" className="secondary sign-out" disabled={authPending} onClick={() => void authenticate('logout')}>Sign out</button>
@@ -402,7 +398,7 @@ function App() {
         open={r => takeoverCommand('takeover_open', r.threadId, r.id)}
         inspect={id => { setTab('chat'); setAttentionTarget(id); }} notify={attention.notifyTakeover} />
       <section className="chat-pane" hidden={tab !== 'chat'}>
-      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1)}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage{state.contextUsage && ` · ${state.contextUsage.percent?.toFixed(1) ?? '?'}% context`}</button>}</div>
+      <div className="conversation-context" title={state?.model}><span className="conversation-title">{threadTitle || (state?.threadId ? 'New thread (unsaved)' : 'Chat')}</span><span>{state?.model.split('/').at(-1) || (draftView ? startupModelLabel : '')}</span>{state?.threadId && <button type="button" aria-expanded={usageThread === state.threadId} onClick={() => setUsageThread(usageThread === state.threadId ? undefined : state.threadId)}>Usage{state.contextUsage && ` · ${state.contextUsage.percent?.toFixed(1) ?? '?'}% context`}</button>}</div>
       {state?.threadId && usageThread === state.threadId && <section className="token-usage" aria-label="Conversation token usage"><div>Context window: {state.contextUsage ? `${state.contextUsage.tokens?.toLocaleString() ?? 'Unknown'} / ${state.contextUsage.contextWindow.toLocaleString()} tokens` : 'Not reported'}</div>{state.usage ? <table><caption>Token usage · {state.usage.calls} model {state.usage.calls === 1 ? 'call' : 'calls'}</caption><thead><tr><th>Metric</th><th>Conversation</th><th>Last call</th></tr></thead><tbody>
         <tr><th>Input tokens cached</th><td>{cachedShare(state.usage.total)}</td><td>{cachedShare(state.usage.last)}</td></tr>
         {([['input', 'Fresh input'], ['cacheRead', 'Cache reads'], ['cacheWrite', 'Cache writes'], ['output', 'Output']] as const).map(([key, label]) => {

@@ -41,6 +41,7 @@ export interface Snapshot {
   model: string;
   models: ModelChoice[];
   modelSource: ModelSource;
+  piOwnsDefault?: boolean;
   modelChanging: boolean;
   notice: string;
   threadId: string;
@@ -53,7 +54,7 @@ export type ClientCommand =
   | { type: 'push_focus'; threadId: string; focused: boolean }
   | { type: 'prompt'; id: string; text: string; threadId: string; photos?: string[]; files?: string[]; clientContext?: import('./client-context.js').ClientContext }
   | { type: 'stop'; id: string; threadId: string }
-  | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string }
+  | { type: 'set_model'; id: string; provider: string; modelId: string; threadId: string; makePiDefault?: boolean }
   | { type: 'new_thread'; id: string; threadId: string }
   | { type: 'draft_thread'; id: string; threadId: string }
   | { type: 'prepare_thread'; id: string; threadId: string; files?: string[]; photos?: string[] }

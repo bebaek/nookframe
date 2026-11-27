@@ -19,7 +19,7 @@ Only change settings when the user requests them. Clarify whether they mean this
 2. Run `nookctl models THREAD` to discover exact provider/model IDs and current settings. The thread must be loaded and owned by this instance. Do not open arbitrary conversations merely to discover models.
 3. Prepare the exact change:
    - Idle thread: `nookctl model-plan thread THREAD PROVIDER MODEL`
-   - New conversations only: `nookctl model-plan new-threads THREAD PROVIDER MODEL`
+   - New conversations only (managed instances; native existing-Pi users configure defaults in Pi instead): `nookctl model-plan new-threads THREAD PROVIDER MODEL`
    - This running conversation: `nookctl model-plan-after-run THREAD PROVIDER MODEL`
 4. Inspect the returned before/after values, scope, revision, expiration and deferral. If consistent with the user's explicit request, apply that exact ID using `nookctl model-apply PLAN`. If approval is ambiguous, present the proposal and ask first.
 5. Read the result with `nookctl model-result PLAN`. Only `applied` confirms success. `pending` means scheduled after this run settles; tell the user that it has not switched yet. Do not keep polling from the same run: it cannot settle while you are still working. Confirm on the next request using the saved plan ID or model inventory.

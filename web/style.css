@@ -120,6 +120,8 @@ small { color: #9aabbe; font-size: 12px; overflow-wrap: anywhere; }
 .model-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px 12px; padding: 12px 24px; border-bottom: 1px solid #29333f; }
 .model-picker label { font-size: 13px; color: #a4b4c6; }
 .model-picker select, .thread-picker select { width: 100%; min-width: 0; padding: 8px; min-height: 44px; font: inherit; font-size: 14px; color: inherit; background: #171e26; border: 1px solid #3a495a; border-radius: 8px; }
+.pi-default-controls { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pi-default-controls input { width: auto; }
 .model-picker small { grid-column: 2; }
 .transcript { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px 24px; }
 button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #a1dfcb; outline-offset: 2px; }

@@ -13,7 +13,7 @@ import { ModelOperations, newThreadModel, selectThreadModel } from '../server/mo
 import { resolveModelSelection, saveModelSelection } from '../server/models.js';
 import lockfile from 'proper-lockfile';
 
-async function fixture() {
+async function fixture(nativePi = false) {
   const dir = mkdtempSync(join(tmpdir(), 'model-operations-'));
   let current = { provider: 'test', id: 'first' };
   let event: (value: unknown) => void = () => {};
@@ -31,7 +31,7 @@ async function fixture() {
   let loaded = true;
   const env: NodeJS.ProcessEnv = {};
   const lookup = (id: string) => { if (id !== 'thread' || !loaded) throw new Error('Unavailable'); return target; };
-  const ops = new ModelOperations(dir, dir, env, lookup);
+  const ops = new ModelOperations(dir, dir, env, lookup, nativePi);
   const propose = (scope: 'thread' | 'new-threads' = 'thread', deferUntilSettled = false) => ops.propose({ scope, threadId: 'thread', model: { provider: 'test', id: 'second' }, deferUntilSettled }, 'token');
   return { dir, target, agent, env, ops, propose, lookup, switches: () => switches, unload: () => { loaded = false; }, event: (value: unknown) => event(value),
     async clean() { ops.close(); await target.close(); rmSync(dir, { recursive: true, force: true }); } };
@@ -57,13 +57,37 @@ test('thread plans preview exact scope, verify activation, persist and deduplica
   } finally { await f.clean(); }
 });
 
-test('native new chats defer to Pi until the picker remembers a model', async () => {
-  const f = await fixture();
+test('native new chats defer to Pi and picker changes stay in the thread', async () => {
+  const f = await fixture(true);
   try {
     saveModelSelection(f.dir, { provider: 'test', id: 'first' });
-    assert.deepEqual(newThreadModel(f.dir, f.dir, {}, true), { source: 'pi' });
+    const path = join(f.dir, 'new-thread-model.json');
+    const stored = JSON.stringify({ model: { provider: 'test', id: 'first' } });
+    writeFileSync(path, stored);
+    f.env.AGENT_MODEL = 'ignored';
+    assert.equal(f.ops.defaults().selection, null);
+    assert.throws(() => f.propose('new-threads'), /Configure the default in Pi/);
     await f.ops.selectFromPicker(f.target, 'test', 'second');
-    assert.deepEqual(newThreadModel(f.dir, f.dir, {}, true), { source: 'saved', model: { provider: 'test', id: 'second' } });
+    assert.equal(f.target.state.model, 'test/second');
+    assert.equal(f.ops.defaults().selection, null);
+    assert.equal(readFileSync(path, 'utf8'), stored);
+  } finally { await f.clean(); }
+});
+
+test('native Apply saves the active model to global Pi settings only on opt-in', async () => {
+  const f = await fixture(true);
+  try {
+    const path = join(f.dir, 'settings.json');
+    const initial = { defaultProvider: 'test', defaultModel: 'first', theme: 'dark' };
+    writeFileSync(path, JSON.stringify(initial));
+    await f.ops.selectFromPicker(f.target, 'test', 'second');
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), initial);
+    await f.ops.selectFromPicker(f.target, 'test', 'second', true);
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { ...initial, defaultModel: 'second' });
+    writeFileSync(path, '{broken');
+    await assert.rejects(f.ops.selectFromPicker(f.target, 'test', 'first', true), /saved for this chat, but the Pi default/);
+    assert.equal(f.target.state.model, 'test/first');
+    assert.equal(readFileSync(path, 'utf8'), '{broken');
   } finally { await f.clean(); }
 });
 
