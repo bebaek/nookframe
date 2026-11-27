@@ -103,12 +103,13 @@ test('background thread: two viewers, Stop, confirmed shutdown and same-thread c
     assert.equal(new URL(b.url()).hash, '');
     await b.reload();
     await b.getByText('Ready', { exact: true }).waitFor();
-    assert.equal(await b.getByLabel('Thread', { exact: true }).inputValue(), '');
-    assert.deepEqual(profiles, [true, false], 'refresh must not reacquire the released thread');
+    const fresh = await b.getByLabel('Thread', { exact: true }).inputValue();
+    assert.ok(fresh && fresh !== threadId, 'refresh opens a new chat, not the released thread');
+    assert.deepEqual(profiles, [true, false, false]);
     await b.getByRole('button', { name: 'Workspace controls', exact: true }).click();
     await b.getByLabel('Thread', { exact: true }).selectOption(threadId);
-    await b.waitForFunction(() => document.querySelector<HTMLSelectElement>('#thread')?.value !== '');
-    assert.deepEqual(profiles, [true, false, false]);
+    await b.waitForFunction(id => document.querySelector<HTMLSelectElement>('#thread')?.value === id, threadId);
+    assert.deepEqual(profiles, [true, false, false, false]);
   } finally {
     releaseStops = true; finishStop?.(); await browser.close(); await app.close(); await runner.close(); await pool.close(); await rm(dir, { recursive: true, force: true });
   }

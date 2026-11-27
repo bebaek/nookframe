@@ -50,7 +50,7 @@ export interface Snapshot {
 }
 export type ClientCommand =
   // Empty threadId explicitly selects the chooser; omitted retains legacy default selection.
-  | { type: 'auth'; token?: string; threadId?: string; startRequestId?: string }
+  | { type: 'auth'; token?: string; threadId?: string; startRequestId?: string; openNewChat?: boolean }
   | { type: 'push_focus'; threadId: string; focused: boolean }
   | { type: 'prompt'; id: string; text: string; threadId: string; photos?: string[]; files?: string[]; clientContext?: import('./client-context.js').ClientContext }
   | { type: 'stop'; id: string; threadId: string }

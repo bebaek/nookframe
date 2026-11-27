@@ -469,8 +469,9 @@ export function createApp(workspace: Workspace | Workspaces, config: { restartPr
                   if (!receipt) throw new Error('First-send outcome is unknown. Check saved threads before sending again.');
                   requested = await receipt;
                 }
-                if (requested !== '') {
-                  const lease = await pool.connect(requested);
+                const create = requested === '' && command.openNewChat === true;
+                if (create || requested !== '') {
+                  const lease = await pool.connect(requested, create);
                   if (ws.readyState !== WebSocket.OPEN) { lease.release(); return; }
                   selected.set(ws, lease);
                 }
