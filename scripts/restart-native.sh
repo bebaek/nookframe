@@ -8,7 +8,8 @@ pid() { systemctl --user show "$unit" -p MainPID --value; }
 old=$(pid)
 [[ $old =~ ^[1-9][0-9]*$ && $(readlink -f "/proc/$old/cwd") == "$PWD" ]]
 # Match the running service's Node version, including nvm installations.
-export PATH="$(dirname "$(readlink -e "/proc/$old/exe")"):$PATH"
+node_bin=$(readlink -e "/proc/$old/exe")
+export PATH="$(dirname "$node_bin"):$PATH"
 probe() { curl --noproxy '*' -fsS --max-time 2 "http://127.0.0.1:$port/healthz/restart"; }
 touch "$RUNTIME_DIRECTORY/$old"
 echo 'Waiting for active chat turns to finish before building'
@@ -16,7 +17,8 @@ until [[ $(probe) == "$old:idle" ]]; do
   [[ $(pid) == "$old" && $SECONDS -lt 600 ]] || { echo 'Drain failed; not restarting' >&2; exit 1; }
   sleep 1
 done
-npm run build
+echo 'Building with the running service’s Node runtime'
+"$node_bin" --run build
 [[ $(pid) == "$old" && $(probe) == "$old:idle" ]]
 systemctl --user restart "$unit"
 new=$(pid)

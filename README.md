@@ -72,7 +72,9 @@ Existing launchers and container/manual deployments are unchanged; the server
 uses this PoC only when `NOOKFRAME_PI_MODE=existing`. No sessions are migrated
 from the legacy `workspace-sessions` directory.
 The installer builds this checkout and creates the launcher; it does not use
-sudo, install a service, start the server, or overwrite an existing launcher.
+sudo, install the main service, start the server, or overwrite an existing launcher.
+For existing-Pi installs with user systemd, it also installs a restart helper.
+If running as `nookframe.service`, use [`make restart`](docs/native-restart.md).
 
 To choose a workspace, stop the server and restart:
 

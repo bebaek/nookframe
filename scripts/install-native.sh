@@ -62,6 +62,16 @@ fi
   printf 'exec node dist/server/main.js\n'
 } > .local/start
 chmod 700 .local/start
+# Foreground and isolated launches don't need a user service. If the user
+# manager is available, prepare the helper without starting either service.
+if [[ "$pi_mode" == existing ]] && command -v systemctl >/dev/null &&
+   service_dir=$(systemctl --user show nookframe.service -p WorkingDirectory --value 2>/dev/null); then
+  if [[ -z "$service_dir" || "$service_dir" -ef "$PWD" ]]; then
+    make install-restart-helper
+  else
+    printf 'Skipping restart helper: nookframe.service targets another checkout.\n' >&2
+  fi
+fi
 if [[ "$pi_mode" == isolated ]]; then
   printf '\nLog in with:\n  PI_CODING_AGENT_DIR="$PWD/.local/agent" ./node_modules/.bin/pi\n'
 else
