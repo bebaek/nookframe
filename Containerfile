@@ -9,6 +9,7 @@ COPY tsconfig*.json vite.config.ts ./
 COPY server ./server
 COPY mail ./mail
 COPY calendar ./calendar
+COPY contacts ./contacts
 COPY google ./google
 COPY shared ./shared
 COPY web ./web
@@ -47,6 +48,7 @@ COPY --chmod=0644 mail/README.md ./docs/mail.md
 COPY --chmod=0755 scripts/mailctl /usr/local/bin/mailctl
 COPY --chmod=0755 scripts/imagectl /usr/local/bin/imagectl
 COPY --chmod=0755 scripts/filectl /usr/local/bin/filectl
+COPY --chmod=0755 scripts/contactsctl /usr/local/bin/contactsctl
 COPY --chmod=0755 scripts/calendarctl /usr/local/bin/calendarctl
 COPY --chmod=0755 scripts/googlectl /usr/local/bin/googlectl
 COPY --chmod=0755 scripts/nookframe /usr/local/bin/nookframe
