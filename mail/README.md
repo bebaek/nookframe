@@ -900,7 +900,10 @@ is independent; to load the same skill there, run
 `pi --skill /app/skills/mail/SKILL.md`.
 
 The only token-printing code is the internal mbsync `PassCmd` helper at
-`/usr/local/libexec/pi-mail-token`. Its stdout goes directly into mbsync's private
+`/usr/local/libexec/pi-mail-token` by default. Native installations can set
+`MAIL_TOKEN_HELPER` to a trusted absolute executable path (letters, digits,
+`/`, `.`, `_`, `-`) in the server and CLI environments. The helper must exec
+Node with `dist/mail/token-helper.js` and forward its arguments. Its stdout goes directly into mbsync's private
 pipe, not a model tool result. **Never invoke it from chat or enable command tracing.**
 Normal `mailctl` operations expose only links, status, and requested email data.
 Provider responses, refresh tokens, and authorization codes are never logged by the
