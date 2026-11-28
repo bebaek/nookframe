@@ -444,26 +444,31 @@ the chat's selected web session. Do not explicitly open/resume the chat
 session in another pi process. There is no maintenance mode or automatic restart;
 concurrent commands/agents can edit the same files or refresh credentials.
 
+- If `tmux` is on the server's PATH, the tab creates or attaches to session `shared`
+  on a dedicated socket (independent of your personal tmux sessions). From chat's shell,
+  use `tmux -S "$NOOKFRAME_TMUX_SOCKET" list-panes -s -t shared`
+  to identify a pane. This does not automatically send terminal output to chat.
+  If tmux is missing or fails to launch, the tab prints a notice and opens plain Bash.
 - The shell starts lazily, survives tab switches and browser disconnects, and is
   shared by all authenticated terminal connections (not separate user sessions).
 - Refreshing restores the browser login, then reattaches to the running shell.
   There is **no server-side terminal replay**: disconnected output is discarded.
   A forced resize requests a TUI redraw on attachment; Ctrl+L redraws a shell.
-  This is not a terminal multiplexer: programs may not reconstruct earlier output.
-- `exit` ends the shell; **New shell** starts another. Container restarts, deploys,
+  tmux can redraw its panes and retains pane history until the session ends.
+- After tmux detach or shell exit, **Open terminal** reattaches or starts a fresh shell. Container restarts, deploys,
   and any maintenance shutdown end all terminal processes.
 - Terminal transport uses the same browser session/origin checks as chat, a separate
   WebSocket path, heartbeat, payload limits, and bounded socket buffering.
 - The app neither logs terminal input/output nor sends it into chat/model context.
-  Bash startup files are skipped and shell history is disabled. Programs launched
-  inside it can still save their own history, sessions, or logs. Use `/login` or
-  masked credential prompts, not a pi chat prompt, for secret entry.
+  The first pane uses the same shell startup as tmux splits. Shell history follows
+  your normal settings, including in the plain Bash fallback. Use masked credential
+  prompts rather than typing secrets into commands that may be saved in history.
 - The browser holds terminal scrollback only in memory. **Clear screen** clears
   its visible scrollback, not data retained by terminal programs or other clients.
 - This is private entry, **not credential isolation**: the agent still has the
   same filesystem permissions and can read saved credentials.
 - Mobile buttons provide arrow keys (including application-cursor mode for TUIs),
-  Esc, Tab, Ctrl+C/D/L, and Paste (requires browser
+  Esc, Tab, Ctrl+B/C/D/L, and Paste (requires browser
   clipboard permission). Pasting more than 16000 characters is rejected.
 
 Credential changes may need a manual server restart to refresh the RPC model

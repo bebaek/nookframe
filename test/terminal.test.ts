@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,9 +16,27 @@ async function until(check: () => boolean) {
   assert.fail('Timed out waiting for terminal event');
 }
 
+test('tmux terminal detaches and reopens the same pane', { skip: spawnSync('tmux', ['-V']).status !== 0 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-tmux-'));
+  const terminal = new TerminalSession(dir, { PATH: process.env.PATH!, HOME: dir });
+  const run = (...args: string[]) => spawnSync('tmux', ['-S', join(dir, 'terminal.tmux.sock'), ...args], { encoding: 'utf8' });
+  let exited = false;
+  try {
+    terminal.attach(event => { if (event.type === 'terminal_exit') exited = true; });
+    const clients = () => run('list-clients', '-F', '#{session_name}').stdout.trim();
+    await until(() => clients() === 'shared');
+    const pane = () => run('list-panes', '-t', 'shared', '-F', '#{pane_pid}').stdout.trim();
+    const pid = pane(); assert.match(pid, /^\d+$/);
+    assert.equal(run('detach-client', '-s', 'shared').status, 0);
+    await until(() => exited);
+    terminal.start(); await until(() => clients() === 'shared');
+    assert.equal(pane(), pid);
+  } finally { terminal.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('terminal auth, shell persistence, resizing, exit/restart, no chat leakage', { timeout: 20000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-terminal-'));
-  const terminal = new TerminalSession(dir, { PATH: process.env.PATH!, HOME: dir });
+  const terminal = new TerminalSession(dir, { PATH: dir, HOME: dir }); // No tmux installed on this PATH.
   let attaches = 0;
   const attach = terminal.attach.bind(terminal);
   terminal.attach = listener => { attaches++; return attach(listener); };
@@ -43,6 +62,7 @@ test('terminal auth, shell persistence, resizing, exit/restart, no chat leakage'
     const [code] = await once(wrong.ws, 'close'); assert.equal(code, 1008); assert.equal(attaches, 0);
     const chat = await open('/ws'); await until(() => chat.messages.some(m => m.type === 'snapshot'));
     const first = await open(); await until(() => first.messages.some(m => m.type === 'terminal_ready'));
+    await until(() => first.output().includes('tmux not found; using plain Bash'));
     const secret = 'PRIVATE_TERMINAL_CANARY';
     first.ws.send(JSON.stringify({ type: 'terminal_input', data: `export KEEP=${secret}\r` }));
     await until(() => first.output().includes(secret));
@@ -50,7 +70,7 @@ test('terminal auth, shell persistence, resizing, exit/restart, no chat leakage'
     const second = await open(); await until(() => second.messages.some(m => m.type === 'terminal_ready'));
     assert.equal(second.output().includes(secret), false, 'No server replay of prior terminal output');
     second.ws.send(JSON.stringify({ type: 'terminal_resize', cols: 101, rows: 39 }));
-    second.ws.send(JSON.stringify({ type: 'terminal_input', data: 'printf "saved=%s\\n" "$KEEP"; stty size\r' }));
+    second.ws.send(JSON.stringify({ type: 'terminal_input', data: 'printf "saved=%s\\n" "$KEEP"; /bin/stty size\r' }));
     await until(() => second.output().includes(`saved=${secret}`) && second.output().includes('39 101'));
     second.ws.send(JSON.stringify({ type: 'terminal_resize', cols: -1, rows: 999999 }));
     await until(() => second.messages.some(m => m.type === 'error'));

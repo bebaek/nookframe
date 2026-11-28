@@ -111,8 +111,8 @@ export function TerminalPane({ visible }: { visible: boolean }) {
           queuedOutput += message.data.length;
           term.write(message.data, () => { queuedOutput -= message.data.length; });
         } else if (message.type === 'terminal_exit') {
-          ready.current = false; setExited(true); setStatus(`Shell exited (${message.code})`);
-          term.writeln(`\r\n[Shell exited (${message.code})]`);
+          ready.current = false; setExited(true); setStatus(`Terminal exited or detached (${message.code})`);
+          term.writeln('\r\n[Open terminal to reattach or start a new shell.]');
         } else if (message.type === 'error') setStatus(message.message);
       };
       ws.onclose = event => {
@@ -156,8 +156,8 @@ export function TerminalPane({ visible }: { visible: boolean }) {
     <details className="terminal-note"><summary>Private terminal · session help</summary><p>Not sent to chat or recorded by this app. Same workspace and permissions as the agent. Run <code>pi</code> for its TUI; avoid the chat session. Container restarts and maintenance shutdowns end this shell. Search with Ctrl+F / ⌘+F while the terminal is focused; browser Find is unchanged elsewhere. Enter finds next, Shift+Enter previous. Appearance is saved on this browser; terminal output is not.</p></details>
     <div ref={container} className="terminal-screen" aria-label="Workspace terminal" />
     <div className="terminal-controls"><small role="status">{status}</small>
-      {exited && <button type="button" disabled={!online} onClick={() => socket.current?.send(JSON.stringify({ type: 'terminal_start' }))}>New shell</button>}
-      {([['Esc', '\x1b'], ['Tab', '\t'], ['Ctrl+C', '\x03'], ['Ctrl+D', '\x04'], ['Ctrl+L', '\x0c']] as const).map(([label, data]) => <button type="button" className="secondary" key={label} disabled={!online || exited} onClick={() => send(data)}>{label}</button>)}
+      {exited && <button type="button" disabled={!online} onClick={() => socket.current?.send(JSON.stringify({ type: 'terminal_start' }))}>Open terminal</button>}
+      {([['Esc', '\x1b'], ['Tab', '\t'], ['Ctrl+B', '\x02'], ['Ctrl+C', '\x03'], ['Ctrl+D', '\x04'], ['Ctrl+L', '\x0c']] as const).map(([label, data]) => <button type="button" className="secondary" key={label} disabled={!online || exited} onClick={() => send(data)}>{label}</button>)}
       {([['↑', 'up', 'A'], ['↓', 'down', 'B'], ['←', 'left', 'D'], ['→', 'right', 'C']] as const).map(([label, direction, suffix]) => <button type="button" className="secondary" key={direction} aria-label={`Arrow ${direction}`} disabled={!online || exited} onClick={() => send(`${terminal.current?.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b['}${suffix}`)}>{label}</button>)}
       <button type="button" className="secondary" disabled={!hasSelection} onClick={async () => {
         try { await navigator.clipboard.writeText(terminal.current?.getSelection() || ''); }
