@@ -52,7 +52,10 @@ export function prepareConfig(store: MailStore, account: Account) {
   for (const path of [store.path('maildir', name), store.path('index', name), store.path('state', name), ...['cur', 'new', 'tmp'].map(p => store.path('maildir', name, 'INBOX', p))]) mkdirSync(path, { recursive: true, mode: 0o700 });
   const mbsync = store.path('state', name, 'mbsyncrc');
   const notmuch = store.path('state', name, 'notmuch-config');
-  store.writeText(mbsync, renderMbsync(store.root, { ...account, alias: store.connectionKey(account.alias) }, `/usr/local/libexec/pi-mail-token ${account.alias}`));
+  const helper = process.env.MAIL_TOKEN_HELPER ?? '/usr/local/libexec/pi-mail-token';
+  // PassCmd is interpreted by a shell. Accept an executable path, not a command.
+  if (!/^\/[a-zA-Z0-9_./-]+$/.test(helper) || /\s/.test(helper)) throw new MailError('INVALID_MAIL_CONFIG');
+  store.writeText(mbsync, renderMbsync(store.root, { ...account, alias: store.connectionKey(account.alias) }, `${helper} ${name}`));
   store.writeText(notmuch, `[database]\npath=${store.path('index', name)}\nmail_root=${store.path('maildir', name)}\n[user]\nname=Pi Mail\nprimary_email=${account.email}\n[new]\ntags=unread;\n[maildir]\nsynchronize_flags=true\n`);
   return { mbsync, notmuch };
 }
