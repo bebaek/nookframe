@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 import { MailStore, MailError } from '../mail/store.js';
 import { MailOAuth, MAIL_SCOPE } from '../mail/oauth.js';
 import { prepareConfig, renderMbsync } from '../mail/config.js';
@@ -87,11 +87,20 @@ test('mail OAuth rejects insufficient scopes/revoked grants; status projection a
   }
 });
 
-test('OAuth client entry is a hidden TTY prompt, never echoed or passed as arguments', { timeout: 10000 }, async () => {
+test('OAuth client entry is a hidden TTY prompt, never echoed or passed as arguments', { timeout: 10000 }, async t => {
   const f = fixture();
+  t.after(() => f.clean());
+  // Simulate running directly from a configured host without touching its client.
+  const google = mkdtempSync(join(f.dir, 'parent-google-'));
+  const client = join(google, 'oauth-client.json');
+  const original = '{"clientId":"existing-fixture","clientSecret":"existing-fixture"}\n';
+  writeFileSync(client, original, { mode: 0o600 });
+  const previous = process.env.GOOGLE_DIR;
+  process.env.GOOGLE_DIR = google;
+  t.after(() => { if (previous === undefined) delete process.env.GOOGLE_DIR; else process.env.GOOGLE_DIR = previous; });
   const terminal = pty.spawn(process.execPath, ['--import', 'tsx', resolve('mail/cli.ts'), 'oauth', 'configure'], {
     cwd: process.cwd(), name: 'xterm-256color', cols: 80, rows: 24,
-    env: { ...process.env, MAIL_DIR: f.dir, PUBLIC_ORIGIN: 'https://workspace.example' },
+    env: { HOME: f.dir, PATH: dirname(process.execPath), MAIL_DIR: f.dir, PUBLIC_ORIGIN: 'https://workspace.example' },
   });
   let output = '', stage = 0;
   const timeout = setTimeout(() => terminal.kill(), 8000);
@@ -104,8 +113,9 @@ test('OAuth client entry is a hidden TTY prompt, never echoed or passed as argum
     const exit = await new Promise<number>(resolve => terminal.onExit(e => resolve(e.exitCode)));
     assert.equal(exit, 0); assert.equal(stage, 2);
     assert.ok(!output.includes('fixture-client-secret') && !output.includes('fixture.apps.googleusercontent.com'));
+    assert.equal(readFileSync(client, 'utf8'), original, 'parent Google client must remain unchanged');
     assert.equal(f.store.client().clientSecret, 'fixture-client-secret');
-  } finally { clearTimeout(timeout); terminal.kill(); f.clean(); }
+  } finally { clearTimeout(timeout); terminal.kill(); }
 });
 
 test('explicit callback migration preserves credentials/accounts, invalidates pending consent, and is idempotent', async () => {
