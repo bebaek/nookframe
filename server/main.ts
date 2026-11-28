@@ -18,6 +18,7 @@ import { ThreadStore } from './threads.js';
 import { mailRuntime } from '../mail/runtime.js';
 import { ZohoMail } from '../mail/zoho.js';
 import { MailScheduler } from '../mail/scheduler.js';
+import { contactsRuntime } from '../contacts/runtime.js';
 import { calendarRuntime } from '../calendar/runtime.js';
 import { allowedBrowserOrigins } from './origins.js';
 import { piExtensionArgs } from './pi-extensions.js';
@@ -104,7 +105,7 @@ const app = createApp(workspace, {
     config: () => ({ model: { ...explainModel(existingPi ? { source: 'pi' } : resolveModelSelection(stateDir, agentDir, process.env)), scope: 'legacy-thread-fallback' }, newThreads: modelOperations.defaults() }),
     sessions: () => workspace.operationSessions(),
   },
-  mail: mailOAuth, zoho: new ZohoMail(join(mailStore.root, 'zoho'), publicOrigin), calendar: calendar.oauth,
+  mail: mailOAuth, zoho: new ZohoMail(join(mailStore.root, 'zoho'), publicOrigin), calendar: calendar.oauth, contacts: contactsRuntime(),
   webDir: resolve(root, 'dist/web'), stateDir,
   terminal: new TerminalSession(workspaceDir, {
     ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),

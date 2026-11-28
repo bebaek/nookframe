@@ -12,7 +12,7 @@ import { BrowserSessions, SESSION_SECONDS } from './browser-sessions.js';
 import type { MailOAuth } from '../mail/oauth.js';
 import type { ZohoMail } from '../mail/zoho.js';
 import { MailError } from '../mail/store.js';
-import type { CalendarOAuth } from '../calendar/oauth.js';
+import { CALLBACK_PATH, CONTACTS_STATE_PREFIX, type CalendarOAuth } from '../calendar/oauth.js';
 import { CalendarError } from '../calendar/store.js';
 
 import { allowedBrowserOrigins } from './origins.js';
@@ -27,7 +27,7 @@ import type { ModelOperations } from './model-operations.js';
 
 import { acceptsLocalRequest, validateLocalAccess } from './local-access.js';
 
-export function createApp(workspace: Workspace | Workspaces, config: { restartProbe?: () => { pid: number; idle: boolean } | undefined; modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; localAccess?: boolean; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth }) {
+export function createApp(workspace: Workspace | Workspaces, config: { restartProbe?: () => { pid: number; idle: boolean } | undefined; modelOperations?: ModelOperations; operations?: OperationsReader; presence?: PresenceStore; promptExamples?: string[]; localAccess?: boolean; token: string; origin: string; allowedOrigins?: string[]; webDir: string; terminal?: TerminalSession; stateDir?: string; mail?: MailOAuth; zoho?: ZohoMail; calendar?: CalendarOAuth; contacts?: CalendarOAuth }) {
   if (config.token.length < 32) throw new Error('Access token must be at least 32 characters');
   const pool = workspace instanceof Workspaces ? workspace : undefined;
   pool?.takeovers.configureOrigin(config.origin);
@@ -66,21 +66,26 @@ export function createApp(workspace: Workspace | Workspaces, config: { restartPr
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     if (config.localAccess && !acceptsLocalRequest(req, origin)) { res.writeHead(403).end(); return; }
-    if (config.calendar && req.method === 'GET' && (req.url === '/calendar/oauth/callback' || req.url?.startsWith('/calendar/oauth/callback?'))) {
+    if ((config.calendar || config.contacts) && req.method === 'GET' && (req.url === CALLBACK_PATH || req.url?.startsWith(CALLBACK_PATH + '?'))) {
       // Cross-site OAuth return: single-use state + PKCE, not the Strict cookie.
       // Never log this URL or provider errors.
-      let status = 'connected';
+      let status = 'connected', capability: 'calendar' | 'contacts' = 'calendar';
       try {
         if (req.url.length > 8192) throw new CalendarError('INVALID_OR_EXPIRED_AUTHORIZATION');
-        await config.calendar.callback(new URL(req.url, origin));
+        const url = new URL(req.url, origin);
+        if (url.searchParams.get('state')?.startsWith(CONTACTS_STATE_PREFIX)) capability = 'contacts';
+        const oauth = config[capability];
+        if (!oauth) throw new CalendarError('INVALID_OR_EXPIRED_AUTHORIZATION');
+        await oauth.callback(url);
       } catch (error) { status = error instanceof CalendarError ? error.code : 'AUTHORIZATION_FAILED'; }
-      res.writeHead(303, { Location: `/calendar/oauth/result?status=${encodeURIComponent(status)}` }).end(); return;
+      res.writeHead(303, { Location: `/${capability}/oauth/result?status=${encodeURIComponent(status)}` }).end(); return;
     }
-    if (config.calendar && req.method === 'GET' && req.url?.startsWith('/calendar/oauth/result?')) {
+    const capability = req.url?.startsWith('/contacts/oauth/result?') ? 'contacts' : 'calendar';
+    if (config[capability] && req.method === 'GET' && req.url?.startsWith(`/${capability}/oauth/result?`)) {
       const status = new URL(req.url, origin).searchParams.get('status');
-      const known = new Set(['INVALID_OR_EXPIRED_AUTHORIZATION', 'AUTHORIZATION_DENIED', 'OAUTH_CLIENT_CHANGED_RETRY', 'OAUTH_CALLBACK_CHANGED_RECONFIGURE', 'OAUTH_CLIENT_NOT_CONFIGURED', 'OAUTH_REQUEST_FAILED', 'INVALID_TOKEN_RESPONSE', 'CALENDAR_READ_SCOPES_REQUIRED', 'VERIFIED_IDENTITY_REQUIRED', 'WRONG_ACCOUNT_FOR_ALIAS', 'ACCOUNT_ALREADY_CONNECTED', 'REFRESH_TOKEN_REQUIRED_REAUTHORIZE', 'CALENDAR_BUSY', 'RECONNECT_ACCOUNT']);
+      const known = new Set(['INVALID_OR_EXPIRED_AUTHORIZATION', 'AUTHORIZATION_DENIED', 'OAUTH_CLIENT_CHANGED_RETRY', 'OAUTH_CALLBACK_CHANGED_RECONFIGURE', 'OAUTH_CLIENT_NOT_CONFIGURED', 'OAUTH_REQUEST_FAILED', 'INVALID_TOKEN_RESPONSE', 'CALENDAR_READ_SCOPES_REQUIRED', 'CONTACTS_READ_SCOPE_REQUIRED', 'CONTACTS_WRITE_SCOPE_REQUIRED', 'VERIFIED_IDENTITY_REQUIRED', 'WRONG_ACCOUNT_FOR_ALIAS', 'ACCOUNT_ALREADY_CONNECTED', 'REFRESH_TOKEN_REQUIRED_REAUTHORIZE', 'CALENDAR_BUSY', 'RECONNECT_ACCOUNT']);
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.end(status === 'connected' ? 'Calendar authorization stored. Run calendarctl account status to check. No calendar data has been fetched or changed.' : `Calendar authorization not completed (${known.has(status ?? '') ? status : 'AUTHORIZATION_FAILED'}). Request a fresh authorization link. Do not paste callback URLs or codes into chat.`); return;
+      res.end(status === 'connected' ? `${capability === 'calendar' ? 'Calendar' : 'Contacts'} authorization stored. Run ${capability}ctl account status to check. No ${capability} data has been fetched or changed.` : `${capability === 'calendar' ? 'Calendar' : 'Contacts'} authorization not completed (${known.has(status ?? '') ? status : 'AUTHORIZATION_FAILED'}). Request a fresh authorization link. Do not paste callback URLs or codes into chat.`); return;
     }
     if (config.zoho && req.method === 'GET' && (req.url === '/mail/zoho/oauth/callback' || req.url?.startsWith('/mail/zoho/oauth/callback?'))) {
       // Cross-site OAuth callback: single-use state and confidential server client.
